@@ -1,0 +1,52 @@
+{
+  "entries": [
+    {
+      "name": "quill",
+      "version": "v0.4.1",
+      "sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+      "path": "quill"
+    },
+    {
+      "name": "chronicle",
+      "version": "v0.7.0",
+      "sha256": "e011590e5d55188e03a2fd58524853ddacd23ec2e5d58535e061339777c4043f",
+      "path": "chronicle"
+    },
+    {
+      "name": "gosimports",
+      "version": "v0.3.8",
+      "sha256": "9e5837236320efadb7a94675866cbd95e7a9716d635f3863603859698a37591a",
+      "path": "gosimports"
+    },
+    {
+      "name": "glow",
+      "version": "v1.5.1",
+      "sha256": "c6f05b9383f97fbb6fb2bb84b87b3b99ed7a1708d8a1634ff66d5bff8180f3b0",
+      "path": "glow"
+    },
+    {
+      "name": "goreleaser",
+      "version": "v1.20.0",
+      "sha256": "307dd15253ab292a57dff221671659f3133593df485cc08fdd8158d63222bb16",
+      "path": "goreleaser"
+    },
+    {
+      "name": "golangci-lint",
+      "version": "v1.54.2",
+      "sha256": "06c3715b43f4e92d0e9ec98ba8aa0f0c08c8963b2862ec130ec8e1c1ad9e1d1d",
+      "path": "golangci-lint"
+    },
+    {
+      "name": "bouncer",
+      "version": "v0.4.0",
+      "sha256": "de42a2453c8e9b2587358c1f244a5cc0091c71385126f0fa3c0b3aec0feeaa4d",
+      "path": "bouncer"
+    },
+    {
+      "name": "task",
+      "version": "v3.29.1",
+      "sha256": "8d92c81f07960c5363a1f424e88dd4b64a1dd4251378d53873fa65ea1aab271b",
+      "path": "task"
+    }
+  ]
+}

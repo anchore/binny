@@ -1,0 +1,14 @@
+permit:
+  - BSD.*
+  - CC0.*
+  - MIT.*
+  - Apache.*
+  - MPL.*
+  - ISC
+  - WTFPL
+
+ignore-packages:
+  # from: https://github.com/xi2/xz/blob/master/LICENSE
+  # All these files have been put into the public domain.
+  # You can do whatever you want with these files.
+  - github.com/xi2/xz
