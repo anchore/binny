@@ -1,11 +1,13 @@
 package command
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
 	"runtime"
 
+	"github.com/chainguard-dev/yam/pkg/yam/formatted"
 	"github.com/google/yamlfmt"
 	"github.com/google/yamlfmt/engine"
 	"github.com/google/yamlfmt/formatters/basic"
@@ -86,7 +88,7 @@ func getUpdatedConfig(cfg option.AppConfig, names []string) (*option.AppConfig, 
 			if toolCfg.Version.Constraint != "" {
 				fields["constraint"] = fmt.Sprintf("%q", toolCfg.Version.Constraint)
 			}
-			log.WithFields(fields).Info("tool version pin is up to date")
+			log.WithFields(fields).Debug("tool version pin is up to date")
 			newCfgs = append(newCfgs, toolCfg)
 			continue
 		}
@@ -276,5 +278,22 @@ func formatYaml(contents string) (string, error) {
 		return "", fmt.Errorf("unable to format YAML: %w", err)
 	}
 
-	return string(out), nil
+	var node yaml.Node
+	if err = yaml.Unmarshal(out, &node); err != nil {
+		return "", fmt.Errorf("unable to unmarshal formatted YAML: %w", err)
+	}
+
+	var buf bytes.Buffer
+	enc := formatted.NewEncoder(&buf)
+	enc, err = enc.SetGapExpressions(".tools")
+	if err != nil {
+		return "", fmt.Errorf("unable to set gap expressions: %w", err)
+	}
+
+	err = enc.Encode(&node)
+	if err != nil {
+		return "", fmt.Errorf("unable to format YAML: %w", err)
+	}
+
+	return buf.String(), nil
 }

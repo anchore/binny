@@ -213,7 +213,7 @@ func fetchAllReleases(user, repo string) ([]ghRelease, error) {
 							} `graphql:"releaseAssets(first:100, after:$assetsCursor)"`
 						}
 					}
-				} `graphql:"releases(last:100, after:$releasesCursor)"`
+				} `graphql:"releases(first:100, after:$releasesCursor)"` // note: first 100 releases, where newest releases are first
 			} `graphql:"repository(owner:$repositoryOwner, name:$repositoryName)"`
 
 			RateLimit rateLimit

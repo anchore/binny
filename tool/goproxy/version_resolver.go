@@ -92,6 +92,10 @@ func availableVersionsFetcher(url string) ([]string, error) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to get available versions from go proxy: %s", resp.Status)
+	}
+
 	// get the last entry in a newline delimited list
 
 	contents, err := io.ReadAll(resp.Body)

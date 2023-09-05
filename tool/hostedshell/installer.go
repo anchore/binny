@@ -9,6 +9,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/Masterminds/sprig/v3"
 	"github.com/google/shlex"
 
 	"github.com/anchore/binny"
@@ -81,7 +82,7 @@ func (i Installer) InstallTo(version, destDir string) (string, error) {
 }
 
 func templateFlags(args string, version, destination string) (string, error) {
-	tmpl, err := template.New("args").Parse(args)
+	tmpl, err := template.New("args").Funcs(sprig.FuncMap()).Parse(args)
 	if err != nil {
 		return "", err
 	}

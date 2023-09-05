@@ -1,14 +1,15 @@
 tools:
-
-#  - name: binny
-#    version:
-#      # can be 'main', 'latest', or a specific version
-#      want: v0.1.0
-#      method: github-release
-#    method: go-install
-#    with:
-#      module: github.com/anchore/binny
-#      path: cmd/binny
+  - name: binny
+    version:
+      # since the module is ., "current" means whatever is checked out
+      want: current
+    method: go-install
+    with:
+      # aka: github.com/anchore/binny, without going through github / goproxy
+      module: .
+      entrypoint: cmd/binny
+      ldflags:
+       - -X main.Version={{ .Version }}
 
   - name: gh
     version:
