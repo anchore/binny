@@ -32,9 +32,10 @@ runs:
       id: tool-cache
       uses: actions/cache@v3
       with:
-        path: ${{ github.workspace }}/.tools
-        key: ${{ inputs.cache-key-prefix }}-${{ runner.os }}-tool-${{ hashFiles('Taskfile.yaml') }}
+        path: ${{ github.workspace }}/.tool
+        key: ${{ inputs.cache-key-prefix }}-${{ runner.os }}-tool-${{ hashFiles('Taskfile.yaml') }}-${{ hashFiles('**/go.sum') }}
         restore-keys: |
+          ${{ inputs.cache-key-prefix }}-${{ runner.os }}-tool-${{ hashFiles('Taskfile.yaml') }}
           ${{ inputs.cache-key-prefix }}-${{ runner.os }}-tool
 
     # note: we need to keep restoring the go mod cache before bootstrapping tools since `go install` is used in
@@ -52,7 +53,6 @@ runs:
 
     - name: (cache-miss) Bootstrap project tools
       shell: bash
-      if: steps.tool-cache.outputs.cache-hit != 'true'
       run: make ci-bootstrap-tools
 
     - name: Restore go build cache

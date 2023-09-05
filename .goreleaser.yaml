@@ -35,12 +35,11 @@ builds:
       - arm64
     mod_timestamp: *build-timestamp
     ldflags: *build-ldflags
-# will probably be supported in the future
-#    hooks:
-#      post:
-#        - cmd: .tools/quill sign-and-notarize "{{ .Path }}" --dry-run={{ .IsSnapshot }} --ad-hoc={{ .IsSnapshot }} -vv
-#          env:
-#            - QUILL_LOG_FILE=/tmp/quill-{{ .Target }}.log
+    hooks:
+      post:
+        - cmd: .tool/quill sign-and-notarize "{{ .Path }}" --dry-run={{ .IsSnapshot }} --ad-hoc={{ .IsSnapshot }} -vv
+          env:
+            - QUILL_LOG_FILE=/tmp/quill-{{ .Target }}.log
 
 # not supported yet
 #  - id: windows-build

@@ -5,9 +5,6 @@ vars:
   OWNER: anchore
   PROJECT: binny
 
-  # unit test coverage threshold (in % coverage)
-  COVERAGE_THRESHOLD: 50
-
   TMP_DIR: .tmp
   SNAPSHOT_DIR: snapshot
   CHANGELOG: CHANGELOG.md
@@ -19,6 +16,9 @@ tasks:
 
   default:
     desc: Run all validation tasks
+    aliases:
+      - pr-validations
+      - validations
     cmds:
       - task: static-analysis
       - task: test
@@ -36,10 +36,44 @@ tasks:
     cmds:
       - task: unit
 
+  ## Bootstrap tasks #################################
+
+  binny:
+    internal: true
+    desc: Get the binny tool
+    generates:
+      - "{{ .TOOL_DIR }}/binny"
+    status:
+      - "test -f {{ .TOOL_DIR }}/binny"
+    # we just need a release of benny, doesn't matter which one (binny will update itself, this is just a bootstrap step)
+    # note: on the first release of binny, switch to the curl approach
+    # cmd: "curl -sSfL https://raw.githubusercontent.com/{{ .OWNER }}/{{ .PROJECT }}/main/install.sh | sh -s -- -b {{ .TOOL_DIR }}"
+    cmd: "go build -o {{ .TOOL_DIR }}/binny ./cmd/binny"
+    silent: true
+
+  tools:
+    desc: Install all tools needed for CI and local development
+    deps: [binny]
+    generates:
+      - "{{ .TOOL_DIR }}/binny"
+      - "{{ .TOOL_DIR }}/goreleaser"
+      - "{{ .TOOL_DIR }}/chronicle"
+      - "{{ .TOOL_DIR }}/glow"
+      - "{{ .TOOL_DIR }}/golangci-lint"
+      - "{{ .TOOL_DIR }}/gosimports"
+      - "{{ .TOOL_DIR }}/bouncer"
+      - "{{ .TOOL_DIR }}/task"
+    status:
+      - "{{ .TOOL_DIR }}/binny check -v"
+    cmd: "{{ .TOOL_DIR }}/binny install -v"
+    silent: true
+
+
   ## Static analysis tasks #################################
 
   format:
     desc: Auto-format all source code
+    deps: [tools]
     cmds:
       - gofmt -w -s .
       - "{{ .TOOL_DIR }}/gosimports -local github.com/anchore -w ."
@@ -47,6 +81,7 @@ tasks:
 
   lint-fix:
     desc: Auto-format all source code + run golangci lint fixers
+    deps: [tools]
     cmds:
       - task: format
       - "{{ .TOOL_DIR }}/golangci-lint run --tests=false"
@@ -58,6 +93,7 @@ tasks:
         sh: gofmt -l -s .
       BAD_FILE_NAMES:
         sh: "find . | grep -e ':' || true"
+    deps: [tools]
     cmds:
       # ensure there are no go fmt differences
       - cmd: 'test -z "{{ .BAD_FMT_FILES }}" || (echo "files with gofmt issues: [{{ .BAD_FMT_FILES }}]"; exit 1)'
@@ -71,8 +107,8 @@ tasks:
 
   check-licenses:
     desc: Ensure transitive dependencies are compliant with the current license policy
-    cmds:
-      - "{{ .TOOL_DIR }}/bouncer check ./..."
+    deps: [tools]
+    cmd: "{{ .TOOL_DIR }}/bouncer check ./..."
 
   check-go-mod-tidy:
     desc: Ensure go.mod and go.sum are up to date
@@ -86,6 +122,9 @@ tasks:
     vars:
       TEST_PKGS:
           sh: "go list ./... | grep -v {{ .OWNER }}/{{ .PROJECT }}/test | tr '\n' ' '"
+
+      # unit test coverage threshold (in % coverage)
+      COVERAGE_THRESHOLD: 60
     cmds:
       - cmd: "mkdir -p {{ .TMP_DIR }}"
         silent: true
@@ -97,6 +136,7 @@ tasks:
 
   changelog:
     desc: Generate a changelog
+    deps: [tools]
     generates:
       - "{{ .CHANGELOG }}"
       - "{{ .NEXT_VERSION }}"
@@ -108,6 +148,7 @@ tasks:
     desc: Create a snapshot release
     aliases:
       - build
+    deps: [tools]
     cmds:
       - silent: true
         cmd: |        
@@ -122,6 +163,7 @@ tasks:
   release:
     desc: Create a release
     interactive: true
+    deps: [tools]
     cmds:
       - cmd: .github/scripts/trigger-release.sh
         silent: true
@@ -143,6 +185,7 @@ tasks:
 
   ci-release:
     desc: Create a release
+    deps: [tools]
     cmds:
       - task: ci-check
       - "{{ .TOOL_DIR }}/goreleaser release --clean"
