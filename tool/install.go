@@ -9,7 +9,7 @@ import (
 	"github.com/anchore/binny/internal/log"
 )
 
-func Install(tool binny.Tool, intent binny.VersionIntent, store *binny.Store) error {
+func Install(tool binny.Tool, intent binny.VersionIntent, store *binny.Store, verifyDigest bool) error {
 	tmpdir, err := os.MkdirTemp("", fmt.Sprintf("binny-install-%s-", tool.Name()))
 	if err != nil {
 		return fmt.Errorf("failed to create temp directory: %w", err)
@@ -29,12 +29,12 @@ func Install(tool binny.Tool, intent binny.VersionIntent, store *binny.Store) er
 		return fmt.Errorf("failed to resolve version for tool %q: %w", tool.Name(), err)
 	}
 
-	err = Check(tool.Name(), resolvedVersion, store)
+	err = Check(tool.Name(), resolvedVersion, store, verifyDigest)
 	if errors.Is(err, ErrMultipleInstallations) {
 		return err
 	}
 	if err == nil {
-		log.WithFields("tool", tool.Name(), "version", resolvedVersion).Info("already installed")
+		log.WithFields("tool", tool.Name(), "version", resolvedVersion).Debug("already installed")
 		return nil
 	}
 

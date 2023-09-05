@@ -10,6 +10,13 @@ tools:
 #      module: github.com/anchore/binny
 #      path: cmd/binny
 
+  - name: gh
+    version:
+      want: v2.33.0
+    method: github-release
+    with:
+      repo: cli/cli
+
   - name: quill
     version:
       want: v0.4.1

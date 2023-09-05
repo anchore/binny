@@ -3,10 +3,12 @@ package command
 import (
 	"fmt"
 
+	"github.com/hashicorp/go-multierror"
 	"github.com/spf13/cobra"
 
 	"github.com/anchore/binny"
 	"github.com/anchore/binny/cmd/binny/cli/option"
+	"github.com/anchore/binny/internal/log"
 	"github.com/anchore/binny/tool"
 	"github.com/anchore/clio"
 )
@@ -42,9 +44,15 @@ func runInstall(cfg InstallConfig, names []string) error {
 		names = cfg.Tools.Names()
 	}
 
-	toolCfgs, err := cfg.Tools.GetAllOptions(names)
+	toolOpts, err := cfg.Tools.GetAllOptions(names)
 	if err != nil {
 		return err
+	}
+
+	if len(toolOpts) == 0 {
+		// TODO: should this be an error?
+		log.Warn("no tools to install")
+		return nil
 	}
 
 	// get the current store state
@@ -53,17 +61,30 @@ func runInstall(cfg InstallConfig, names []string) error {
 		return err
 	}
 
-	for _, opt := range toolCfgs {
+	var errs error
+	var failedTools []string
+	for _, opt := range toolOpts {
 		t, intent, err := opt.ToTool()
 		if err != nil {
-			return err
+			failedTools = append(failedTools, opt.Name)
+			errs = multierror.Append(errs, fmt.Errorf("failed to install tool %q: %w", opt.Name, err))
+			continue
 		}
 
 		// otherwise continue to install the tool
-		if err := tool.Install(t, *intent, store); err != nil {
-			return fmt.Errorf("failed to install tool %q: %w", t.Name(), err)
+		if err := tool.Install(t, *intent, store, cfg.VerifyDigest); err != nil {
+			failedTools = append(failedTools, t.Name())
+			errs = multierror.Append(errs, fmt.Errorf("failed to install tool %q: %w", t.Name(), err))
+			continue
 		}
 	}
+
+	if errs != nil {
+		log.WithFields("tools", failedTools).Error("installation failed")
+		return errs
+	}
+
+	log.Info("all tools installed")
 
 	return nil
 }

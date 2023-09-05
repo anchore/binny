@@ -12,3 +12,6 @@ ignore-packages:
   # All these files have been put into the public domain.
   # You can do whatever you want with these files.
   - github.com/xi2/xz
+
+  # crypto/internal/boring is released under the openSSL license as a part of the Golang Standard Libary
+  - crypto/internal/boring

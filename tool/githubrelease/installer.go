@@ -336,12 +336,26 @@ var architectureAliases = map[string][]string{
 	"wasm":        {},
 }
 
-func allArchs(key string) []string {
-	architectures := []string{key}
-	if aliases, ok := architectureAliases[key]; ok {
-		architectures = append(architectures, aliases...)
-	}
-	return architectures
+// this list is derived from https://github.com/golang/go/blob/master/src/go/build/syslist.go
+var osAliases = map[string][]string{
+	"aix":       {},
+	"android":   {},
+	"darwin":    {"macos"},
+	"dragonfly": {},
+	"freebsd":   {},
+	"hurd":      {},
+	"illumos":   {},
+	"ios":       {},
+	"js":        {},
+	"linux":     {},
+	"nacl":      {},
+	"netbsd":    {},
+	"openbsd":   {},
+	"plan9":     {},
+	"solaris":   {},
+	"wasip1":    {},
+	"windows":   {},
+	"zos":       {},
 }
 
 func selectBinaryAsset(assets []ghAsset, goOS, goArch string) *ghAsset {
@@ -349,7 +363,11 @@ func selectBinaryAsset(assets []ghAsset, goOS, goArch string) *ghAsset {
 	// e.g. chronicle_0.7.0_linux_amd64.tar.gz
 
 	goos := strings.ToLower(goOS)
+	gooss := allOSs(goos)
 	goarchs := allArchs(strings.ToLower(goArch))
+
+	isHostDarwin := strset.New(allOSs("darwin")...).Has(goos)
+	universalDarwinArchSuffix := asSuffix([]string{"universal", "all"})
 
 	for _, asset := range assets {
 		switch {
@@ -365,13 +383,13 @@ func selectBinaryAsset(assets []ghAsset, goOS, goArch string) *ghAsset {
 
 		lowerName := strings.ReplaceAll(strings.ReplaceAll(strings.ToLower(asset.Name), ".", "_"), "-", "_")
 
-		if !strings.Contains(lowerName, "_"+goos) {
-			log.WithFields("asset", asset.Name).Tracef("skipping asset (missing os %q)", goos)
+		if !containsOneOf(lowerName, asSuffix(gooss)) {
+			log.WithFields("asset", asset.Name).Tracef("skipping asset (missing os %q)", gooss)
 			continue
 		}
 
 		// look for universal binaries for darwin
-		if goos == "darwin" && strings.Contains(lowerName, "_universal") || strings.Contains(lowerName, "_all") {
+		if isHostDarwin && containsOneOf(lowerName, universalDarwinArchSuffix) {
 			log.WithFields("asset", asset.Name).Trace("found asset (universal binary)")
 			return &asset
 		} else if !containsOneOf(lowerName, goarchs) {
@@ -383,6 +401,30 @@ func selectBinaryAsset(assets []ghAsset, goOS, goArch string) *ghAsset {
 		return &asset
 	}
 	return nil
+}
+
+func allArchs(key string) []string {
+	candidates := []string{key}
+	if aliases, ok := architectureAliases[key]; ok {
+		candidates = append(candidates, aliases...)
+	}
+	return candidates
+}
+
+func allOSs(key string) []string {
+	candidates := []string{key}
+	if aliases, ok := osAliases[key]; ok {
+		candidates = append(candidates, aliases...)
+	}
+	return candidates
+}
+
+func asSuffix(ss []string) []string {
+	var suffixes []string
+	for _, s := range ss {
+		suffixes = append(suffixes, "_"+s)
+	}
+	return suffixes
 }
 
 func containsOneOf(subject string, needles []string) bool {

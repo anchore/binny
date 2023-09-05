@@ -343,3 +343,118 @@ func Test_selectChecksumAsset(t *testing.T) {
 		})
 	}
 }
+
+func Test_selectBinaryAsset(t *testing.T) {
+	type args struct {
+		assets []ghAsset
+		goOS   string
+		goArch string
+	}
+	tests := []struct {
+		name string
+		args args
+		want *ghAsset
+	}{
+		{
+			name: "no assets",
+			args: args{
+				assets: nil,
+				goOS:   "linux",
+				goArch: "amd64",
+			},
+			want: nil,
+		},
+		{
+			name: "no binary assets for target host",
+			args: args{
+				goOS:   "linux",
+				goArch: "amd64",
+				assets: []ghAsset{
+					{
+						Name:        "syft_0.89.0_linux_amd64.rpm",
+						ContentType: "application/x-rpm",
+						URL:         "http://localhost:8080/syft_0.89.0_linux_amd64.rpm",
+					},
+					{
+						Name:        "syft_0.89.0_linux_amd64.deb",
+						ContentType: "application/x-debian-package",
+						URL:         "http://localhost:8080/syft_0.89.0_linux_amd64.deb",
+					},
+					{
+						Name:        "syft_0.89.0_linux_amd64.spdx.json",
+						ContentType: "text/plain",
+						URL:         "http://localhost:8080/syft_0.89.0_linux_amd64.spdx.json",
+					},
+					{
+						Name:        "syft_0.89.0_windows_amd64.msi",
+						ContentType: "application/x-msi",
+						URL:         "http://localhost:8080/syft_0.89.0_windows_amd64.msi",
+					},
+				},
+			},
+			want: nil,
+		},
+		{
+			name: "binary assets executable",
+			args: args{
+				goOS:   "linux",
+				goArch: "amd64",
+				assets: []ghAsset{
+					{
+						Name:        "syft_0.89.0_linux_amd64",
+						ContentType: "application/x-executable",
+						URL:         "http://localhost:8080/syft_0.89.0_linux_amd64",
+					},
+				},
+			},
+			want: &ghAsset{
+				Name:        "syft_0.89.0_linux_amd64",
+				ContentType: "application/x-executable",
+				URL:         "http://localhost:8080/syft_0.89.0_linux_amd64",
+			},
+		},
+		{
+			name: "binary assets tar.gz",
+			args: args{
+				goOS:   "linux",
+				goArch: "amd64",
+				assets: []ghAsset{
+					{
+						Name:        "syft_0.89.0_linux_amd64.tar.gz",
+						ContentType: "application/gzip",
+						URL:         "http://localhost:8080/syft_0.89.0_linux_amd64.tar.gz",
+					},
+				},
+			},
+			want: &ghAsset{
+				Name:        "syft_0.89.0_linux_amd64.tar.gz",
+				ContentType: "application/gzip",
+				URL:         "http://localhost:8080/syft_0.89.0_linux_amd64.tar.gz",
+			},
+		},
+		{
+			name: "alt arch and os name",
+			args: args{
+				goOS:   "darwin",
+				goArch: "arm64",
+				assets: []ghAsset{
+					{
+						Name:        "syft_0.89.0_macos_aarch64.tar.gz",
+						ContentType: "application/gzip",
+						URL:         "http://localhost:8080/syft_0.89.0_macos_aarch64.tar.gz",
+					},
+				},
+			},
+			want: &ghAsset{
+				Name:        "syft_0.89.0_macos_aarch64.tar.gz",
+				ContentType: "application/gzip",
+				URL:         "http://localhost:8080/syft_0.89.0_macos_aarch64.tar.gz",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equalf(t, tt.want, selectBinaryAsset(tt.args.assets, tt.args.goOS, tt.args.goArch), "selectBinaryAsset(%v, %v, %v)", tt.args.assets, tt.args.goOS, tt.args.goArch)
+		})
+	}
+}
