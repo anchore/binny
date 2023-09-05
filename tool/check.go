@@ -11,7 +11,7 @@ import (
 
 var ErrMultipleInstallations = fmt.Errorf("too many installations found")
 
-func Check(toolName string, resolvedVersion string, store *binny.Store) error {
+func Check(toolName string, resolvedVersion string, store *binny.Store, verifyDigest bool) error {
 	// check if the tool is already installed...
 	// if the version matches the desired version, skip
 	nameVersionEntries := store.GetByName(toolName, resolvedVersion)
@@ -37,8 +37,15 @@ func Check(toolName string, resolvedVersion string, store *binny.Store) error {
 		return fmt.Errorf("tool %q has different version: %s", toolName, entry.InstalledVersion)
 	}
 
-	if err := verifyEntry(entry); err != nil {
-		return fmt.Errorf("failed to validate tool %q: %w", toolName, err)
+	if verifyDigest {
+		if err := verifyEntry(entry); err != nil {
+			return fmt.Errorf("failed to validate tool %q: %w", toolName, err)
+		}
+	} else {
+		// at least the file must exist
+		if _, err := os.Stat(entry.Path()); err != nil {
+			return fmt.Errorf("failed to validate tool %q: %w", toolName, err)
+		}
 	}
 
 	return nil

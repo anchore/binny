@@ -2,7 +2,7 @@ package command
 
 import (
 	"fmt"
-
+	"github.com/hashicorp/go-multierror"
 	"github.com/spf13/cobra"
 
 	"github.com/anchore/binny"
@@ -48,31 +48,52 @@ func runCheck(cmdCfg CheckConfig, names []string) error {
 		return err
 	}
 
+	if len(toolOpts) == 0 {
+		// TODO: should this be an error?
+		log.Warn("no tools to verify")
+		return nil
+	}
+
 	// get the current store state
 	store, err := binny.NewStore(cmdCfg.Store.Root)
 	if err != nil {
 		return err
 	}
 
+	var errs error
+	var failedTools []string
 	for _, opt := range toolOpts {
 		t, intent, err := opt.ToTool()
 		if err != nil {
-			return err
+			failedTools = append(failedTools, opt.Name)
+			errs = multierror.Append(errs, fmt.Errorf("failed to check tool %q: %w", opt.Name, err))
+			continue
 		}
 
 		resolvedVersion, err := tool.ResolveVersion(t, *intent)
 		if err != nil {
-			return fmt.Errorf("failed to resolve version for tool %q: %w", t.Name(), err)
+			failedTools = append(failedTools, t.Name())
+			errs = multierror.Append(errs, fmt.Errorf("failed to check tool %q: %w", t.Name(), err))
+			continue
 		}
 
 		// otherwise continue to install the tool
-		err = tool.Check(t.Name(), resolvedVersion, store)
+		err = tool.Check(t.Name(), resolvedVersion, store, cmdCfg.VerifyDigest)
 		if err != nil {
-			return fmt.Errorf("failed to install tool %q: %w", t.Name(), err)
+			failedTools = append(failedTools, t.Name())
+			errs = multierror.Append(errs, fmt.Errorf("failed to check tool %q: %w", t.Name(), err))
+			continue
 		}
 
-		log.WithFields("tool", t.Name(), "version", resolvedVersion).Info("installation verified")
+		log.WithFields("tool", t.Name(), "version", resolvedVersion).Debug("installation verified")
 	}
+
+	if errs != nil {
+		log.WithFields("tools", failedTools).Error("verification failed")
+		return errs
+	}
+
+	log.Info("all tools verified")
 
 	return nil
 }
