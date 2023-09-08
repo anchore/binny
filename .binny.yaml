@@ -5,11 +5,15 @@ tools:
       want: current
     method: go-install
     with:
-      # aka: github.com/anchore/binny, without going through github / goproxy
+      # aka: github.com/anchore/binny, without going through github / goproxy (stay local)
       module: .
       entrypoint: cmd/binny
       ldflags:
-       - -X main.Version={{ .Version }}
+       - -X main.version={{ .Version }}
+       - -X main.gitCommit={{ .Version }}
+       - -X main.gitDescription={{ .Version }}
+       # note: sprig functions are available: http://masterminds.github.io/sprig/
+       - -X main.buildDate={{ now | date "2006-01-02T15:04:05Z07:00" }}
 
   - name: gh
     version:
