@@ -39,10 +39,13 @@ func New(id clio.Identification) clio.Application {
 
 	root := command.Root(app)
 
-	root.AddCommand(command.Install(app))
-	root.AddCommand(command.Check(app))
-	root.AddCommand(command.Run(app))
-	root.AddCommand(command.UpdateLock(app))
+	root.AddCommand(
+		clio.VersionCommand(id),
+		command.Install(app),
+		command.Check(app),
+		command.Run(app),
+		command.UpdateLock(app),
+	)
 
 	return app
 }

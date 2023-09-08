@@ -6,6 +6,7 @@ import (
 	"github.com/mitchellh/hashstructure/v2"
 
 	"github.com/anchore/binny"
+	"github.com/anchore/binny/tool/git"
 	"github.com/anchore/binny/tool/githubrelease"
 	"github.com/anchore/binny/tool/goinstall"
 	"github.com/anchore/binny/tool/goproxy"
@@ -112,6 +113,12 @@ func getResolver(method string, params any) (resolver binny.VersionResolver, err
 			return nil, fmt.Errorf("invalid github release version resolution parameters")
 		}
 		resolver = githubrelease.NewVersionResolver(config)
+	case git.IsResolveMethod(method):
+		config, ok := params.(git.VersionResolutionParameters)
+		if !ok {
+			return nil, fmt.Errorf("invalid git version resolution parameters")
+		}
+		resolver = git.NewVersionResolver(config)
 	}
 
 	if err != nil {

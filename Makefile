@@ -25,7 +25,12 @@ ci-bootstrap-go:
 
 .PHONY: ci-bootstrap-tools
 ci-bootstrap-tools: $(BINNY)
-	$(BINNY) install -v
+	$(BINNY) install -vvv
+
+# this is a bootstrapping catch-all, where if the target doesn't exist, we'll ensure the tools are installed and then try again
+%:
+	make $(TASK)
+	$(TASK) $@
 
 ## Shim targets #################################
 

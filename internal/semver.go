@@ -18,7 +18,7 @@ func FilterToLatestVersion(versions []string, versionConstraint string) (string,
 		}
 		ver, err := semver.NewVersion(v)
 		if err != nil {
-			log.Trace("failed to parse version %q: %v", v, err)
+			log.Tracef("failed to parse version %q: %v", v, err)
 			continue
 		}
 		parsed = append(parsed, ver)

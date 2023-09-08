@@ -9,6 +9,8 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/Masterminds/sprig/v3"
+
 	"github.com/anchore/binny"
 	"github.com/anchore/binny/internal/log"
 )
@@ -42,9 +44,13 @@ func (i Installer) InstallTo(version, destDir string) (string, error) {
 	binName := fields[len(fields)-1]
 	binPath := filepath.Join(destDir, binName)
 
-	log.WithFields("module", i.config.Module, "version", version).Debug("installing go module")
-
 	spec := fmt.Sprintf("%s@%s", path, version)
+	if strings.HasPrefix(i.config.Module, ".") || strings.HasPrefix(i.config.Module, "/") {
+		spec = path
+		log.WithFields("module", i.config.Module, "version", version).Debug("installing go module (local)")
+	} else {
+		log.WithFields("module", i.config.Module, "version", version).Debug("installing go module (remote)")
+	}
 
 	ldflags, err := templateFlags(i.config.LDFlags, version)
 	if err != nil {
@@ -61,7 +67,7 @@ func (i Installer) InstallTo(version, destDir string) (string, error) {
 func templateFlags(ldFlags []string, version string) (string, error) {
 	flags := strings.Join(ldFlags, " ")
 
-	tmpl, err := template.New("ldflags").Parse(flags)
+	tmpl, err := template.New("ldflags").Funcs(sprig.FuncMap()).Parse(flags)
 	if err != nil {
 		return "", err
 	}
