@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/OneOfOne/xxhash"
+
+	"github.com/anchore/binny/internal"
 	"github.com/anchore/binny/internal/log"
 )
 
@@ -24,10 +27,10 @@ type state struct {
 
 type StoreEntry struct {
 	root             string
-	Name             string `json:"name"`
-	InstalledVersion string `json:"version"`
-	Digest           string `json:"sha256"`
-	PathInRoot       string `json:"path"`
+	Name             string            `json:"name"`
+	InstalledVersion string            `json:"version"`
+	Digests          map[string]string `json:"digests"`
+	PathInRoot       string            `json:"path"`
 }
 
 func (s StoreEntry) Path() string {
@@ -93,11 +96,15 @@ func (s *Store) AddTool(toolName string, resolvedVersion, pathOutsideRoot string
 	}
 	defer file.Close()
 
-	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
-		return err
+	digests, err := getDigestsForReader(file)
+	if err != nil {
+		return nil
 	}
-	sha256Hash := fmt.Sprintf("%x", hash.Sum(nil))
+
+	sha256Hash, ok := digests[internal.SHA256Algorithm]
+	if !ok {
+		return fmt.Errorf("failed to get sha256 hash for %q", pathOutsideRoot)
+	}
 
 	// move the file into the store at root/basename
 	targetName := toolName
@@ -115,7 +122,7 @@ func (s *Store) AddTool(toolName string, resolvedVersion, pathOutsideRoot string
 		root:             s.root,
 		Name:             toolName,
 		InstalledVersion: resolvedVersion,
-		Digest:           sha256Hash,
+		Digests:          digests,
 		PathInRoot:       targetName, // path in the store relative to the root
 	}
 
@@ -202,4 +209,20 @@ func (s Store) saveState() error {
 	encoder.SetIndent("", "  ")
 
 	return encoder.Encode(encodeState)
+}
+
+func getDigestsForReader(r io.Reader) (map[string]string, error) {
+	sha256Hash := sha256.New()
+	xxhHash := xxhash.New64()
+
+	if _, err := io.Copy(io.MultiWriter(sha256Hash, xxhHash), r); err != nil {
+		return nil, err
+	}
+	sha256Str := fmt.Sprintf("%x", sha256Hash.Sum(nil))
+	xxhStr := fmt.Sprintf("%x", xxhHash.Sum(nil))
+
+	return map[string]string{
+		internal.SHA256Algorithm: sha256Str,
+		internal.XXH64Algorithm:  xxhStr,
+	}, nil
 }

@@ -72,7 +72,10 @@ func runInstall(cfg InstallConfig, names []string) error {
 		}
 
 		// otherwise continue to install the tool
-		if err := tool.Install(t, *intent, store, cfg.VerifyDigest); err != nil {
+		if err := tool.Install(t, *intent, store, tool.VerifyConfig{
+			VerifyXXH64Digest:  true,
+			VerifySHA256Digest: cfg.VerifySHA256Digest,
+		}); err != nil {
 			failedTools = append(failedTools, t.Name())
 			errs = multierror.Append(errs, fmt.Errorf("failed to install tool %q: %w", t.Name(), err))
 			continue

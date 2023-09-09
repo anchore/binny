@@ -79,7 +79,10 @@ func runCheck(cmdCfg CheckConfig, names []string) error {
 		}
 
 		// otherwise continue to install the tool
-		err = tool.Check(t.Name(), resolvedVersion, store, cmdCfg.VerifyDigest)
+		err = tool.Check(t.Name(), resolvedVersion, store, tool.VerifyConfig{
+			VerifyXXH64Digest:  true,
+			VerifySHA256Digest: cmdCfg.VerifySHA256Digest,
+		})
 		if err != nil {
 			failedTools = append(failedTools, t.Name())
 			errs = multierror.Append(errs, fmt.Errorf("failed to check tool %q: %w", t.Name(), err))

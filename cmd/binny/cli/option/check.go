@@ -5,9 +5,9 @@ import (
 )
 
 type Check struct {
-	VerifyDigest bool `json:"verify-digest" yaml:"verify-digest" mapstructure:"verify-digest"`
+	VerifySHA256Digest bool `json:"verify-sha256" yaml:"verify-sha256" mapstructure:"verify-sha256"`
 }
 
 func (o *Check) AddFlags(flags clio.FlagSet) {
-	flags.BoolVarP(&o.VerifyDigest, "verify-digest", "d", "Verifying the digest of already installed tools")
+	flags.BoolVarP(&o.VerifySHA256Digest, "verify-sha256", "", "Verifying the sha256 digest of already installed tools (by default xxh64 is used)")
 }
