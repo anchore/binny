@@ -12,7 +12,10 @@ func Add(app clio.Application) *cobra.Command {
 		Short: "Add a new tool to the configuration",
 	})
 
-	cmd.AddCommand(AddGoInstall(app))
+	cmd.AddCommand(
+		AddGoInstall(app),
+		AddGithubRelease(app),
+	)
 
 	return cmd
 }
