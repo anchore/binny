@@ -1,7 +1,7 @@
 tools:
   - name: binny
     version:
-      # since the module is ., "current" means whatever is checked out
+      # since the module is . then "current" means whatever is checked out
       want: current
     method: go-install
     with:

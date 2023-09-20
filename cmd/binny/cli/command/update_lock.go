@@ -68,7 +68,7 @@ func (p updateLockYamlPatcher) PatchYaml(node *yaml.Node) error {
 }
 
 func getUpdatedConfig(cfg option.Core, names []string) (*option.Core, error) {
-	nameSet := strset.New()
+	nameSet := strset.New(names...)
 	if len(names) == 0 {
 		nameSet.Add(cfg.Tools.Names()...)
 	}
@@ -88,7 +88,7 @@ func getUpdatedConfig(cfg option.Core, names []string) (*option.Core, error) {
 
 		newVersion, err := t.UpdateVersion(intent.Want, intent.Constraint)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("unable to update version for tool %q: %w", toolCfg.Name, err)
 		}
 
 		if newVersion == toolCfg.Version.Want {

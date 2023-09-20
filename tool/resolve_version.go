@@ -27,7 +27,7 @@ func ResolveVersion(tool binny.VersionResolver, intent binny.VersionIntent) (str
 
 	resolvedVersion, err := tool.ResolveVersion(want, constraint)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to resolve version: %w", err)
 	}
 
 	if constraint != "" {

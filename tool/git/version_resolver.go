@@ -1,6 +1,7 @@
 package git
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/go-git/go-git/v5"
@@ -27,6 +28,10 @@ func NewVersionResolver(cfg VersionResolutionParameters) *VersionResolver {
 }
 
 func (v VersionResolver) UpdateVersion(want, constraint string) (string, error) {
+	if want == "current" {
+		// always use the same reference
+		return want, nil
+	}
 	return v.ResolveVersion(want, constraint)
 }
 
@@ -62,7 +67,7 @@ func headCommit(repoPath string) (string, error) {
 	}
 	ref, err := r.Head()
 	if err != nil {
-		return "", fmt.Errorf("unable fetch head: %w", err)
+		return "", fmt.Errorf("unable to fetch head for %q: %w", repoPath, err)
 	}
 	return ref.Hash().String(), nil
 }
@@ -73,22 +78,28 @@ func byReference(repoPath, ref string) (string, error) {
 		return "", fmt.Errorf("unable to open repo: %w", err)
 	}
 
+	// try by tag first...
 	plumbRef, err := r.Tag(ref)
 	if err != nil {
-		return "", fmt.Errorf("unable fetch tag: %w", err)
+		if !errors.Is(err, git.ErrTagNotFound) {
+			return "", fmt.Errorf("unable to fetch tag for %q: %w", ref, err)
+		}
 	}
 
 	if plumbRef != nil {
 		return plumbRef.Name().String(), nil
 	}
 
-	plumbRef, err = r.Reference(plumbing.ReferenceName(ref), true)
+	// then by hash...
+	commit, err := r.CommitObject(plumbing.NewHash(ref))
 	if err != nil {
-		return "", fmt.Errorf("unable fetch reference: %w", err)
+		if !errors.Is(err, plumbing.ErrReferenceNotFound) {
+			return "", fmt.Errorf("unable to fetch hash for %q: %w", ref, err)
+		}
 	}
 
-	if plumbRef != nil {
-		return plumbRef.Hash().String(), nil
+	if commit != nil {
+		return commit.Hash.String(), nil
 	}
 
 	return "", nil
