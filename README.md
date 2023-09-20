@@ -73,6 +73,7 @@ version:
   method: github-release
   with:
     # arbitrary key-value pairs for the version resolver method
+method: go-install
 with:
   # arbitrary key-value pairs for the install method
 ```
