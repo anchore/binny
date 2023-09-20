@@ -9,11 +9,11 @@ tools:
       module: .
       entrypoint: cmd/binny
       ldflags:
-       - -X main.version={{ .Version }}
-       - -X main.gitCommit={{ .Version }}
-       - -X main.gitDescription={{ .Version }}
-       # note: sprig functions are available: http://masterminds.github.io/sprig/
-       - -X main.buildDate={{ now | date "2006-01-02T15:04:05Z07:00" }}
+        - -X main.version={{ .Version }}
+        - -X main.gitCommit={{ .Version }}
+        - -X main.gitDescription={{ .Version }}
+        # note: sprig functions are available: http://masterminds.github.io/sprig/
+        - -X main.buildDate={{ now | date "2006-01-02T15:04:05Z07:00" }}
 
   - name: gh
     version:

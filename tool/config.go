@@ -128,19 +128,6 @@ func getResolver(method string, params any) (resolver binny.VersionResolver, err
 	return resolver, nil
 }
 
-func defaultVersionResolverConfig(installMethod string, installParams any) (method string, parameters any, err error) {
-	switch {
-	case goinstall.IsInstallMethod(installMethod):
-		return goinstall.DefaultVersionResolverConfig(installParams)
-	case hostedshell.IsInstallMethod(installMethod):
-		return hostedshell.DefaultVersionResolverConfig(installParams)
-	case githubrelease.IsInstallMethod(installMethod):
-		return githubrelease.DefaultVersionResolverConfig(installParams)
-	}
-
-	return "", nil, nil
-}
-
 func (c compositeTool) Name() string {
 	return c.config.Name
 }
@@ -155,4 +142,17 @@ func (c compositeTool) ID() string {
 	}
 
 	return fmt.Sprintf("%016x", f)
+}
+
+func defaultVersionResolverConfig(installMethod string, installParams any) (method string, parameters any, err error) {
+	switch {
+	case goinstall.IsInstallMethod(installMethod):
+		return goinstall.DefaultVersionResolverConfig(installParams)
+	case hostedshell.IsInstallMethod(installMethod):
+		return hostedshell.DefaultVersionResolverConfig(installParams)
+	case githubrelease.IsInstallMethod(installMethod):
+		return githubrelease.DefaultVersionResolverConfig(installParams)
+	}
+
+	return "", nil, nil
 }

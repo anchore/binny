@@ -14,13 +14,13 @@ import (
 )
 
 type InstallConfig struct {
-	Config           string `json:"config" yaml:"config" mapstructure:"config"`
-	option.AppConfig `json:"" yaml:",inline" mapstructure:",squash"`
+	Config      string `json:"config" yaml:"config" mapstructure:"config"`
+	option.Core `json:"" yaml:",inline" mapstructure:",squash"`
 }
 
 func Install(app clio.Application) *cobra.Command {
 	cfg := &InstallConfig{
-		AppConfig: option.DefaultAppConfig(),
+		Core: option.DefaultCore(),
 	}
 
 	var names []string

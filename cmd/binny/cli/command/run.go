@@ -21,13 +21,13 @@ import (
 )
 
 type RunConfig struct {
-	Config           string `json:"config" yaml:"config" mapstructure:"config"`
-	option.AppConfig `json:"" yaml:",inline" mapstructure:",squash"`
+	Config      string `json:"config" yaml:"config" mapstructure:"config"`
+	option.Core `json:"" yaml:",inline" mapstructure:",squash"`
 }
 
 func Run(app clio.Application) *cobra.Command {
 	cfg := &RunConfig{
-		AppConfig: option.DefaultAppConfig(),
+		Core: option.DefaultCore(),
 	}
 
 	return app.SetupCommand(&cobra.Command{

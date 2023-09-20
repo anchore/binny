@@ -6,7 +6,18 @@ import (
 	"github.com/Masterminds/semver/v3"
 
 	"github.com/anchore/binny"
+	"github.com/anchore/binny/tool/git"
+	"github.com/anchore/binny/tool/githubrelease"
+	"github.com/anchore/binny/tool/goproxy"
 )
+
+func VersionResolverMethods() []string {
+	return []string{
+		githubrelease.ResolveMethod,
+		goproxy.ResolveMethod,
+		git.ResolveMethod,
+	}
+}
 
 func ResolveVersion(tool binny.VersionResolver, intent binny.VersionIntent) (string, error) {
 	want := intent.Want

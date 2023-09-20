@@ -41,6 +41,7 @@ func New(id clio.Identification) clio.Application {
 
 	root.AddCommand(
 		clio.VersionCommand(id),
+		command.Add(app),
 		command.Install(app),
 		command.Check(app),
 		command.Run(app),

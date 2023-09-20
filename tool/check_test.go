@@ -8,7 +8,7 @@ import (
 	"github.com/anchore/binny"
 )
 
-func Test_check(t *testing.T) {
+func Test_check_sha256(t *testing.T) {
 	tests := []struct {
 		name            string
 		storeRoot       string
@@ -18,8 +18,8 @@ func Test_check(t *testing.T) {
 		wantErr         require.ErrorAssertionFunc
 	}{
 		{
-			name:            "valid",
-			storeRoot:       "testdata/store/valid",
+			name:            "valid (sha256)",
+			storeRoot:       "testdata/store/valid-sha256-only",
 			resolvedVersion: "v1.54.2",
 			verifyDigest:    true,
 			toolName:        "golangci-lint",
@@ -57,7 +57,10 @@ func Test_check(t *testing.T) {
 			store, err := binny.NewStore(tt.storeRoot)
 			require.NoError(t, err)
 
-			tt.wantErr(t, Check(tt.toolName, tt.resolvedVersion, store, tt.verifyDigest))
+			tt.wantErr(t, Check(tt.toolName, tt.resolvedVersion, store, VerifyConfig{
+				VerifyXXH64Digest:  false,
+				VerifySHA256Digest: tt.verifyDigest,
+			}))
 		})
 	}
 }
