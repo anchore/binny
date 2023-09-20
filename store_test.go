@@ -29,59 +29,65 @@ func TestStore_GetByName(t *testing.T) {
 		},
 		{
 			name:      "empty request",
-			storeRoot: "testdata/store/valid",
+			storeRoot: "testdata/store/valid-sha256-only",
 			toolName:  "",
 		},
 		{
 			name:      "hit by name only",
-			storeRoot: "testdata/store/valid",
+			storeRoot: "testdata/store/valid-sha256-only",
 			toolName:  "golangci-lint",
 			want: []StoreEntry{
 				{
 					Name:             "golangci-lint",
 					InstalledVersion: "v1.54.2",
-					Digests:          "06c3715b43f4e92d0e9ec98ba8aa0f0c08c8963b2862ec130ec8e1c1ad9e1d1d",
-					PathInRoot:       "golangci-lint",
+					Digests: map[string]string{
+						"sha256": "06c3715b43f4e92d0e9ec98ba8aa0f0c08c8963b2862ec130ec8e1c1ad9e1d1d",
+					},
+					PathInRoot: "golangci-lint",
 				},
 			},
 		},
 		{
 			name:      "hit by name and exact version",
-			storeRoot: "testdata/store/valid",
+			storeRoot: "testdata/store/valid-sha256-only",
 			toolName:  "golangci-lint",
 			versions:  []string{"v1.54.2"},
 			want: []StoreEntry{
 				{
 					Name:             "golangci-lint",
 					InstalledVersion: "v1.54.2",
-					Digests:          "06c3715b43f4e92d0e9ec98ba8aa0f0c08c8963b2862ec130ec8e1c1ad9e1d1d",
-					PathInRoot:       "golangci-lint",
+					Digests: map[string]string{
+						"sha256": "06c3715b43f4e92d0e9ec98ba8aa0f0c08c8963b2862ec130ec8e1c1ad9e1d1d",
+					},
+					PathInRoot: "golangci-lint",
 				},
 			},
 		},
 		{
 			name:      "hit by name and multiple versions",
-			storeRoot: "testdata/store/valid",
+			storeRoot: "testdata/store/valid-sha256-only",
 			toolName:  "golangci-lint",
 			versions:  []string{"v1.54.1", "v1.54.2", "v1.54.3"},
 			want: []StoreEntry{
 				{
 					Name:             "golangci-lint",
 					InstalledVersion: "v1.54.2",
-					Digests:          "06c3715b43f4e92d0e9ec98ba8aa0f0c08c8963b2862ec130ec8e1c1ad9e1d1d",
-					PathInRoot:       "golangci-lint",
+					Digests: map[string]string{
+						"sha256": "06c3715b43f4e92d0e9ec98ba8aa0f0c08c8963b2862ec130ec8e1c1ad9e1d1d",
+					},
+					PathInRoot: "golangci-lint",
 				},
 			},
 		},
 		{
 			name:      "miss by bad version",
-			storeRoot: "testdata/store/valid",
+			storeRoot: "testdata/store/valid-sha256-only",
 			toolName:  "golangci-lint",
 			versions:  []string{"v1.54.3"},
 		},
 		{
 			name:      "miss",
-			storeRoot: "testdata/store/valid",
+			storeRoot: "testdata/store/valid-sha256-only",
 			toolName:  "best-tool", // bogus
 		},
 	}
@@ -112,64 +118,80 @@ func TestStore_Entries(t *testing.T) {
 			storeRoot: "testdata/store/missing",
 		},
 		{
-			name:      "valid store",
-			storeRoot: "testdata/store/valid",
+			name:      "valid store (sha256 only)",
+			storeRoot: "testdata/store/valid-sha256-only",
 			want: []StoreEntry{
 				{
-					root:             "testdata/store/valid",
+					root:             "testdata/store/valid-sha256-only",
 					Name:             "quill",
 					InstalledVersion: "v0.4.1",
-					Digests:          "56656877b8b0e0c06a96e83df12157565b91bb8f6b55c4051c0466edf0f08b85",
-					PathInRoot:       "quill",
+					Digests: map[string]string{
+						"sha256": "56656877b8b0e0c06a96e83df12157565b91bb8f6b55c4051c0466edf0f08b85",
+					},
+					PathInRoot: "quill",
 				},
 				{
-					root:             "testdata/store/valid",
+					root:             "testdata/store/valid-sha256-only",
 					Name:             "chronicle",
 					InstalledVersion: "v0.7.0",
-					Digests:          "e011590e5d55188e03a2fd58524853ddacd23ec2e5d58535e061339777c4043f",
-					PathInRoot:       "chronicle",
+					Digests: map[string]string{
+						"sha256": "e011590e5d55188e03a2fd58524853ddacd23ec2e5d58535e061339777c4043f",
+					},
+					PathInRoot: "chronicle",
 				},
 				{
-					root:             "testdata/store/valid",
+					root:             "testdata/store/valid-sha256-only",
 					Name:             "gosimports",
 					InstalledVersion: "v0.3.8",
-					Digests:          "9e5837236320efadb7a94675866cbd95e7a9716d635f3863603859698a37591a",
-					PathInRoot:       "gosimports",
+					Digests: map[string]string{
+						"sha256": "9e5837236320efadb7a94675866cbd95e7a9716d635f3863603859698a37591a",
+					},
+					PathInRoot: "gosimports",
 				},
 				{
-					root:             "testdata/store/valid",
+					root:             "testdata/store/valid-sha256-only",
 					Name:             "glow",
 					InstalledVersion: "v1.5.1",
-					Digests:          "c6f05b9383f97fbb6fb2bb84b87b3b99ed7a1708d8a1634ff66d5bff8180f3b0",
-					PathInRoot:       "glow",
+					Digests: map[string]string{
+						"sha256": "c6f05b9383f97fbb6fb2bb84b87b3b99ed7a1708d8a1634ff66d5bff8180f3b0",
+					},
+					PathInRoot: "glow",
 				},
 				{
-					root:             "testdata/store/valid",
+					root:             "testdata/store/valid-sha256-only",
 					Name:             "goreleaser",
 					InstalledVersion: "v1.20.0",
-					Digests:          "307dd15253ab292a57dff221671659f3133593df485cc08fdd8158d63222bb16",
-					PathInRoot:       "goreleaser",
+					Digests: map[string]string{
+						"sha256": "307dd15253ab292a57dff221671659f3133593df485cc08fdd8158d63222bb16",
+					},
+					PathInRoot: "goreleaser",
 				},
 				{
-					root:             "testdata/store/valid",
+					root:             "testdata/store/valid-sha256-only",
 					Name:             "golangci-lint",
 					InstalledVersion: "v1.54.2",
-					Digests:          "06c3715b43f4e92d0e9ec98ba8aa0f0c08c8963b2862ec130ec8e1c1ad9e1d1d",
-					PathInRoot:       "golangci-lint",
+					Digests: map[string]string{
+						"sha256": "06c3715b43f4e92d0e9ec98ba8aa0f0c08c8963b2862ec130ec8e1c1ad9e1d1d",
+					},
+					PathInRoot: "golangci-lint",
 				},
 				{
-					root:             "testdata/store/valid",
+					root:             "testdata/store/valid-sha256-only",
 					Name:             "bouncer",
 					InstalledVersion: "v0.4.0",
-					Digests:          "de42a2453c8e9b2587358c1f244a5cc0091c71385126f0fa3c0b3aec0feeaa4d",
-					PathInRoot:       "bouncer",
+					Digests: map[string]string{
+						"sha256": "de42a2453c8e9b2587358c1f244a5cc0091c71385126f0fa3c0b3aec0feeaa4d",
+					},
+					PathInRoot: "bouncer",
 				},
 				{
-					root:             "testdata/store/valid",
+					root:             "testdata/store/valid-sha256-only",
 					Name:             "task",
 					InstalledVersion: "v3.29.1",
-					Digests:          "8d92c81f07960c5363a1f424e88dd4b64a1dd4251378d53873fa65ea1aab271b",
-					PathInRoot:       "task",
+					Digests: map[string]string{
+						"sha256": "8d92c81f07960c5363a1f424e88dd4b64a1dd4251378d53873fa65ea1aab271b",
+					},
+					PathInRoot: "task",
 				},
 			},
 		},
@@ -264,7 +286,7 @@ func TestStore_AddTool(t *testing.T) {
 }
 
 func TestStore_Entries_IsACopy(t *testing.T) {
-	store, err := NewStore("testdata/store/valid")
+	store, err := NewStore("testdata/store/valid-sha256-only")
 	require.NoError(t, err)
 
 	gotEntries := store.Entries()
