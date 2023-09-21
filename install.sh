@@ -18,7 +18,7 @@ DOWNLOAD_TAG_INSTALL_SCRIPT=${DOWNLOAD_TAG_INSTALL_SCRIPT:-true}
 usage() (
   this=$1
   cat <<EOF
-$this: download go binaries for anchore/syft
+$this: download go binaries for ${OWNER}/${REPO}
 
 Usage: $this [-b] dir [-d] [tag]
   -b  the installation directory (dDefaults to ./bin)
