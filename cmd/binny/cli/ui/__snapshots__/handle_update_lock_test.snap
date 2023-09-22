@@ -1,0 +1,15 @@
+
+[TestHandler_updateLock/update_lock_in_progress - 1]
+ [95m⠙[0m [1mUpdating version locks[0m  ━━━━━━━━━━━━━━━━━━━━  [90m[current total][0m  
+[90m   ├── [0mfoo [92m1.2.3 → 1.3.0[0m
+[90m   ├── [0mbar [93m4.5.6[0m
+[90m   └── [0m[90mbaz[0m
+
+---
+
+[TestHandler_updateLock/update_lock_completed - 1]
+ [95m⠙[0m [1mUpdating version locks[0m  ━━━━━━━━━━━━━━━━━━━━  [90m[current total][0m  
+[90m   ├── [0mfoo [92m1.2.3 → 1.3.0[0m
+[90m   ├── [0mbar 4.5.6
+[90m   └── [0mbaz 7.8.9
+---

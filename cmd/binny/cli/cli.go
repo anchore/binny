@@ -1,7 +1,11 @@
 package cli
 
 import (
+	"os"
+
 	"github.com/anchore/binny/cmd/binny/cli/command"
+	"github.com/anchore/binny/cmd/binny/cli/internal/ui"
+	handler "github.com/anchore/binny/cmd/binny/cli/ui"
 	"github.com/anchore/binny/internal/bus"
 	"github.com/anchore/binny/internal/log"
 	"github.com/anchore/binny/internal/redact"
@@ -19,9 +23,25 @@ func New(id clio.Identification) clio.Application {
 		WithGlobalConfigFlag().   // add persistent -c <path> for reading an application config from
 		WithGlobalLoggingFlags(). // add persistent -v and -q flags tied to the logging config
 		WithConfigInRootHelp().   // --help on the root command renders the full application config in the help text
-		WithNoBus().
+		WithUIConstructor(
+			// select a UI based on the logging configuration and state of stdin (if stdin is a tty)
+			func(cfg clio.Config) ([]clio.UI, error) {
+				noUI := ui.None(cfg.Log.Quiet)
+				if !cfg.Log.AllowUI(os.Stdin) || cfg.Log.Quiet {
+					return []clio.UI{noUI}, nil
+				}
+
+				return []clio.UI{
+					ui.New(cfg.Log.Quiet,
+						handler.New(handler.DefaultHandlerConfig()),
+					),
+					noUI,
+				}, nil
+			},
+		).
 		WithLoggingConfig(clio.LoggingConfig{
-			Level: logger.InfoLevel,
+			// TODO: this should really be logger.DisabledLevel, but that does not appear to be working as expected
+			Level: logger.ErrorLevel,
 		}).
 		WithInitializers(
 			func(state *clio.State) error {

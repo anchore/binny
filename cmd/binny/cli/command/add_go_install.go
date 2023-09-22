@@ -102,5 +102,11 @@ func runAddGoInstallConfig(cmdCfg AddGoInstallConfig, nameVersion string) error 
 		Parameters:    installParamMap,
 	}
 
-	return yamlpatch.Write(cmdCfg.Config, yamlToolAppender{toolCfg: toolCfg})
+	if err := yamlpatch.Write(cmdCfg.Config, yamlToolAppender{toolCfg: toolCfg}); err != nil {
+		return fmt.Errorf("unable to write config: %w", err)
+	}
+
+	reportNewConfiguration(toolCfg)
+
+	return nil
 }

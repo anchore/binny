@@ -17,7 +17,7 @@ tools:
 
   - name: gh
     version:
-      want: v2.33.0
+      want: v2.35.0
     method: github-release
     with:
       repo: cli/cli
@@ -52,7 +52,7 @@ tools:
 
   - name: goreleaser
     version:
-      want: v1.20.0
+      want: v1.21.0
     method: github-release
     with:
       repo: goreleaser/goreleaser
@@ -73,7 +73,7 @@ tools:
 
   - name: task
     version:
-      want: v3.29.1
+      want: v3.30.1
     method: github-release
     with:
       repo: go-task/task

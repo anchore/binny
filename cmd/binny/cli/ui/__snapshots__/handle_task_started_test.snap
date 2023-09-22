@@ -1,0 +1,8 @@
+
+[TestHandler_taskStarted/task_in_progress - 1]
+ [95m⠙[0m [1mdoing something[0m  ━━━━━━━━━━━━━━━━━━━━  [90mcurrent[0m                                              [90mctx[0m
+---
+
+[TestHandler_taskStarted/task_complete - 1]
+ [92m✔[0m [1mdone something[0m   [90mcurrent[0m                                                                    [90mctx[0m
+---

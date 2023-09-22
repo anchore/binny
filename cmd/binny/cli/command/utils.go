@@ -1,6 +1,7 @@
 package command
 
 import (
+	"bytes"
 	"fmt"
 
 	"github.com/mitchellh/mapstructure"
@@ -8,6 +9,8 @@ import (
 
 	"github.com/anchore/binny/cmd/binny/cli/internal/yamlpatch"
 	"github.com/anchore/binny/cmd/binny/cli/option"
+	"github.com/anchore/binny/internal/bus"
+	"github.com/anchore/binny/internal/log"
 )
 
 func toMap(s any) (map[string]any, error) {
@@ -54,4 +57,18 @@ func (p yamlToolAppender) PatchYaml(node *yaml.Node) error {
 	toolsNode.Content = append(toolsNode.Content, patchNode.Content[0])
 
 	return nil
+}
+
+func reportNewConfiguration(cfg option.Tool) {
+	var buff bytes.Buffer
+	enc := yaml.NewEncoder(&buff)
+	enc.SetIndent(2)
+
+	if err := enc.Encode(&cfg); err != nil {
+		log.WithFields("error", err).Warn("unable to encode new tool configuration")
+	} else {
+		bus.Report(buff.String())
+	}
+
+	bus.Notify(fmt.Sprintf("Added tool configuration for %q", cfg.Name))
 }

@@ -30,6 +30,8 @@ func Run(app clio.Application) *cobra.Command {
 		Core: option.DefaultCore(),
 	}
 
+	var isHelpFlag bool
+
 	return app.SetupCommand(&cobra.Command{
 		Use:                "run TOOL [flags] [args]",
 		Short:              "run a specific tool",
@@ -41,9 +43,14 @@ func Run(app clio.Application) *cobra.Command {
 			}
 
 			name := args[0]
+
+			if name == "--help" || name == "-h" {
+				isHelpFlag = true
+			}
+
 			// note: this implies that the application configuration needs to be up to date with the tool names
 			// installed.
-			if !strset.New(cfg.Tools.Names()...).Has(name) {
+			if !isHelpFlag && !strset.New(cfg.Tools.Names()...).Has(name) {
 				return fmt.Errorf("no tool configured with name: %s", name)
 			}
 
@@ -53,6 +60,10 @@ func Run(app clio.Application) *cobra.Command {
 			var toolArgs []string
 			if len(args) > 1 {
 				toolArgs = args[1:]
+			}
+
+			if isHelpFlag {
+				return cmd.Help()
 			}
 
 			return runRunRUN(*cfg, args[0], toolArgs)

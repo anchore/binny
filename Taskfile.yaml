@@ -15,7 +15,7 @@ tasks:
   ## High-level tasks #################################
 
   default:
-    desc: Run all validation tasks
+    # desc: Run all validation tasks
     aliases:
       - pr-validations
       - validations
@@ -84,7 +84,7 @@ tasks:
     deps: [tools]
     cmds:
       - task: format
-      - "{{ .TOOL_DIR }}/golangci-lint run --tests=false"
+      - "{{ .TOOL_DIR }}/golangci-lint run --tests=false --fix"
 
   lint:
     desc: Run gofmt + golangci lint checks
@@ -106,12 +106,12 @@ tasks:
 
 
   check-licenses:
-    desc: Ensure transitive dependencies are compliant with the current license policy
+    # desc: Ensure transitive dependencies are compliant with the current license policy
     deps: [tools]
     cmd: "{{ .TOOL_DIR }}/bouncer check ./..."
 
   check-go-mod-tidy:
-    desc: Ensure go.mod and go.sum are up to date
+    # desc: Ensure go.mod and go.sum are up to date
     cmds:
       - .github/scripts/go-mod-tidy-check.sh && echo "go.mod and go.sum are tidy!"
 
@@ -171,20 +171,20 @@ tasks:
   ## CI-only targets #################################
 
   ci-check:
-    desc: Are you in CI?
+    # desc: Are you in CI?
     cmds:
       - cmd: .github/scripts/ci-check.sh
         silent: true
 
   ci-validate:
-    desc: Run all CI validations
+    # desc: Run all CI validations
     cmds:
       - cmd: .github/scripts/ci-check.sh
         silent: true
       - task: default
 
   ci-release:
-    desc: Create a release
+    # desc: Create a release
     deps: [tools]
     cmds:
       - task: ci-check
