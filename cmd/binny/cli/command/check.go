@@ -116,7 +116,7 @@ func checkTool(store *binny.Store, opt option.Tool, verifySha256Digest bool) (st
 	}
 
 	// otherwise continue to install the tool
-	err = tool.Check(t.Name(), resolvedVersion, store, tool.VerifyConfig{
+	err = tool.Check(store, t.Name(), resolvedVersion, tool.VerifyConfig{
 		VerifyXXH64Digest:  true,
 		VerifySHA256Digest: verifySha256Digest,
 	})

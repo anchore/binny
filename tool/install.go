@@ -51,8 +51,8 @@ func Install(tool binny.Tool, intent binny.VersionIntent, store *binny.Store, ve
 
 	stage.Set("validating")
 
-	err = Check(tool.Name(), resolvedVersion, store, verifyConfig)
-	if errors.Is(err, ErrMultipleInstallations) {
+	err = Check(store, tool.Name(), resolvedVersion, verifyConfig)
+	if errors.Is(err, binny.ErrMultipleInstallations) {
 		return err
 	}
 	if err == nil {

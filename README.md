@@ -50,10 +50,10 @@ tools:
 ```
 
 Then you can run:
-  - `binny install` to install all tools in the configuration
-  - `binny install <name>` to install a specific tool
-  - `binny check` to verify all configured tools are installed
-  - `binny update-lock` to update any pinned versions in the configuration with the latest available versions (and within any given constraints)
+  - `binny install [name...]` to install all tools in the configuration (or the given tool names)
+  - `binny check` to verify all configured tools are installed, return exit code 1 if any are missing or inconsistent
+  - `binny update-lock [name...]` to update any pinned versions in the configuration with the latest available versions (and within any given constraints)
+  - `binny list` to list all tools in the configuration and the installed store
 
 You can add tools to the configuration one of two ways:
     - manually, by adding a new entry to the configuration file (see the [Configuration](#configuration) section below)

@@ -57,7 +57,7 @@ func Test_check_sha256(t *testing.T) {
 			store, err := binny.NewStore(tt.storeRoot)
 			require.NoError(t, err)
 
-			tt.wantErr(t, Check(tt.toolName, tt.resolvedVersion, store, VerifyConfig{
+			tt.wantErr(t, Check(store, tt.toolName, tt.resolvedVersion, VerifyConfig{
 				VerifyXXH64Digest:  false,
 				VerifySHA256Digest: tt.verifyDigest,
 			}))

@@ -66,6 +66,7 @@ func New(id clio.Identification) clio.Application {
 		command.Check(app),
 		command.Run(app),
 		command.UpdateLock(app),
+		command.List(app),
 	)
 
 	return app
