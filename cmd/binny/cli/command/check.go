@@ -92,6 +92,8 @@ func runCheck(cmdCfg CheckConfig, names []string) (errs error) {
 		log.WithFields("tool", opt.Name, "version", resolvedVersion).Debug("installation verified")
 	}
 
+	monitor.AtomicStage.Set(strings.Join(names, ", "))
+
 	if errs != nil {
 		log.WithFields("tools", failedTools).Warn("verification failed")
 		return errs

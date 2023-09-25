@@ -2,6 +2,10 @@
 
 Manage a directory of binaries without a package manager.
 
+
+![demo](https://github.com/anchore/binny/assets/590471/8433bcb5-9e34-4b6c-896a-3e761a593152)
+
+
 ## Installation
 
 ```bash
@@ -24,6 +28,7 @@ tools:
     - name: gh
       version:
         want: v2.33.0
+        constraint: < v3
       method: github-release
       with:
         repo: cli/cli
@@ -31,6 +36,7 @@ tools:
     - name: quill
       version:
         want: v0.4.1
+        constraint: < v0.5
       method: github-release
       with:
         repo: anchore/quill
@@ -47,7 +53,7 @@ Then you can run:
   - `binny install` to install all tools in the configuration
   - `binny install <name>` to install a specific tool
   - `binny check` to verify all configured tools are installed
-  - `binny update-lock` to update any pinned versions in the configuration with the latest available versions
+  - `binny update-lock` to update any pinned versions in the configuration with the latest available versions (and within any given constraints)
 
 You can add tools to the configuration one of two ways:
     - manually, by adding a new entry to the configuration file (see the [Configuration](#configuration) section below)
