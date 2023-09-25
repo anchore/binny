@@ -2,7 +2,7 @@
 set -eu
 
 TOOL_DIR=.tool
-GH=$TOOL/gh
+GH=$TOOL_DIR/gh
 
 bold=$(tput bold)
 normal=$(tput sgr0)
