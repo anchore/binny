@@ -1,0 +1,48 @@
+
+[TestHandler_handleFileIndexingStarted/install_in_progress - 1]
+ [95m⠋[0m [1mcurrent total[0m   [92mfoo[0m[90m, [0m[93mbar[0m[90m, [0m[90mbaz[0m
+---
+
+[TestHandler_handleFileIndexingStarted/install_in_progress - 2]
+ [95m⠋[0m [1mcurrent total[0m   
+[90m   ├── [0m[92mfoo[0m 1.2.3
+[90m   ├── [0m[93mbar[0m 4.5.6
+[90m   └── [0m[90mbaz[0m
+
+---
+
+[TestHandler_handleFileIndexingStarted/install_completed - 1]
+ [1;92m✔[0m [1mcurrent total[0m   [90mfoo[0m[90m, [0m[90mbar[0m[90m, [0m[90mbaz[0m
+---
+
+[TestHandler_handleFileIndexingStarted/install_completed - 2]
+ [1;92m✔[0m [1mcurrent total[0m   
+[90m   ├── [0m[90mfoo[0m 1.2.3
+[90m   ├── [0m[90mbar[0m 4.5.6
+[90m   └── [0m[90mbaz[0m 7.8.9
+
+---
+
+[TestHandler_install/install_in_progress - 1]
+ [95m⠋[0m [1mcurrent total[0m   [92mfoo[0m[90m, [0m[93mbar[0m[90m, [0m[90mbaz[0m
+---
+
+[TestHandler_install/install_in_progress - 2]
+ [95m⠋[0m [1mcurrent total[0m   
+[90m   ├── [0m[92mfoo[0m 1.2.3
+[90m   ├── [0m[93mbar[0m 4.5.6
+[90m   └── [0m[90mbaz[0m
+
+---
+
+[TestHandler_install/install_completed - 1]
+ [1;92m✔[0m [1mcurrent total[0m   [90mfoo[0m[90m, [0m[90mbar[0m[90m, [0m[90mbaz[0m
+---
+
+[TestHandler_install/install_completed - 2]
+ [1;92m✔[0m [1mcurrent total[0m   
+[90m   ├── [0m[90mfoo[0m 1.2.3
+[90m   ├── [0m[90mbar[0m 4.5.6
+[90m   └── [0m[90mbaz[0m 7.8.9
+
+---

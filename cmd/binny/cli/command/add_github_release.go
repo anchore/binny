@@ -9,6 +9,7 @@ import (
 
 	"github.com/anchore/binny/cmd/binny/cli/internal/yamlpatch"
 	"github.com/anchore/binny/cmd/binny/cli/option"
+	"github.com/anchore/binny/internal/bus"
 	"github.com/anchore/binny/internal/log"
 	"github.com/anchore/binny/tool/githubrelease"
 	"github.com/anchore/clio"
@@ -65,8 +66,9 @@ func runGithubReleaseConfig(cmdCfg AddGithubReleaseConfig, repoVersion string) e
 	name = fields[1]
 
 	if strset.New(cmdCfg.Tools.Names()...).Has(name) {
-		// TODO: should this be an error?
-		log.Warnf("tool %q already configured", name)
+		message := fmt.Sprintf("tool %q already configured", name)
+		bus.Report(message)
+		log.Warn(message)
 		return nil
 	}
 
@@ -96,5 +98,11 @@ func runGithubReleaseConfig(cmdCfg AddGithubReleaseConfig, repoVersion string) e
 		Parameters:    installParamMap,
 	}
 
-	return yamlpatch.Write(cmdCfg.Config, yamlToolAppender{toolCfg: toolCfg})
+	if err := yamlpatch.Write(cmdCfg.Config, yamlToolAppender{toolCfg: toolCfg}); err != nil {
+		return fmt.Errorf("unable to write config: %w", err)
+	}
+
+	reportNewConfiguration(toolCfg)
+
+	return nil
 }

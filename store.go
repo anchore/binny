@@ -146,8 +146,8 @@ func (s *Store) stateFilePath() string {
 }
 
 func (s *Store) loadState() error {
-	s.lock.Lock()
-	defer s.lock.Unlock()
+	s.lock.RLock()
+	defer s.lock.RUnlock()
 
 	stateFilePath := s.stateFilePath()
 	log.WithFields("path", stateFilePath).Trace("loading state")
