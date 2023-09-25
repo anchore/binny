@@ -3,6 +3,7 @@ package command
 import (
 	"bytes"
 	"fmt"
+	"os"
 
 	"github.com/mitchellh/mapstructure"
 	"gopkg.in/yaml.v3"
@@ -54,12 +55,49 @@ func (p yamlToolAppender) PatchYaml(node *yaml.Node) error {
 
 	toolsNode := yamlpatch.FindToolsSequenceNode(node)
 
+	if toolsNode == nil {
+		return fmt.Errorf("unable to find tools sequence node")
+	}
+
 	toolsNode.Content = append(toolsNode.Content, patchNode.Content[0])
 
 	return nil
 }
 
-func reportNewConfiguration(cfg option.Tool) {
+func updateConfiguration(path string, cfg option.Tool) error {
+	if path == "" {
+		path = ".binny.yaml"
+	}
+
+	// if does not exist, create a new file
+	if info, err := os.Stat(path); os.IsNotExist(err) || info != nil && info.Size() == 0 {
+		newCfg := struct {
+			Tools []option.Tool `yaml:"tools"`
+		}{
+			Tools: []option.Tool{cfg},
+		}
+		by, err := yaml.Marshal(&newCfg)
+		if err != nil {
+			return fmt.Errorf("unable to encode new tool configuration: %w", err)
+		}
+
+		fh, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0644)
+		if err != nil {
+			return fmt.Errorf("unable to create config file: %w", err)
+		}
+
+		if _, err := fh.Write(by); err != nil {
+			return fmt.Errorf("unable to write config: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("unable to stat config file: %w", err)
+	} else {
+		// otherwise append to the existing file
+		if err := yamlpatch.Write(path, yamlToolAppender{toolCfg: cfg}); err != nil {
+			return fmt.Errorf("unable to write config: %w", err)
+		}
+	}
+
 	var buff bytes.Buffer
 	enc := yaml.NewEncoder(&buff)
 	enc.SetIndent(2)
@@ -71,4 +109,6 @@ func reportNewConfiguration(cfg option.Tool) {
 	}
 
 	bus.Notify(fmt.Sprintf("Added tool configuration for %q", cfg.Name))
+
+	return nil
 }

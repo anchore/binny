@@ -8,7 +8,6 @@ import (
 	"github.com/scylladb/go-set/strset"
 	"github.com/spf13/cobra"
 
-	"github.com/anchore/binny/cmd/binny/cli/internal/yamlpatch"
 	"github.com/anchore/binny/cmd/binny/cli/option"
 	"github.com/anchore/binny/internal/log"
 	"github.com/anchore/binny/tool/goinstall"
@@ -102,11 +101,5 @@ func runAddGoInstallConfig(cmdCfg AddGoInstallConfig, nameVersion string) error 
 		Parameters:    installParamMap,
 	}
 
-	if err := yamlpatch.Write(cmdCfg.Config, yamlToolAppender{toolCfg: toolCfg}); err != nil {
-		return fmt.Errorf("unable to write config: %w", err)
-	}
-
-	reportNewConfiguration(toolCfg)
-
-	return nil
+	return updateConfiguration(cmdCfg.Config, toolCfg)
 }

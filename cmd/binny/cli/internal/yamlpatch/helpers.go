@@ -19,8 +19,13 @@ func FindToolsSequenceNode(node *yaml.Node) *yaml.Node {
 		} else {
 			break
 		}
-		if v.Value == "tools" && next.Tag == "!!seq" {
-			return next
+		if v.Value == "tools" {
+			if next.Tag == "!!seq" {
+				return next
+			}
+			if next == nil {
+				return node.Content[idx]
+			}
 		}
 	}
 	return nil

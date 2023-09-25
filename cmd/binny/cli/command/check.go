@@ -64,7 +64,7 @@ func runCheck(cmdCfg CheckConfig, names []string) (errs error) {
 			WhileRunning: "Verifying installed tools",
 			OnSuccess:    "Verified installed tools",
 		},
-		cmdCfg.Root,
+		"",
 		len(toolOpts),
 	)
 
