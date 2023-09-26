@@ -3,7 +3,7 @@
 Manage a directory of binaries without a package manager.
 
 
-![binny-demo](https://github.com/anchore/binny/assets/590471/96423a9e-e27b-4bb5-9626-5969478198bb)
+![binny-demo](https://github.com/anchore/binny/assets/590471/cdfda64f-0ead-4604-8565-34a397a031b2)
 
 
 ## Installation
