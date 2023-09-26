@@ -155,7 +155,7 @@ Otherwise, the version resolver must be specified manually.
 
 
 
-### Version Methods
+### Version Resolver Methods
 
 The version method specifies how to determine the latest version for a tool.
 
