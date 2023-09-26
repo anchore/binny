@@ -185,7 +185,8 @@ tasks:
 
   ci-release:
     # desc: Create a release
-    deps: [tools, changelog]
+    deps: [tools]
     cmds:
       - task: ci-check
+      - "{{ .TOOL_DIR }}/chronicle -vvv | tee CHANGELOG.md"
       - "{{ .TOOL_DIR }}/goreleaser release --clean --release-notes CHANGELOG.md"
