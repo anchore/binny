@@ -65,7 +65,7 @@ func New(id clio.Identification) clio.Application {
 		command.Install(app),
 		command.Check(app),
 		command.Run(app),
-		command.UpdateLock(app),
+		command.Update(app),
 		command.List(app),
 	)
 

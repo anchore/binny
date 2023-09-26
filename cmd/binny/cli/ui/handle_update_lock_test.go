@@ -29,7 +29,7 @@ func TestHandler_updateLock(t *testing.T) {
 				}
 
 				start := partybus.Event{
-					Type:   event.CLIUpdateLockCmdStarted,
+					Type:   event.CLIUpdateCmdStarted,
 					Source: names,
 					Value:  total,
 				}
@@ -80,7 +80,7 @@ func TestHandler_updateLock(t *testing.T) {
 				}
 
 				start := partybus.Event{
-					Type:   event.CLIUpdateLockCmdStarted,
+					Type:   event.CLIUpdateCmdStarted,
 					Source: names,
 					Value:  total,
 				}

@@ -47,9 +47,9 @@ func New(cfg HandlerConfig) *Handler {
 
 	// register all supported event types with the respective handler functions
 	d.AddHandlers(map[partybus.EventType]bubbly.EventHandlerFn{
-		event.CLIInstallCmdStarted:    h.handleCLIInstallCmdStarted,
-		event.CLIUpdateLockCmdStarted: h.handleCLIUpdateLockCmdStarted,
-		event.TaskStartedEvent:        h.handleTaskStarted,
+		event.CLIInstallCmdStarted: h.handleCLIInstallCmdStarted,
+		event.CLIUpdateCmdStarted:  h.handleCLIUpdateLockCmdStarted,
+		event.TaskStartedEvent:     h.handleTaskStarted,
 	})
 
 	return h

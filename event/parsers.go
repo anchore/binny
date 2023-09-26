@@ -87,7 +87,7 @@ func ParseToolInstallationStarted(e partybus.Event) (Tool, progress.StagedProgre
 }
 
 func ParseUpdateLockCmdStarted(e partybus.Event) ([]string, progress.StagedProgressable, error) {
-	if err := checkEventType(e.Type, CLIUpdateLockCmdStarted); err != nil {
+	if err := checkEventType(e.Type, CLIUpdateCmdStarted); err != nil {
 		return nil, nil, err
 	}
 

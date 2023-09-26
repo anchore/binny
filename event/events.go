@@ -13,7 +13,7 @@ const (
 	// ToolInstallationStartedEvent is a partybus event that occurs when a single tool installation has begun
 	ToolInstallationStartedEvent partybus.EventType = typePrefix + "-tool-installation-started"
 
-	// ToolUpdateVersionStartedEvent is a partybus event that occurs when a single tool version update has begun (for update-lock command)
+	// ToolUpdateVersionStartedEvent is a partybus event that occurs when a single tool version update has begun (for the update command)
 	ToolUpdateVersionStartedEvent partybus.EventType = typePrefix + "-tool-update-version-started"
 
 	// TaskStartedEvent is a generic, monitorable partybus event that occurs when a task has begun
@@ -24,8 +24,8 @@ const (
 	// CLIInstallCmdStarted is a partybus event that occurs when the install CLI command has begun
 	CLIInstallCmdStarted partybus.EventType = cliTypePrefix + "-install-cmd-started"
 
-	// CLIUpdateLockCmdStarted is a partybus event that occurs when the install CLI command has begun
-	CLIUpdateLockCmdStarted partybus.EventType = cliTypePrefix + "-update-lock-cmd-started"
+	// CLIUpdateCmdStarted is a partybus event that occurs when the install CLI command has begun
+	CLIUpdateCmdStarted partybus.EventType = cliTypePrefix + "-update-cmd-started"
 
 	// CLIReport is a partybus event that occurs when an analysis result is ready for final presentation to stdout
 	CLIReport partybus.EventType = cliTypePrefix + "-report"

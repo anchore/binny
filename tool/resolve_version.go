@@ -39,7 +39,7 @@ func ResolveVersion(tool binny.VersionResolver, intent binny.VersionIntent) (str
 			}
 
 			if !constraintObj.Check(ver) {
-				return resolvedVersion, fmt.Errorf("resolved version %q is unsatisfied by constraint %q. Remove the constraint or run 'update-lock' to re-pin a valid version", resolvedVersion, constraint)
+				return resolvedVersion, fmt.Errorf("resolved version %q is unsatisfied by constraint %q. Remove the constraint or run 'update' to re-pin a valid version", resolvedVersion, constraint)
 			}
 		}
 	}

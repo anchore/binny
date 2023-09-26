@@ -52,7 +52,7 @@ tools:
 Then you can run:
   - `binny install [name...]` to install all tools in the configuration (or the given tool names)
   - `binny check` to verify all configured tools are installed, return exit code 1 if any are missing or inconsistent
-  - `binny update-lock [name...]` to update any pinned versions in the configuration with the latest available versions (and within any given constraints)
+  - `binny update [name...]` to update any pinned versions in the configuration with the latest available versions (and within any given constraints)
   - `binny list` to list all tools in the configuration and the installed store
 
 You can add tools to the configuration one of two ways:

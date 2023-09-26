@@ -33,7 +33,7 @@ func Run(app clio.Application) *cobra.Command {
 	var isHelpFlag bool
 
 	return app.SetupCommand(&cobra.Command{
-		Use:                "run TOOL [flags] [args]",
+		Use:                "run NAME [flags] [args]",
 		Short:              "run a specific tool",
 		DisableFlagParsing: true, // pass these as arguments to the tool
 		Args:               cobra.ArbitraryArgs,

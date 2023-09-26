@@ -27,7 +27,7 @@ type UpdateConfig struct {
 	option.Core `json:"" yaml:",inline" mapstructure:",squash"`
 }
 
-func UpdateLock(app clio.Application) *cobra.Command {
+func Update(app clio.Application) *cobra.Command {
 	cfg := &UpdateConfig{
 		StopOnError: false,
 		Core:        option.DefaultCore(),
@@ -36,8 +36,8 @@ func UpdateLock(app clio.Application) *cobra.Command {
 	var names []string
 
 	return app.SetupCommand(&cobra.Command{
-		Use:   "update-lock",
-		Short: "Update pinned tool version configuration with latest versions",
+		Use:   "update",
+		Short: "Update pinned tool version configuration with latest available versions (that are still within any provided constraints)",
 		Args:  cobra.ArbitraryArgs,
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			names = args
@@ -196,7 +196,7 @@ func trackUpdateLockCmd(toolNames []string) (*progress.Manual, *progress.AtomicS
 	stage := progress.NewAtomicStage("")
 
 	bus.Publish(partybus.Event{
-		Type:   event.CLIUpdateLockCmdStarted,
+		Type:   event.CLIUpdateCmdStarted,
 		Source: toolNames,
 		Value: struct {
 			progress.Stager
