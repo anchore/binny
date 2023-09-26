@@ -77,3 +77,10 @@ tools:
     method: github-release
     with:
       repo: go-task/task
+
+  - name: syft
+    version:
+      want: v0.91.0
+    method: github-release
+    with:
+      repo: anchore/syft

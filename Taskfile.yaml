@@ -171,22 +171,23 @@ tasks:
   ## CI-only targets #################################
 
   ci-check:
-    # desc: Are you in CI?
+    # desc: "[CI only] Are you in CI?"
     cmds:
       - cmd: .github/scripts/ci-check.sh
         silent: true
 
   ci-validate:
-    # desc: Run all CI validations
+    # desc: "[CI only] Run all CI validations"
     cmds:
-      - cmd: .github/scripts/ci-check.sh
-        silent: true
+      - task: ci-check
       - task: default
 
   ci-release:
-    # desc: Create a release
+    # desc: "[CI only] Create a release"
     deps: [tools]
     cmds:
       - task: ci-check
-      - "{{ .TOOL_DIR }}/chronicle -vvv | tee CHANGELOG.md"
+      - "{{ .TOOL_DIR }}/chronicle -vvv > CHANGELOG.md"
+      - cmd: "cat CHANGELOG.md"
+        silent: true
       - "{{ .TOOL_DIR }}/goreleaser release --clean --release-notes CHANGELOG.md"

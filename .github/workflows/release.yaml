@@ -6,6 +6,9 @@ on:
         description: tag the latest commit on main with the given version (prefixed with v)
         required: true
 
+permissions:
+  contents: read
+
 env:
   FORCE_COLOR: true
 
@@ -52,9 +55,6 @@ jobs:
         uses: ./.github/actions/bootstrap
         env:
           FORCE_COLOR: true
-        with:
-          # use the same cache we used for building snapshots
-          build-cache-key-prefix: "snapshot"
 
       - name: Tag release
         run: |
@@ -76,13 +76,3 @@ jobs:
           QUILL_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
           # for creating the release (requires write access to packages and content)
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: anchore/sbom-action@v0
-        continue-on-error: true
-        with:
-          artifact-name: sbom.spdx.json
-
-      - uses: actions/upload-artifact@v3
-        with:
-          name: artifacts
-          path: dist/**/*
