@@ -205,9 +205,10 @@ The `version.want` option allows a special entry:
 
 The `go-proxy` version method reaches out to `proxy.golang.org` to determine the latest version of a Go module. It requires the following configuration options:
 
-| Option | Description                                                                                      |
-|--------|--------------------------------------------------------------------------------------------------|
-| `module` | The FQDN to the Go module (e.g. `github.com/anchore/syft`)                  |
+| Option | Description                                                                                                          |
+|--------|----------------------------------------------------------------------------------------------------------------------|
+| `module` | The FQDN to the Go module (e.g. `github.com/anchore/syft`)                                                           |
+| `allow-unresolved-version` | If the latest version cannot be found by the proxy allow for "latest" as a valid value (which `go install` supports) | 
 
 The `version.want` option allows a special entry:
 - `latest`: don't pin to a version, use the latest available
