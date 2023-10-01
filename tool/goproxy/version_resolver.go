@@ -11,6 +11,8 @@ import (
 	"github.com/anchore/binny/internal/log"
 )
 
+const latest = "latest"
+
 var _ binny.VersionResolver = (*VersionResolver)(nil)
 
 type VersionResolver struct {
@@ -19,7 +21,8 @@ type VersionResolver struct {
 }
 
 type VersionResolutionParameters struct {
-	Module string `json:"module" yaml:"module" mapstructure:"module"`
+	Module                 string `json:"module" yaml:"module" mapstructure:"module"`
+	AllowUnresolvedVersion bool   `json:"allow-unresolved-version" yaml:"allow-unresolved-version" mapstructure:"allow-unresolved-version"`
 }
 
 func NewVersionResolver(cfg VersionResolutionParameters) *VersionResolver {
@@ -35,7 +38,7 @@ func (v VersionResolver) ResolveVersion(want, _ string) (string, error) {
 		return want, nil
 	}
 
-	if want == "latest" {
+	if want == latest {
 		return v.findLatestVersion("")
 	}
 
@@ -45,7 +48,7 @@ func (v VersionResolver) ResolveVersion(want, _ string) (string, error) {
 }
 
 func (v VersionResolver) UpdateVersion(want, constraint string) (string, error) {
-	if want == "latest" {
+	if want == latest {
 		if constraint != "" {
 			return "", fmt.Errorf("cannot specify a version constraint with 'latest' go module version")
 		}
@@ -75,8 +78,21 @@ func (v VersionResolver) findLatestVersion(versionConstraint string) (string, er
 		return "", fmt.Errorf("failed to filter latest version: %v", err)
 	}
 
-	log.WithFields("latest", latestVersion, "module", v.config.Module).
-		Trace("found latest version from the go proxy")
+	if latestVersion != "" {
+		log.WithFields(latest, latestVersion, "module", v.config.Module).
+			Trace("found latest version from the go proxy")
+	} else {
+		log.WithFields("module", v.config.Module).Trace("could not resolve latest version from go proxy")
+	}
+
+	if latestVersion == "" {
+		if v.config.AllowUnresolvedVersion {
+			// this can happen if the source repo has no tags, the proxy then won't know about it.
+			log.WithFields("module", v.config.Module).Trace("using 'latest' as the version")
+			return latest, nil
+		}
+		return "", fmt.Errorf("could not resolve latest version for module %q", v.config.Module)
+	}
 
 	return latestVersion, nil
 }
