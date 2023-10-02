@@ -1,6 +1,7 @@
 package goproxy
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -64,7 +65,7 @@ func TestVersionResolver_ResolveVersion(t *testing.T) {
 			version: "latest",
 			want:    "latest", // this is a pass through to go-install, which supports this as input
 			availableVersionsFetcher: func(url string) ([]string, error) {
-				return []string{""}, nil
+				return nil, fmt.Errorf("should never be called")
 			},
 		},
 	}

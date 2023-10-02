@@ -38,7 +38,7 @@ func (v VersionResolver) ResolveVersion(want, _ string) (string, error) {
 		return want, nil
 	}
 
-	if want == latest {
+	if want == latest && !v.config.AllowUnresolvedVersion {
 		return v.findLatestVersion("")
 	}
 
