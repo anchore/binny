@@ -20,6 +20,7 @@ type ListConfig struct {
 	Config       string `json:"config" yaml:"config" mapstructure:"config"`
 	option.Check `json:"" yaml:",inline" mapstructure:",squash"`
 	option.Core  `json:"" yaml:",inline" mapstructure:",squash"`
+	option.List  `json:"" yaml:",inline" mapstructure:",squash"`
 }
 
 func List(app clio.Application) *cobra.Command {
@@ -55,20 +56,34 @@ type toolStatus struct {
 }
 
 func runList(cmdCfg ListConfig) error {
-	names, toolOpts := selectNamesAndConfigs(cmdCfg.Core, nil)
-
 	// get the current store state
 	store, err := binny.NewStore(cmdCfg.Store.Root)
 	if err != nil {
 		return err
 	}
 
-	storedEntries := store.Entries()
+	allStatuses := getAllStatuses(cmdCfg, store)
 
+	// look for items in the store root that cannot be accounted for
+	// TODO
+
+	if cmdCfg.List.Updates {
+		return presentUpdates(allStatuses)
+	}
+
+	return presentList(allStatuses)
+}
+
+func getAllStatuses(cmdCfg ListConfig, store *binny.Store) []toolStatus {
 	var (
 		failedTools = make(map[string]error)
 		allStatus   []toolStatus
 	)
+
+	names, toolOpts := selectNamesAndConfigs(cmdCfg.Core, nil)
+
+	storedEntries := store.Entries()
+
 	for _, opt := range toolOpts {
 		status, entry, err := getStatus(store, opt)
 		if err != nil {
@@ -118,10 +133,7 @@ func runList(cmdCfg ListConfig) error {
 		})
 	}
 
-	// look for items in the store root that cannot be accounted for
-	// TODO
-
-	return presentList(allStatus)
+	return allStatus
 }
 
 func getStatus(store *binny.Store, opt option.Tool) (*toolStatus, *binny.StoreEntry, error) {
@@ -196,8 +208,86 @@ func removeEntry(entries []binny.StoreEntry, entry *binny.StoreEntry) []binny.St
 	return entries
 }
 
-func presentList(items []toolStatus) error {
-	if len(items) == 0 {
+func presentUpdates(statuses []toolStatus) error {
+	t := table.NewWriter()
+	t.SetStyle(table.StyleLight)
+	t.Style().Options.DrawBorder = false
+	t.Style().Options.SeparateColumns = false
+
+	titles := []string{
+		"Tool", "Update",
+	}
+
+	var header table.Row
+	for _, title := range titles {
+		header = append(header, title)
+	}
+	t.AppendHeader(header)
+
+	var rows []table.Row
+	for _, status := range statuses {
+		row := getToolUpdatesRow(status)
+		if row != nil {
+			rows = append(rows, row)
+		}
+	}
+
+	if len(rows) == 0 {
+		bus.Report("all tools up to date")
+		return nil
+	}
+
+	sort.Slice(rows, func(i, j int) bool {
+		// sort by name
+		return rows[i][0].(string) < rows[j][0].(string)
+	})
+
+	for _, row := range rows {
+		t.AppendRow(row)
+	}
+
+	bus.Report(t.Render())
+	return nil
+}
+
+func getToolUpdatesRow(item toolStatus) table.Row {
+	var (
+		commentary string
+		style      lipgloss.Style
+	)
+
+	if item.Error != nil {
+		commentary = item.Error.Error()
+		style = badStatus
+	} else {
+		if !item.IsInstalled {
+			commentary = "not installed"
+		} else {
+			switch {
+			case item.WantedVersion == "?":
+				commentary = ""
+			case item.InstalledVersion != item.ResolvedVersion:
+				commentary = fmt.Sprintf("%s → %s", summarizeVersion(item.InstalledVersion), summarizeVersion(item.ResolvedVersion))
+			case !item.HashIsValid:
+				commentary = ""
+			}
+		}
+	}
+
+	if commentary == "" {
+		return nil
+	}
+
+	row := table.Row{
+		item.Name,
+		style.Render(commentary),
+	}
+
+	return row
+}
+
+func presentList(statuses []toolStatus) error {
+	if len(statuses) == 0 {
 		bus.Report("no tools configured or installed")
 		return nil
 	}
@@ -217,15 +307,15 @@ func presentList(items []toolStatus) error {
 	// Name, Version (Resolved if not matching), [Constraint], Commentary if not valid
 
 	var constraintNeeded bool
-	for _, item := range items {
-		if item.Constraint != "" {
+	for _, status := range statuses {
+		if status.Constraint != "" {
 			constraintNeeded = true
 			break
 		}
 	}
 
 	titles := []string{
-		"Name", "Desired Version", "Constraint", "",
+		"Tool", "Desired Version", "Constraint", "",
 	}
 
 	var header table.Row
@@ -238,8 +328,8 @@ func presentList(items []toolStatus) error {
 	t.AppendHeader(header)
 
 	var rows []table.Row
-	for _, item := range items {
-		rows = append(rows, getToolStatusRow(item, constraintNeeded))
+	for _, status := range statuses {
+		rows = append(rows, getToolStatusRow(status, constraintNeeded))
 	}
 
 	sort.Slice(rows, func(i, j int) bool {
