@@ -257,7 +257,7 @@ func (s Store) saveState() error {
 func (e *StoreEntry) Verify(useXxh64, useSha256 bool) error {
 	// at least the file must exist
 	if _, err := os.Stat(e.Path()); err != nil {
-		return fmt.Errorf("failed to validate tool %q: %w", e.Name, err)
+		return err
 	}
 
 	if useXxh64 {

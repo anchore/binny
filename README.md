@@ -201,6 +201,9 @@ The `github-release` version method uses the GitHub Releases API to determine th
 The `version.want` option allows a special entry:
 - `latest`: don't pin to a version, use the latest available
 
+Note: this approach will might require a GitHub API token to be set in the `GITHUB_TOKEN` environment variable if there
+is a version constraint used.
+
 #### `go-proxy`
 
 The `go-proxy` version method reaches out to `proxy.golang.org` to determine the latest version of a Go module. It requires the following configuration options:

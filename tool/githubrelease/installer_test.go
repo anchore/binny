@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,8 +14,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/anchore/go-logger"
+	"github.com/anchore/go-logger/adapter/discard"
 )
 
 func TestInstaller_InstallTo(t *testing.T) {
@@ -23,7 +28,7 @@ func TestInstaller_InstallTo(t *testing.T) {
 	binaryAssetName := fmt.Sprintf("syft_%s_%s_%s", testTag, runtime.GOOS, runtime.GOARCH)
 	expectedChecksum := "688cf0875c5cc1c7d3a26249e48e8fa9f8cb61b79bdde593bfda6e4c367a692e"
 
-	setup := func(checksum string) func(user, repo, tag string) (*ghRelease, error) {
+	setup := func(checksum string) func(lgr logger.Logger, user, repo, tag string) (*ghRelease, error) {
 		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch {
 			case strings.Contains(r.URL.Path, "syft_"):
@@ -46,7 +51,7 @@ func TestInstaller_InstallTo(t *testing.T) {
 		}))
 		t.Cleanup(s.Close)
 
-		return func(user, repo, tag string) (*ghRelease, error) {
+		return func(_ logger.Logger, user, repo, tag string) (*ghRelease, error) {
 			assets := []ghAsset{
 				{
 					Name:        binaryAssetName,
@@ -61,11 +66,14 @@ func TestInstaller_InstallTo(t *testing.T) {
 					URL:         s.URL + "/checksums.txt",
 				})
 			}
+
+			theTime := time.Now()
+
 			return &ghRelease{
 				Tag:      testTag,
-				Date:     time.Now(),
-				IsLatest: true,
-				IsDraft:  false,
+				Date:     &theTime,
+				IsLatest: boolRef(true),
+				IsDraft:  boolRef(false),
 				Assets:   assets,
 			}, nil
 		}
@@ -73,7 +81,7 @@ func TestInstaller_InstallTo(t *testing.T) {
 
 	tests := []struct {
 		name           string
-		releaseFetcher func(user, repo, tag string) (*ghRelease, error)
+		releaseFetcher func(lgr logger.Logger, user, repo, tag string) (*ghRelease, error)
 		wantErr        require.ErrorAssertionFunc
 	}{
 		{
@@ -339,7 +347,7 @@ func Test_selectChecksumAsset(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, selectChecksumAsset(tt.assets))
+			assert.Equal(t, tt.want, selectChecksumAsset(discard.New(), tt.assets))
 		})
 	}
 }
@@ -395,7 +403,7 @@ func Test_selectBinaryAsset(t *testing.T) {
 			want: nil,
 		},
 		{
-			name: "binary assets executable",
+			name: "binary assets executable (by content type)",
 			args: args{
 				goOS:   "linux",
 				goArch: "amd64",
@@ -411,6 +419,44 @@ func Test_selectBinaryAsset(t *testing.T) {
 				Name:        "syft_0.89.0_linux_amd64",
 				ContentType: "application/x-executable",
 				URL:         "http://localhost:8080/syft_0.89.0_linux_amd64",
+			},
+		},
+		{
+			name: "binary assets executable (by lack of extension)",
+			args: args{
+				goOS:   "linux",
+				goArch: "amd64",
+				assets: []ghAsset{
+					{
+						Name:        "syft_0.89.0_linux_amd64",
+						ContentType: "", // important!
+						URL:         "http://localhost:8080/syft_0.89.0_linux_amd64",
+					},
+				},
+			},
+			want: &ghAsset{
+				Name:        "syft_0.89.0_linux_amd64",
+				ContentType: "", // important!
+				URL:         "http://localhost:8080/syft_0.89.0_linux_amd64",
+			},
+		},
+		{
+			name: "binary assets executable (by extension)",
+			args: args{
+				goOS:   "windows",
+				goArch: "amd64",
+				assets: []ghAsset{
+					{
+						Name:        "syft_0.89.0_windows_amd64.exe",
+						ContentType: "", // important!
+						URL:         "http://localhost:8080/syft_0.89.0_windows_amd64.exe",
+					},
+				},
+			},
+			want: &ghAsset{
+				Name:        "syft_0.89.0_windows_amd64.exe",
+				ContentType: "", // important!
+				URL:         "http://localhost:8080/syft_0.89.0_windows_amd64.exe",
 			},
 		},
 		{
@@ -451,10 +497,219 @@ func Test_selectBinaryAsset(t *testing.T) {
 				URL:         "http://localhost:8080/syft_0.89.0_macos_aarch64.tar.gz",
 			},
 		},
+		{
+			name: "consider by extension name instead of content type",
+			args: args{
+				goOS:   "darwin",
+				goArch: "arm64",
+				assets: []ghAsset{
+					{
+						Name:        "syft_0.89.0_macos_aarch64.tar.gz",
+						ContentType: "", // important!
+						URL:         "http://localhost:8080/syft_0.89.0_macos_aarch64.tar.gz",
+					},
+				},
+			},
+			want: &ghAsset{
+				Name:        "syft_0.89.0_macos_aarch64.tar.gz",
+				ContentType: "", // important!
+				URL:         "http://localhost:8080/syft_0.89.0_macos_aarch64.tar.gz",
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equalf(t, tt.want, selectBinaryAsset(tt.args.assets, tt.args.goOS, tt.args.goArch), "selectBinaryAsset(%v, %v, %v)", tt.args.assets, tt.args.goOS, tt.args.goArch)
+			assert.Equalf(t, tt.want, selectBinaryAsset(discard.New(), tt.args.assets, tt.args.goOS, tt.args.goArch), "selectBinaryAsset(%v, %v, %v)", tt.args.assets, tt.args.goOS, tt.args.goArch)
+		})
+	}
+}
+
+func Test_checksumURLVariants(t *testing.T) {
+
+	tests := []struct {
+		name string
+		user string
+		repo string
+		tag  string
+		want []string
+	}{
+		{
+			name: "happy path",
+			user: "anchore",
+			repo: "syft",
+			tag:  "v1.0.0",
+			want: []string{
+				"https://github.com/anchore/syft/releases/download/v1.0.0/checksums.txt",
+				"https://github.com/anchore/syft/releases/download/v1.0.0/syft-1.0.0-checksums.txt",
+				"https://github.com/anchore/syft/releases/download/v1.0.0/syft-v1.0.0-checksums.txt",
+				"https://github.com/anchore/syft/releases/download/v1.0.0/syft_1.0.0_checksums.txt",
+				"https://github.com/anchore/syft/releases/download/v1.0.0/syft_v1.0.0_checksums.txt",
+			},
+		},
+		{
+			name: "no v prefix on tag",
+			user: "anchore",
+			repo: "syft",
+			tag:  "1.0.0",
+			want: []string{
+				"https://github.com/anchore/syft/releases/download/1.0.0/checksums.txt",
+				"https://github.com/anchore/syft/releases/download/1.0.0/syft-1.0.0-checksums.txt",
+				"https://github.com/anchore/syft/releases/download/1.0.0/syft_1.0.0_checksums.txt",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, checksumURLVariants(tt.user, tt.repo, tt.tag))
+		})
+	}
+}
+
+func Test_handleChecksumsReader(t *testing.T) {
+	tests := []struct {
+		name     string
+		user     string
+		repo     string
+		tag      string
+		url      string
+		contents string
+		want     *ghRelease
+	}{
+		{
+			name: "empty",
+			user: "anchore",
+			repo: "syft",
+			tag:  "v0.93.0",
+			url:  "https://github.com/anchore/syft/releases/download/1.0.0/checksums.txt",
+			contents: `
+
+`,
+
+			want: nil,
+		},
+		{
+			name: "happy path",
+			user: "anchore",
+			repo: "syft",
+			tag:  "v0.93.0",
+			url:  "https://github.com/anchore/syft/releases/download/1.0.0/checksums.txt",
+			contents: `
+
+10ca05f5cfbac1b2c24a4a28b1f2a7446409769a74cc8a079a5c63bc2fbfb6e1  syft_0.93.0_linux_amd64.rpm
+169da07ce4cbe5f59ae3cc6a65b7b7b539ed07b987905e526d5fc4491ea0024e  syft_0.93.0_darwin_arm64.tar.gz
+
+`,
+
+			want: &ghRelease{
+				Tag: "v0.93.0",
+				Assets: []ghAsset{
+					{
+						Name:     "syft_0.93.0_linux_amd64.rpm",
+						URL:      "https://github.com/anchore/syft/releases/download/v0.93.0/syft_0.93.0_linux_amd64.rpm",
+						Checksum: "sha256:10ca05f5cfbac1b2c24a4a28b1f2a7446409769a74cc8a079a5c63bc2fbfb6e1",
+					},
+					{
+						Name:     "syft_0.93.0_darwin_arm64.tar.gz",
+						URL:      "https://github.com/anchore/syft/releases/download/v0.93.0/syft_0.93.0_darwin_arm64.tar.gz",
+						Checksum: "sha256:169da07ce4cbe5f59ae3cc6a65b7b7b539ed07b987905e526d5fc4491ea0024e",
+					},
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := cmp.Diff(tt.want, handleChecksumsReader(discard.New(), tt.user, tt.repo, tt.tag, tt.url, io.NopCloser(strings.NewReader(tt.contents))))
+			if d != "" {
+				t.Log(d)
+			}
+			assert.Equal(t, tt.want, handleChecksumsReader(discard.New(), tt.user, tt.repo, tt.tag, tt.url, io.NopCloser(strings.NewReader(tt.contents))))
+		})
+	}
+}
+
+func Test_processExpandedAssets(t *testing.T) {
+	tests := []struct {
+		name    string
+		fixture string
+		want    []ghAsset
+	}{
+		{
+			name:    "syft example",
+			fixture: "testdata/expandedAssets.html",
+			want: []ghAsset{
+				{
+					URL:  "https://github.com/anchore/syft/releases/download/v0.93.0/syft_0.93.0_checksums.txt",
+					Name: "syft_0.93.0_checksums.txt",
+				},
+				{
+					URL:  "https://github.com/anchore/syft/releases/download/v0.93.0/syft_0.93.0_darwin_amd64.tar.gz",
+					Name: "syft_0.93.0_darwin_amd64.tar.gz",
+				},
+				{
+					URL:  "https://github.com/anchore/syft/releases/download/v0.93.0/syft_0.93.0_darwin_arm64.tar.gz",
+					Name: "syft_0.93.0_darwin_arm64.tar.gz",
+				},
+				{
+					URL:  "https://github.com/anchore/syft/releases/download/v0.93.0/syft_0.93.0_linux_amd64.deb",
+					Name: "syft_0.93.0_linux_amd64.deb",
+				},
+				{
+					URL:  "https://github.com/anchore/syft/releases/download/v0.93.0/syft_0.93.0_linux_amd64.rpm",
+					Name: "syft_0.93.0_linux_amd64.rpm",
+				},
+				{
+					URL:  "https://github.com/anchore/syft/releases/download/v0.93.0/syft_0.93.0_linux_amd64.tar.gz",
+					Name: "syft_0.93.0_linux_amd64.tar.gz",
+				},
+				{
+					URL:  "https://github.com/anchore/syft/releases/download/v0.93.0/syft_0.93.0_linux_arm64.deb",
+					Name: "syft_0.93.0_linux_arm64.deb",
+				},
+				{
+					URL:  "https://github.com/anchore/syft/releases/download/v0.93.0/syft_0.93.0_linux_arm64.rpm",
+					Name: "syft_0.93.0_linux_arm64.rpm",
+				},
+				{
+					URL:  "https://github.com/anchore/syft/releases/download/v0.93.0/syft_0.93.0_linux_arm64.tar.gz",
+					Name: "syft_0.93.0_linux_arm64.tar.gz",
+				},
+				{
+					URL:  "https://github.com/anchore/syft/releases/download/v0.93.0/syft_0.93.0_linux_ppc64le.deb",
+					Name: "syft_0.93.0_linux_ppc64le.deb",
+				},
+				{
+					URL:  "https://github.com/anchore/syft/releases/download/v0.93.0/syft_0.93.0_linux_ppc64le.rpm",
+					Name: "syft_0.93.0_linux_ppc64le.rpm",
+				},
+				{
+					URL:  "https://github.com/anchore/syft/releases/download/v0.93.0/syft_0.93.0_linux_ppc64le.tar.gz",
+					Name: "syft_0.93.0_linux_ppc64le.tar.gz",
+				},
+				{
+					URL:  "https://github.com/anchore/syft/releases/download/v0.93.0/syft_0.93.0_linux_s390x.deb",
+					Name: "syft_0.93.0_linux_s390x.deb",
+				},
+				{
+					URL:  "https://github.com/anchore/syft/releases/download/v0.93.0/syft_0.93.0_linux_s390x.rpm",
+					Name: "syft_0.93.0_linux_s390x.rpm",
+				},
+				{
+					URL:  "https://github.com/anchore/syft/releases/download/v0.93.0/syft_0.93.0_linux_s390x.tar.gz",
+					Name: "syft_0.93.0_linux_s390x.tar.gz",
+				},
+				{
+					URL:  "https://github.com/anchore/syft/releases/download/v0.93.0/syft_0.93.0_windows_amd64.zip",
+					Name: "syft_0.93.0_windows_amd64.zip",
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fh, err := os.Open(tt.fixture)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, processExpandedAssets(discard.New(), fh, "my-url"))
 		})
 	}
 }
