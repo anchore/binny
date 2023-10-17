@@ -187,11 +187,17 @@ func downloadAndExtractAsset(lgr logger.Logger, asset ghAsset, checksumAsset *gh
 }
 
 func isArchiveAsset(asset ghAsset) bool {
-	return archiveMimeTypes.Has(asset.ContentType) || (asset.ContentType == "" && hasArchiveExtension(asset.Name))
+	if archiveMimeTypes.Has(asset.ContentType) {
+		return true
+	}
+	return asset.ContentType == "" && hasArchiveExtension(asset.Name)
 }
 
 func isBinaryAsset(asset ghAsset) bool {
-	return binaryMimeTypes.Has(asset.ContentType) || (asset.ContentType == "" && (hasBinaryExtension(asset.Name) || !hasKnownNonBinaryExtension(asset.Name)))
+	if binaryMimeTypes.Has(asset.ContentType) {
+		return true
+	}
+	return asset.ContentType == "" && (hasBinaryExtension(asset.Name))
 }
 
 func hasArchiveExtension(name string) bool {
@@ -344,8 +350,8 @@ func selectChecksumAsset(lgr logger.Logger, assets []ghAsset) *ghAsset {
 
 // this list is derived from https://github.com/golang/go/blob/master/src/go/build/syslist.go
 var architectureAliases = map[string][]string{
-	"386":         {"i386"},
-	"amd64":       {"x86_64"},
+	"386":         {"i386", "x32", "x86"},
+	"amd64":       {"x86_64", "86_64", "x86-64", "86-64"},
 	"amd64p32":    {},
 	"arm":         {},
 	"arm64":       {"aarch64"},
@@ -392,6 +398,20 @@ var osAliases = map[string][]string{
 	"zos":       {},
 }
 
+var (
+	archKeys = strset.New(flattenAliases(architectureAliases)...)
+	osKeys   = strset.New(flattenAliases(osAliases)...)
+)
+
+func flattenAliases(aliases map[string][]string) []string {
+	var as []string
+	for k, vs := range aliases {
+		as = append(as, k)
+		as = append(as, vs...)
+	}
+	return as
+}
+
 func selectBinaryAsset(lgr logger.Logger, assets []ghAsset, goOS, goArch string) *ghAsset {
 	// search for the asset by name with the OS and arch in the name
 	// e.g. chronicle_0.7.0_linux_amd64.tar.gz
@@ -415,7 +435,7 @@ func selectBinaryAsset(lgr logger.Logger, assets []ghAsset, goOS, goArch string)
 			continue
 		}
 
-		cleanName := strings.ReplaceAll(strings.ReplaceAll(strings.ToLower(asset.Name), ".", "_"), "-", "_")
+		cleanName := normalizedAssetName(asset.Name)
 
 		if !containsOneOf(cleanName, asSuffix(gooss)) {
 			lgr.WithFields("asset", asset.Name).Tracef("skipping asset (missing os %q)", gooss)
@@ -436,25 +456,27 @@ func selectBinaryAsset(lgr logger.Logger, assets []ghAsset, goOS, goArch string)
 	return nil
 }
 
+func normalizedAssetName(name string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(strings.ToLower(name), ".", "_"), "-", "_")
+}
+
 func hasBinaryExtension(name string) bool {
 	ext := path.Ext(name)
 	switch ext {
 	case ".exe", "":
 		return true
 	}
-	return false
-}
 
-func hasKnownNonBinaryExtension(name string) bool {
-	if hasArchiveExtension(name) {
+	cleanExt := normalizedAssetName(ext)
+	fields := strings.Split(cleanExt, "_")
+	// get the last field
+	cleanExt = fields[len(fields)-1]
+
+	if archKeys.Has(cleanExt) || osKeys.Has(cleanExt) {
+		// this is a loose confirmation that the suffix is not a file extension
 		return true
 	}
-	ext := path.Ext(name)
-	switch ext {
-	// note: we only need to check for the last part of any extension (that is, only ".gz" not ".tar.gz")
-	case ".pem", ".sig", ".txt", ".md", ".json", ".xml":
-		return true
-	}
+
 	return false
 }
 

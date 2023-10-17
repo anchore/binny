@@ -373,6 +373,76 @@ func Test_selectBinaryAsset(t *testing.T) {
 			want: nil,
 		},
 		{
+			name: "binary asset matching the target host last (with content type)",
+			args: args{
+				goOS:   "linux",
+				goArch: "amd64",
+				assets: []ghAsset{
+					{
+						Name:        "syft_0.89.0_linux_amd64.rpm",
+						ContentType: "application/x-rpm",
+						URL:         "http://localhost:8080/syft_0.89.0_linux_amd64.rpm",
+					},
+					{
+						Name:        "syft_0.89.0_linux_amd64.deb",
+						ContentType: "application/x-debian-package",
+						URL:         "http://localhost:8080/syft_0.89.0_linux_amd64.deb",
+					},
+					{
+						Name:        "syft_0.89.0_windows_amd64.msi",
+						ContentType: "application/x-msi",
+						URL:         "http://localhost:8080/syft_0.89.0_windows_amd64.msi",
+					},
+					{
+						Name:        "syft_0.89.0_linux_amd64",
+						ContentType: "application/x-executable",
+						URL:         "http://localhost:8080/syft_0.89.0_linux_amd64",
+					},
+				},
+			},
+			want: &ghAsset{
+
+				Name:        "syft_0.89.0_linux_amd64",
+				ContentType: "application/x-executable",
+				URL:         "http://localhost:8080/syft_0.89.0_linux_amd64",
+			},
+		},
+		{
+			name: "binary asset matching the target host last (no content type)",
+			args: args{
+				goOS:   "linux",
+				goArch: "amd64",
+				assets: []ghAsset{
+					{
+						Name:        "syft_0.89.0_linux_amd64.rpm",
+						ContentType: "", // important!
+						URL:         "http://localhost:8080/syft_0.89.0_linux_amd64.rpm",
+					},
+					{
+						Name:        "syft_0.89.0_linux_amd64.deb",
+						ContentType: "", // important!
+						URL:         "http://localhost:8080/syft_0.89.0_linux_amd64.deb",
+					},
+					{
+						Name:        "syft_0.89.0_windows_amd64.msi",
+						ContentType: "", // important!
+						URL:         "http://localhost:8080/syft_0.89.0_windows_amd64.msi",
+					},
+					{
+						Name:        "syft_0.89.0_linux_amd64",
+						ContentType: "", // important!
+						URL:         "http://localhost:8080/syft_0.89.0_linux_amd64",
+					},
+				},
+			},
+			want: &ghAsset{
+
+				Name:        "syft_0.89.0_linux_amd64",
+				ContentType: "",
+				URL:         "http://localhost:8080/syft_0.89.0_linux_amd64",
+			},
+		},
+		{
 			name: "no binary assets for target host",
 			args: args{
 				goOS:   "linux",
@@ -803,73 +873,6 @@ func Test_hasArchiveExtension(t *testing.T) {
 	}
 }
 
-func Test_hasKnownNonBinaryExtension(t *testing.T) {
-	tests := []struct {
-		name string
-		want bool
-	}{
-		// positive cases
-		{
-			name: "syft_0.93.0_linux_amd64.tar.gz",
-			want: true,
-		},
-		{
-			name: "syft_0.93.0_linux_amd64.tar",
-			want: true,
-		},
-		{
-			name: "syft_0.93.0_linux_amd64.tgz",
-			want: true,
-		},
-		{
-			name: "checksums.txt",
-			want: true,
-		},
-		{
-			name: "checksums.pem",
-			want: true,
-		},
-		{
-			name: "checksums.sig",
-			want: true,
-		},
-		// negative cases...
-		{
-			name: "thing.gz.does",
-			want: false,
-		},
-		{
-			name: "yajsv.darwin.amd64",
-			want: false,
-		},
-		{
-			name: "yajsv.darwin.arm64",
-			want: false,
-		},
-		{
-			name: "yajsv.linux.386",
-			want: false,
-		},
-		{
-			name: "yajsv.linux.amd64",
-			want: false,
-		},
-		{
-			name: "yajsv.windows.386.exe",
-			want: false,
-		},
-		{
-			name: "yajsv.windows.amd64.exe",
-			want: false,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, hasKnownNonBinaryExtension(tt.name))
-		})
-	}
-}
-
 func Test_isBinaryAsset(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -915,6 +918,95 @@ func Test_isBinaryAsset(t *testing.T) {
 				ContentType: "application/x-lzx",
 			},
 			want: false,
+		},
+		{
+			name: "not a binary (unknown extension)",
+			asset: ghAsset{
+				Name:        "syft_0.89.0_linux_amd64.gdg",
+				ContentType: "", // important!
+			},
+			want: false,
+		},
+		{
+			name: "not a binary (rpm extension)",
+			asset: ghAsset{
+				Name:        "syft_0.89.0_linux_amd64.rpm",
+				ContentType: "", // important!
+			},
+			want: false,
+		},
+		{
+			name: "not a binary (deb extension)",
+			asset: ghAsset{
+				Name:        "syft_0.89.0_linux_amd64.deb",
+				ContentType: "", // important!
+			},
+			want: false,
+		},
+		{
+			name: "architecture, not extension",
+			asset: ghAsset{
+				Name:        "syft.89.linux.amd64",
+				ContentType: "", // important!
+			},
+			want: true,
+		},
+		{
+			name: "architecture, not extension",
+			asset: ghAsset{
+				Name:        "syft.89.linux-amd64",
+				ContentType: "", // important!
+			},
+			want: true,
+		},
+
+		{
+			name: "yajsv.darwin.amd64",
+			asset: ghAsset{
+				Name:        "yajsv.darwin.amd64",
+				ContentType: "", // important!
+			},
+			want: true,
+		},
+		{
+			name: "yajsv.darwin.arm64",
+			asset: ghAsset{
+				Name:        "yajsv.darwin.arm64",
+				ContentType: "", // important!
+			},
+			want: true,
+		},
+		{
+			name: "yajsv.linux.386",
+			asset: ghAsset{
+				Name:        "yajsv.linux.386",
+				ContentType: "", // important!
+			},
+			want: true,
+		},
+		{
+			name: "yajsv.linux.amd64",
+			asset: ghAsset{
+				Name:        "yajsv.linux.amd64",
+				ContentType: "", // important!
+			},
+			want: true,
+		},
+		{
+			name: "yajsv.windows.386.exe",
+			asset: ghAsset{
+				Name:        "yajsv.windows.386.exe",
+				ContentType: "", // important!
+			},
+			want: true,
+		},
+		{
+			name: "yajsv.windows.amd64.exe",
+			asset: ghAsset{
+				Name:        "yajsv.windows.amd64.exe",
+				ContentType: "", // important!
+			},
+			want: true,
 		},
 	}
 	for _, tt := range tests {
