@@ -441,6 +441,66 @@ func Test_selectBinaryAsset(t *testing.T) {
 			},
 		},
 		{
+			name: "binary assets executable (by lack of extension) - regression",
+			args: args{
+				goOS:   "linux",
+				goArch: "amd64",
+				assets: []ghAsset{
+					{
+						Name: "yajsv.darwin.amd64",
+					},
+					{
+						Name: "yajsv.darwin.arm64",
+					},
+					{
+						Name: "yajsv.linux.386",
+					},
+					{
+						Name: "yajsv.linux.amd64",
+					},
+					{
+						Name: "yajsv.windows.386.exe",
+					},
+					{
+						Name: "yajsv.windows.amd64.exe",
+					},
+				},
+			},
+			want: &ghAsset{
+				Name: "yajsv.linux.amd64",
+			},
+		},
+		{
+			name: "binary assets executable (by extension) - regression",
+			args: args{
+				goOS:   "windows",
+				goArch: "amd64",
+				assets: []ghAsset{
+					{
+						Name: "yajsv.darwin.amd64",
+					},
+					{
+						Name: "yajsv.darwin.arm64",
+					},
+					{
+						Name: "yajsv.linux.386",
+					},
+					{
+						Name: "yajsv.linux.amd64",
+					},
+					{
+						Name: "yajsv.windows.386.exe",
+					},
+					{
+						Name: "yajsv.windows.amd64.exe",
+					},
+				},
+			},
+			want: &ghAsset{
+				Name: "yajsv.windows.amd64.exe",
+			},
+		},
+		{
 			name: "binary assets executable (by extension)",
 			args: args{
 				goOS:   "windows",
@@ -710,6 +770,210 @@ func Test_processExpandedAssets(t *testing.T) {
 			fh, err := os.Open(tt.fixture)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, processExpandedAssets(discard.New(), fh, "my-url"))
+		})
+	}
+}
+
+func Test_hasArchiveExtension(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{
+			name: "syft_0.93.0_linux_amd64.tar.gz",
+			want: true,
+		},
+		{
+			name: "syft_0.93.0_linux_amd64.tar",
+			want: true,
+		},
+		{
+			name: "syft_0.93.0_linux_amd64.tgz",
+			want: true,
+		},
+		{
+			name: "thing.gz.does",
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, hasArchiveExtension(tt.name))
+		})
+	}
+}
+
+func Test_hasKnownNonBinaryExtension(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		// positive cases
+		{
+			name: "syft_0.93.0_linux_amd64.tar.gz",
+			want: true,
+		},
+		{
+			name: "syft_0.93.0_linux_amd64.tar",
+			want: true,
+		},
+		{
+			name: "syft_0.93.0_linux_amd64.tgz",
+			want: true,
+		},
+		{
+			name: "checksums.txt",
+			want: true,
+		},
+		{
+			name: "checksums.pem",
+			want: true,
+		},
+		{
+			name: "checksums.sig",
+			want: true,
+		},
+		// negative cases...
+		{
+			name: "thing.gz.does",
+			want: false,
+		},
+		{
+			name: "yajsv.darwin.amd64",
+			want: false,
+		},
+		{
+			name: "yajsv.darwin.arm64",
+			want: false,
+		},
+		{
+			name: "yajsv.linux.386",
+			want: false,
+		},
+		{
+			name: "yajsv.linux.amd64",
+			want: false,
+		},
+		{
+			name: "yajsv.windows.386.exe",
+			want: false,
+		},
+		{
+			name: "yajsv.windows.amd64.exe",
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, hasKnownNonBinaryExtension(tt.name))
+		})
+	}
+}
+
+func Test_isBinaryAsset(t *testing.T) {
+	tests := []struct {
+		name  string
+		asset ghAsset
+		want  bool
+	}{
+		{
+			name: "binary by content type",
+			asset: ghAsset{
+				Name:        "thing.tar.gz",             // important! mismatch with content type
+				ContentType: "application/x-executable", // this is the reason for the match
+			},
+			want: true,
+		},
+		{
+			name: "binary by extension",
+			asset: ghAsset{
+				Name:        "thing.exe",
+				ContentType: "", // important!
+			},
+			want: true,
+		},
+		{
+			name: "binary by non extension",
+			asset: ghAsset{
+				Name:        "thing",
+				ContentType: "", // important!
+			},
+			want: true,
+		},
+		{
+			name: "not binary by extension",
+			asset: ghAsset{
+				Name:        "thing.tar",
+				ContentType: "", // important!
+			},
+			want: false,
+		},
+		{
+			name: "not binary by content type",
+			asset: ghAsset{
+				Name:        "thing", // important! cannot have extension
+				ContentType: "application/x-lzx",
+			},
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isBinaryAsset(tt.asset))
+		})
+	}
+}
+
+func Test_isArchiveAsset(t *testing.T) {
+	tests := []struct {
+		name  string
+		asset ghAsset
+		want  bool
+	}{
+		{
+			name: "archive by content type",
+			asset: ghAsset{
+				Name:        "thing.tar.gz",     // important! mismatch with content type
+				ContentType: "application/gzip", // this is the reason for the match
+			},
+			want: true,
+		},
+		{
+			name: "archive by extension",
+			asset: ghAsset{
+				Name:        "thing.tar",
+				ContentType: "", // important!
+			},
+			want: true,
+		},
+		{
+			name: "not archive by non extension",
+			asset: ghAsset{
+				Name:        "thing",
+				ContentType: "", // important!
+			},
+			want: false,
+		},
+		{
+			name: "not archive by extension",
+			asset: ghAsset{
+				Name:        "thing.md",
+				ContentType: "", // important!
+			},
+			want: false,
+		},
+		{
+			name: "not archive by content type",
+			asset: ghAsset{
+				Name:        "thing", // important! cannot have extension
+				ContentType: "application/x-sharedlib",
+			},
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isArchiveAsset(tt.asset))
 		})
 	}
 }

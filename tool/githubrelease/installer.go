@@ -175,21 +175,30 @@ func downloadAndExtractAsset(lgr logger.Logger, asset ghAsset, checksumAsset *gh
 	lgr.WithFields("size", v.Size(), "asset", asset.Name).Trace("downloaded asset")
 
 	switch {
-	case archiveMimeTypes.Has(asset.ContentType) || (asset.ContentType == "" && hasArchiveExtension(asset.Name)):
+	case isArchiveAsset(asset):
 		lgr.WithFields("asset", asset.Name).Trace("asset is an archive")
 		return extractArchive(assetPath, destDir)
-	case binaryMimeTypes.Has(asset.ContentType) || (asset.ContentType == "" && hasBinaryExtension(asset.Name)):
-		lgr.WithFields("asset", asset.Name).Trace("asset is a binary")
+	case isBinaryAsset(asset):
+		lgr.WithFields("asset", asset.Name).Trace("asset could be a binary")
 		return assetPath, nil
 	}
 
 	return "", fmt.Errorf("unsupported asset content-type: %q", asset.ContentType)
 }
 
+func isArchiveAsset(asset ghAsset) bool {
+	return archiveMimeTypes.Has(asset.ContentType) || (asset.ContentType == "" && hasArchiveExtension(asset.Name))
+}
+
+func isBinaryAsset(asset ghAsset) bool {
+	return binaryMimeTypes.Has(asset.ContentType) || (asset.ContentType == "" && (hasBinaryExtension(asset.Name) || !hasKnownNonBinaryExtension(asset.Name)))
+}
+
 func hasArchiveExtension(name string) bool {
 	ext := path.Ext(name)
 	switch ext {
-	case ".tar", ".zip", ".gz", ".bz2", ".xz", ".rar", ".7z", ".tar.gz", ".tgz", ".tar.bz", ".tbz", ".tar.zst", ".zst":
+	// note: we only need to check for the last part of any archive extension (that is, only ".gz" not ".tar.gz")
+	case ".tar", ".zip", ".gz", ".bz2", ".xz", ".rar", ".7z", ".tgz", ".bz", ".tbz", ".zst", ".zstd":
 		return true
 	}
 	return false
@@ -397,6 +406,15 @@ func selectBinaryAsset(lgr logger.Logger, assets []ghAsset, goOS, goArch string)
 	lgr.Trace("looking for binary artifact")
 
 	for _, asset := range assets {
+		switch {
+		case isBinaryAsset(asset) || isArchiveAsset(asset):
+			// pass
+		default:
+			lgr.WithFields("asset", asset.Name).Tracef("skipping asset (content type %q)", asset.ContentType)
+
+			continue
+		}
+
 		cleanName := strings.ReplaceAll(strings.ReplaceAll(strings.ToLower(asset.Name), ".", "_"), "-", "_")
 
 		if !containsOneOf(cleanName, asSuffix(gooss)) {
@@ -406,27 +424,9 @@ func selectBinaryAsset(lgr logger.Logger, assets []ghAsset, goOS, goArch string)
 
 		if isHostDarwin && containsOneOf(cleanName, universalDarwinArchSuffix) {
 			lgr.WithFields("asset", asset.Name).Trace("found asset (universal binary)")
-			// pass
+			return &asset
 		} else if !containsOneOf(cleanName, goarchs) {
 			lgr.WithFields("asset", asset.Name).Tracef("skipping asset (missing arch %q)", goarchs)
-			continue
-		}
-
-		// we only want to look at a section that doesn't have the version (with periods in it) but will have the
-		// extension (e.g. .tar.gz). If there is no extension, the odds of there being a version is still slim.
-		suffixWithExtension := asset.Name
-		if len(asset.Name) > 9 {
-			suffixWithExtension = asset.Name[len(asset.Name)-9:]
-		}
-
-		switch {
-		case archiveMimeTypes.Has(asset.ContentType) || (asset.ContentType == "" && hasArchiveExtension(suffixWithExtension)):
-			// pass
-		case binaryMimeTypes.Has(asset.ContentType) || (asset.ContentType == "" && hasBinaryExtension(suffixWithExtension)):
-			// pass
-		default:
-			lgr.WithFields("asset", asset.Name).Tracef("skipping asset (content type %q)", asset.ContentType)
-
 			continue
 		}
 
@@ -440,6 +440,19 @@ func hasBinaryExtension(name string) bool {
 	ext := path.Ext(name)
 	switch ext {
 	case ".exe", "":
+		return true
+	}
+	return false
+}
+
+func hasKnownNonBinaryExtension(name string) bool {
+	if hasArchiveExtension(name) {
+		return true
+	}
+	ext := path.Ext(name)
+	switch ext {
+	// note: we only need to check for the last part of any extension (that is, only ".gz" not ".tar.gz")
+	case ".pem", ".sig", ".txt", ".md", ".json", ".xml":
 		return true
 	}
 	return false
