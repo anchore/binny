@@ -9,13 +9,14 @@ import (
 
 func TestVersionResolver_ResolveVersion(t *testing.T) {
 	tests := []struct {
-		name           string
-		config         VersionResolutionParameters
-		version        string
-		constraint     string
-		releaseFetcher func(user, repo string) ([]ghRelease, error)
-		want           string
-		wantErr        require.ErrorAssertionFunc
+		name                 string
+		config               VersionResolutionParameters
+		version              string
+		constraint           string
+		releasesFetcher      func(user, repo string) ([]ghRelease, error)
+		latestReleaseFetcher func(user, repo string) (*ghRelease, error)
+		want                 string
+		wantErr              require.ErrorAssertionFunc
 	}{
 		{
 			name: "latest will trigger a lookup for the latest version",
@@ -24,7 +25,27 @@ func TestVersionResolver_ResolveVersion(t *testing.T) {
 			},
 			version: "latest",
 			want:    "2.0.0",
-			releaseFetcher: func(user, repo string) ([]ghRelease, error) {
+			latestReleaseFetcher: func(user, repo string) (*ghRelease, error) {
+				return &ghRelease{
+					Tag: "2.0.0",
+				}, nil
+			},
+			releasesFetcher: func(user, repo string) ([]ghRelease, error) {
+				t.Fatal("should not have been called")
+				return nil, nil
+			},
+		},
+		{
+			name: "fallback to fetching all releases if latest is not found",
+			config: VersionResolutionParameters{
+				Repo: "anchore/binny",
+			},
+			version: "latest",
+			want:    "2.0.0",
+			latestReleaseFetcher: func(user, repo string) (*ghRelease, error) {
+				return nil, nil
+			},
+			releasesFetcher: func(user, repo string) ([]ghRelease, error) {
 				return []ghRelease{
 					{
 						Tag: "1.0.0",
@@ -61,7 +82,8 @@ func TestVersionResolver_ResolveVersion(t *testing.T) {
 				tt.wantErr = require.NoError
 			}
 			v := NewVersionResolver(tt.config)
-			v.releaseFetcher = tt.releaseFetcher
+			v.latestReleaseFetcher = tt.latestReleaseFetcher
+			v.releasesFetcher = tt.releasesFetcher
 
 			got, err := v.ResolveVersion(tt.version, tt.constraint)
 			tt.wantErr(t, err)
@@ -72,13 +94,14 @@ func TestVersionResolver_ResolveVersion(t *testing.T) {
 
 func TestVersionResolver_UpdateVersion(t *testing.T) {
 	tests := []struct {
-		name           string
-		config         VersionResolutionParameters
-		version        string
-		constraint     string
-		releaseFetcher func(user, repo string) ([]ghRelease, error)
-		want           string
-		wantErr        require.ErrorAssertionFunc
+		name                 string
+		config               VersionResolutionParameters
+		version              string
+		constraint           string
+		releaseFetcher       func(user, repo string) ([]ghRelease, error)
+		latestReleaseFetcher func(user, repo string) (*ghRelease, error)
+		want                 string
+		wantErr              require.ErrorAssertionFunc
 	}{
 		{
 			name: "latest does not update the version value",
@@ -89,12 +112,15 @@ func TestVersionResolver_UpdateVersion(t *testing.T) {
 			want:    "latest",
 		},
 		{
-			name: "semver input will trigger a lookup for the latest version",
+			name: "semver input will trigger a lookup for the all releases",
 			config: VersionResolutionParameters{
 				Repo: "anchore/binny",
 			},
 			version: "1.0.0",
 			want:    "2.0.0",
+			latestReleaseFetcher: func(user, repo string) (*ghRelease, error) {
+				return nil, nil
+			},
 			releaseFetcher: func(user, repo string) ([]ghRelease, error) {
 				return []ghRelease{
 					{
@@ -107,6 +133,23 @@ func TestVersionResolver_UpdateVersion(t *testing.T) {
 						Tag: "1.1.0",
 					},
 				}, nil
+			},
+		},
+		{
+			name: "semver input will trigger a lookup for the latest release",
+			config: VersionResolutionParameters{
+				Repo: "anchore/binny",
+			},
+			version: "1.0.0",
+			want:    "2.0.0",
+			latestReleaseFetcher: func(user, repo string) (*ghRelease, error) {
+				return &ghRelease{
+					Tag: "2.0.0",
+				}, nil
+			},
+			releaseFetcher: func(user, repo string) ([]ghRelease, error) {
+				t.Fatal("should not have been called")
+				return nil, nil
 			},
 		},
 		{
@@ -124,7 +167,8 @@ func TestVersionResolver_UpdateVersion(t *testing.T) {
 				tt.wantErr = require.NoError
 			}
 			v := NewVersionResolver(tt.config)
-			v.releaseFetcher = tt.releaseFetcher
+			v.latestReleaseFetcher = tt.latestReleaseFetcher
+			v.releasesFetcher = tt.releaseFetcher
 
 			got, err := v.UpdateVersion(tt.version, tt.constraint)
 			tt.wantErr(t, err)
@@ -182,19 +226,21 @@ func Test_filterToLatestVersion(t *testing.T) {
 			versionConstraint: "< 2.0.0",
 			releases: []ghRelease{
 				{
-					Tag: "2.0.0",
+					Tag:      "2.0.0",
+					IsLatest: boolRef(false),
 				},
 				{
 					Tag:      "somethingbogus",
-					IsLatest: true,
+					IsLatest: boolRef(true),
 				},
 				{
-					Tag: "1.1.0",
+					Tag:      "1.1.0",
+					IsLatest: boolRef(false),
 				},
 			},
 			want: &ghRelease{
 				Tag:      "somethingbogus",
-				IsLatest: true,
+				IsLatest: boolRef(true),
 			},
 		},
 		{
@@ -203,15 +249,19 @@ func Test_filterToLatestVersion(t *testing.T) {
 			releases: []ghRelease{
 				{
 					Tag:      "2.0.0",
-					IsDraft:  true,
-					IsLatest: true,
+					IsDraft:  boolRef(true),
+					IsLatest: boolRef(true),
 				},
 				{
-					Tag: "1.1.0",
+					Tag:      "1.1.0",
+					IsLatest: boolRef(false),
+					IsDraft:  boolRef(false),
 				},
 			},
 			want: &ghRelease{
-				Tag: "1.1.0",
+				Tag:      "1.1.0",
+				IsLatest: boolRef(false),
+				IsDraft:  boolRef(false),
 			},
 		},
 	}

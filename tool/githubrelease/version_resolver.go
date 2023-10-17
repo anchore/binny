@@ -2,7 +2,10 @@ package githubrelease
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"sort"
 	"strings"
@@ -20,8 +23,9 @@ import (
 var _ binny.VersionResolver = (*VersionResolver)(nil)
 
 type VersionResolver struct {
-	config         VersionResolutionParameters
-	releaseFetcher func(user, repo string) ([]ghRelease, error)
+	config               VersionResolutionParameters
+	latestReleaseFetcher func(user, repo string) (*ghRelease, error)
+	releasesFetcher      func(user, repo string) ([]ghRelease, error)
 }
 
 type VersionResolutionParameters struct {
@@ -30,8 +34,9 @@ type VersionResolutionParameters struct {
 
 func NewVersionResolver(cfg VersionResolutionParameters) *VersionResolver {
 	return &VersionResolver{
-		config:         cfg,
-		releaseFetcher: fetchAllReleases,
+		config:               cfg,
+		latestReleaseFetcher: fetchLatestReleaseFromGithubFacade,
+		releasesFetcher:      fetchAllReleasesFromGithubV4API,
 	}
 }
 
@@ -69,7 +74,24 @@ func (v VersionResolver) findLatestVersion(versionConstraint string) (string, er
 	}
 	user, repo := fields[0], fields[1]
 
-	releases, err := v.releaseFetcher(user, repo)
+	latestRelease, err := v.latestReleaseFetcher(user, repo)
+	if err != nil {
+		return "", fmt.Errorf("unable to fetch latest release: %v", err)
+	}
+
+	// try the cheapest path forward first -- if this is compliant to the constraint, use it.
+	if latestRelease != nil {
+		latestVersion, err := filterToLatestVersion([]ghRelease{*latestRelease}, versionConstraint)
+		if err != nil {
+			return "", fmt.Errorf("unable to filter to latest version: %v", err)
+		}
+		if latestVersion != nil {
+			return latestVersion.Tag, nil
+		}
+	}
+
+	// this path requires the most work, but is typically needed if there is a constraint
+	releases, err := v.releasesFetcher(user, repo)
 	if err != nil {
 		return "", fmt.Errorf("unable to fetch all releases: %v", err)
 	}
@@ -103,7 +125,7 @@ func filterToLatestVersion(releases []ghRelease, versionConstraint string) (*ghR
 	var latest *ghRelease
 	for i := range releases {
 		ty := releases[i]
-		if ty.IsDraft {
+		if ty.IsDraft != nil && *ty.IsDraft {
 			continue
 		}
 
@@ -113,7 +135,7 @@ func filterToLatestVersion(releases []ghRelease, versionConstraint string) (*ghR
 			ver = nil
 		}
 
-		if ty.IsLatest {
+		if ty.IsLatest != nil && *ty.IsLatest {
 			if constraint != nil && ver != nil {
 				if constraint.Check(ver) {
 					latest = &ty
@@ -151,25 +173,75 @@ func filterToLatestVersion(releases []ghRelease, versionConstraint string) (*ghR
 	return latest, nil
 }
 
-type ghRelease struct {
-	Tag      string
-	Date     time.Time
-	IsLatest bool
-	IsDraft  bool
-	Assets   []ghAsset
+func fetchLatestReleaseFromGithubFacade(user, repo string) (*ghRelease, error) {
+	url := fmt.Sprintf("https://github.com/%s/%s/releases/latest", user, repo)
+	resp, err := downloadJSON(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil
+	}
+
+	content, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	type ghResponse struct {
+		TagName string `json:"tag_name"`
+	}
+
+	var ghResp ghResponse
+	if err := json.Unmarshal(content, &ghResp); err != nil {
+		return nil, fmt.Errorf("unable to unmarshal response from %q: %w", url, err)
+	}
+
+	if ghResp.TagName == "" {
+		return nil, nil
+	}
+
+	return &ghRelease{
+		Tag: ghResp.TagName,
+	}, nil
 }
 
-type ghAsset struct {
-	Name        string
-	ContentType string
-	URL         string
+func downloadJSON(url string) (*http.Response, error) {
+	headers := map[string]string{"Accept": "application/json"}
+
+	client := &http.Client{
+		Timeout: time.Second * 10,
+	}
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	log.WithFields("http-status", resp.StatusCode).Tracef("http get [application/json] %q", url)
+
+	return resp, nil
 }
 
 //nolint:funlen
-func fetchAllReleases(user, repo string) ([]ghRelease, error) {
+func fetchAllReleasesFromGithubV4API(user, repo string) ([]ghRelease, error) {
+	token := os.Getenv("GITHUB_TOKEN")
+	if token == "" {
+		return nil, fmt.Errorf("GITHUB_TOKEN environment variable not set but is required to use the GitHub v4 API")
+	}
 	src := oauth2.StaticTokenSource(
 		// TODO: DI this
-		&oauth2.Token{AccessToken: os.Getenv("GITHUB_TOKEN")},
+		&oauth2.Token{AccessToken: token},
 	)
 	httpClient := oauth2.NewClient(context.Background(), src)
 	client := githubv4.NewClient(httpClient)
@@ -234,8 +306,10 @@ func fetchAllReleases(user, repo string) ([]ghRelease, error) {
 		}
 		//  limit = query.RateLimit
 
-		for _, iEdge := range query.Repository.Releases.Edges {
+		for iE := range query.Repository.Releases.Edges {
 			var assets []ghAsset
+
+			iEdge := query.Repository.Releases.Edges[iE]
 
 			// for {
 			for _, a := range iEdge.Node.ReleaseAssets.Nodes {
@@ -257,9 +331,9 @@ func fetchAllReleases(user, repo string) ([]ghRelease, error) {
 
 			allReleases = append(allReleases, ghRelease{
 				Tag:      string(iEdge.Node.TagName),
-				IsLatest: bool(iEdge.Node.IsLatest),
-				IsDraft:  bool(iEdge.Node.IsDraft),
-				Date:     iEdge.Node.PublishedAt.Time,
+				IsLatest: boolRef(bool(iEdge.Node.IsLatest)),
+				IsDraft:  boolRef(bool(iEdge.Node.IsDraft)),
+				Date:     &iEdge.Node.PublishedAt.Time,
 				Assets:   assets,
 			})
 		}
@@ -275,10 +349,26 @@ func fetchAllReleases(user, repo string) ([]ghRelease, error) {
 
 	sort.Slice(allReleases, func(i, j int) bool {
 		// sort from latest to earliest
-		return allReleases[i].Date.After(allReleases[j].Date)
+		if allReleases[i].Date == nil && allReleases[j].Date == nil {
+			return false
+		}
+
+		if allReleases[i].Date == nil {
+			return false
+		}
+
+		if allReleases[j].Date == nil {
+			return true
+		}
+
+		return allReleases[i].Date.After(*allReleases[j].Date)
 	})
 
 	return allReleases, nil
+}
+
+func boolRef(b bool) *bool {
+	return &b
 }
 
 // func printJSON(v interface{}) {

@@ -37,12 +37,14 @@ func NewInstaller(cfg InstallerParameters) Installer {
 }
 
 func (i Installer) InstallTo(version, destDir string) (string, error) {
-	log.WithFields("url", i.config.URL, "version", version).Debug("installing from hosted shell script")
+	lgr := log.Nested("tool", fmt.Sprintf("%s@%s", i.config.URL, version))
+
+	lgr.Debug("installing from hosted shell script")
 
 	const scriptName = "install.sh"
 
 	scriptPath := filepath.Join(destDir, scriptName)
-	if err := internal.DownloadFile(i.config.URL, scriptPath, ""); err != nil {
+	if err := internal.DownloadFile(lgr, i.config.URL, scriptPath, ""); err != nil {
 		return "", fmt.Errorf("failed to download script: %v", err)
 	}
 
