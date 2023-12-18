@@ -152,6 +152,7 @@ func (s *Store) AddTool(toolName string, resolvedVersion, pathOutsideRoot string
 	// move the file into the store at root/basename
 	targetName := toolName
 	targetPath := filepath.Join(s.root, toolName)
+
 	if err := os.Rename(pathOutsideRoot, targetPath); err != nil {
 		return err
 	}
