@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/wagoodman/go-partybus"
@@ -27,18 +28,11 @@ func Install(tool binny.Tool, intent binny.VersionIntent, store *binny.Store, ve
 			prog.SetCompleted()
 		}
 	}()
-
-	tmpdir, err := os.MkdirTemp("", fmt.Sprintf("binny-install-%s-", tool.Name()))
+	tmpdir, cleanup, err := makeStagingArea(store, tool.Name())
+	defer cleanup()
 	if err != nil {
-		return fmt.Errorf("failed to create temp directory: %w", err)
+		return err
 	}
-	defer func() {
-		err := os.RemoveAll(tmpdir)
-		if err != nil {
-			log.WithFields("tool", tool.Name(), "dir", tmpdir).
-				Warnf("failed to remove temp directory: %v", err)
-		}
-	}()
 
 	log.WithFields("tool", tool.Name(), "dir", tmpdir).Trace("tool staging directory")
 
@@ -81,6 +75,35 @@ func Install(tool binny.Tool, intent binny.VersionIntent, store *binny.Store, ve
 	stage.Set("")
 
 	return nil
+}
+
+// makeStagingArea creates a temporary directory within the store root to stage the installation of a tool. A valid
+// function should always be returned for cleanup, even if an error is returned.
+func makeStagingArea(store *binny.Store, toolName string) (string, func(), error) {
+	cleanup := func() {}
+	// note: we choose a staging directory that is within the store to ensure the final move is atomic
+	// and not across filesystems (which would not succeed). We do this instead of a copy in case one of the binaries
+	// being managed is in use, in which case a copy would fail with "text file busy" error, whereas a move would
+	// allow for the in-use binary to continue to be used (since an unlink is performed on the path to the binary
+	// or the path to the parent of the binary). We use the absolute path to the store root to ensure that there is
+	// no confusion on how to interpret this path across different installer implementations.
+	absRoot, err := filepath.Abs(store.Root())
+	if err != nil {
+		return "", cleanup, fmt.Errorf("failed to get absolute path for store root: %w", err)
+	}
+	tmpdir, err := os.MkdirTemp(absRoot, fmt.Sprintf("binny-install-%s-", toolName))
+	if err != nil {
+		return "", cleanup, fmt.Errorf("failed to create temp directory: %w", err)
+	}
+	cleanup = func() {
+		err := os.RemoveAll(tmpdir)
+		if err != nil {
+			log.WithFields("tool", toolName, "dir", tmpdir).
+				Warnf("failed to remove temp directory: %v", err)
+		}
+	}
+
+	return tmpdir, cleanup, nil
 }
 
 func trackInstallation(repo, version string) (*progress.Manual, *progress.AtomicStage) {
