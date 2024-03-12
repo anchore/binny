@@ -2,12 +2,14 @@ package command
 
 import (
 	"fmt"
+	"path/filepath"
+
+	"github.com/scylladb/go-set/strset"
+	"github.com/spf13/cobra"
+
 	"github.com/anchore/binny"
 	"github.com/anchore/binny/cmd/binny/cli/option"
 	"github.com/anchore/clio"
-	"github.com/scylladb/go-set/strset"
-	"github.com/spf13/cobra"
-	"path/filepath"
 )
 
 type RunConfig struct {
