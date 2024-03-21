@@ -22,6 +22,7 @@ tasks:
     cmds:
       - task: static-analysis
       - task: test
+      - task: assert-windows-build
       - task: build
 
   static-analysis:
@@ -157,6 +158,10 @@ tasks:
 
       - "{{ .TOOL_DIR }}/goreleaser release --clean --skip=publish --skip=sign --snapshot --config {{ .TMP_DIR }}/goreleaser.yaml"
 
+  assert-windows-build:
+    desc: Assert that binny compiles on Windows
+    cmds:
+      - "GOOS=windows go build ./cmd/binny"
 
   ## Release targets #################################
 
