@@ -1,10 +1,14 @@
 package command
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/itchyny/gojq"
 	"github.com/jedib0t/go-pretty/table"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
@@ -17,15 +21,20 @@ import (
 )
 
 type ListConfig struct {
-	Config       string `json:"config" yaml:"config" mapstructure:"config"`
-	option.Check `json:"" yaml:",inline" mapstructure:",squash"`
-	option.Core  `json:"" yaml:",inline" mapstructure:",squash"`
-	option.List  `json:"" yaml:",inline" mapstructure:",squash"`
+	Config        string `json:"config" yaml:"config" mapstructure:"config"`
+	option.Check  `json:"" yaml:",inline" mapstructure:",squash"`
+	option.Core   `json:"" yaml:",inline" mapstructure:",squash"`
+	option.List   `json:"" yaml:",inline" mapstructure:",squash"`
+	option.Format `json:"" yaml:",inline" mapstructure:",squash"`
 }
 
 func List(app clio.Application) *cobra.Command {
 	cfg := &ListConfig{
 		Core: option.DefaultCore(),
+		Format: option.Format{
+			Output:           "table",
+			AllowableFormats: []string{"table", "json"},
+		},
 	}
 
 	return app.SetupCommand(&cobra.Command{
@@ -34,8 +43,12 @@ func List(app clio.Application) *cobra.Command {
 		Aliases: []string{
 			"ls",
 		},
-		Args: cobra.NoArgs,
+		Args: cobra.ArbitraryArgs,
 		PreRunE: func(cmd *cobra.Command, args []string) error {
+			if cfg.Format.JQCommand != "" && cfg.Format.Output != "json" {
+				return fmt.Errorf("--jq can only be used when --output format is 'json'")
+			}
+			cfg.IncludeFilter = args
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -48,10 +61,10 @@ type toolStatus struct {
 	Name             string `json:"name"`
 	WantedVersion    string `json:"wantedVersion"`    // this is the version the user asked for
 	ResolvedVersion  string `json:"resolvedVersion"`  // if the user asks for a non-specific version (e.g. "latest") then this is what that would resolve to at this point in time
+	InstalledVersion string `json:"installedVersion"` // the actual version that is installed, which could vary from the user wanted or resolved values
 	Constraint       string `json:"constraint"`       // the version constraint the user asked for and used during version resolution
 	IsInstalled      bool   `json:"isInstalled"`      // is the tool installed at the desired version (says nothing about it being valid, only present)
 	HashIsValid      bool   `json:"hashIsValid"`      // is the installed tool have the correct xxh64 hash?
-	InstalledVersion string `json:"installedVersion"` // the actual version that is installed, which could vary from the user wanted or resolved values
 	Error            error  `json:"error,omitempty"`  // if there was an error getting the status for this tool, it will be here
 }
 
@@ -67,11 +80,112 @@ func runList(cmdCfg ListConfig) error {
 	// look for items in the store root that cannot be accounted for
 	// TODO
 
-	if cmdCfg.List.Updates {
-		return presentUpdates(allStatuses)
+	statuses := filterStatus(allStatuses, cmdCfg.List.IncludeFilter)
+
+	if cmdCfg.Format.Output == "json" {
+		return presentJSON(statuses, cmdCfg.List.Updates, cmdCfg.Format.JQCommand)
 	}
 
-	return presentList(allStatuses)
+	if cmdCfg.List.Updates {
+		return presentUpdatesTable(statuses)
+	}
+
+	return presentListTable(statuses)
+}
+
+func filterStatus(status []toolStatus, includeFilter []string) []toolStatus {
+	if len(includeFilter) == 0 {
+		return status
+	}
+
+	filtered := make([]toolStatus, 0)
+	for _, s := range status {
+		for _, f := range includeFilter {
+			if s.Name == f {
+				filtered = append(filtered, s)
+			}
+		}
+	}
+
+	return filtered
+}
+
+func presentJSON(statuses []toolStatus, updatesOnly bool, jqCommand string) error {
+	if updatesOnly {
+		var updates []toolStatus
+		for _, status := range statuses {
+			if status.Error != nil {
+				status.InstalledVersion = ""
+				status.ResolvedVersion = ""
+				status.Constraint = ""
+				status.HashIsValid = false
+				updates = append(updates, status)
+				continue
+			}
+
+			if status.WantedVersion == "?" {
+				continue
+			}
+
+			if status.InstalledVersion != status.ResolvedVersion {
+				updates = append(updates, status)
+				continue
+			}
+
+			if !status.HashIsValid {
+				updates = append(updates, status)
+			}
+		}
+		statuses = updates
+	}
+
+	doc := make(map[string]any)
+	doc["tools"] = statuses
+
+	buf := bytes.Buffer{}
+	enc := json.NewEncoder(&buf)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(doc); err != nil {
+		return fmt.Errorf("unable to encode JSON: %w", err)
+	}
+
+	if jqCommand != "" {
+		query, err := gojq.Parse(jqCommand)
+		if err != nil {
+			return fmt.Errorf("unable to parse JQ command: %w", err)
+		}
+
+		decodeDoc := make(map[string]any)
+		if err := json.Unmarshal(buf.Bytes(), &decodeDoc); err != nil {
+			return fmt.Errorf("unable to decode JSON: %w", err)
+		}
+
+		buf.Reset()
+		iter := query.Run(decodeDoc)
+		for {
+			v, ok := iter.Next()
+			if !ok {
+				break
+			}
+			if err, ok := v.(error); ok {
+				return fmt.Errorf("error executing JQ command: %w", err)
+			}
+
+			if err := enc.Encode(v); err != nil {
+				return fmt.Errorf("unable to encode JSON: %w", err)
+			}
+		}
+	}
+
+	report := buf.String()
+
+	// default to raw output for simple JSON output
+	if strings.HasPrefix(report, "\"") && strings.HasSuffix(report, "\"\n") {
+		report = strings.ReplaceAll(report, "\"", "")
+	}
+
+	bus.Report(report)
+	return nil
 }
 
 func getAllStatuses(cmdCfg ListConfig, store *binny.Store) []toolStatus {
@@ -208,7 +322,7 @@ func removeEntry(entries []binny.StoreEntry, entry *binny.StoreEntry) []binny.St
 	return entries
 }
 
-func presentUpdates(statuses []toolStatus) error {
+func presentUpdatesTable(statuses []toolStatus) error {
 	t := table.NewWriter()
 	t.SetStyle(table.StyleLight)
 	t.Style().Options.DrawBorder = false
@@ -286,7 +400,7 @@ func getToolUpdatesRow(item toolStatus) table.Row {
 	return row
 }
 
-func presentList(statuses []toolStatus) error {
+func presentListTable(statuses []toolStatus) error {
 	if len(statuses) == 0 {
 		bus.Report("no tools configured or installed")
 		return nil
