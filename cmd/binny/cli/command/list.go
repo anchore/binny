@@ -59,7 +59,7 @@ func List(app clio.Application) *cobra.Command {
 
 type toolStatus struct {
 	Name             string `json:"name"`
-	WantedVersion    string `json:"wantedVersion"`    // this is the version the user asked for
+	WantVersion      string `json:"wantVersion"`      // this is the version the user asked for
 	ResolvedVersion  string `json:"resolvedVersion"`  // if the user asks for a non-specific version (e.g. "latest") then this is what that would resolve to at this point in time
 	InstalledVersion string `json:"installedVersion"` // the actual version that is installed, which could vary from the user wanted or resolved values
 	Constraint       string `json:"constraint"`       // the version constraint the user asked for and used during version resolution
@@ -83,14 +83,22 @@ func runList(cmdCfg ListConfig) error {
 	statuses := filterStatus(allStatuses, cmdCfg.List.IncludeFilter)
 
 	if cmdCfg.Format.Output == "json" {
-		return presentJSON(statuses, cmdCfg.List.Updates, cmdCfg.Format.JQCommand)
+		return reportOnBus(renderListJSON(statuses, cmdCfg.List.Updates, cmdCfg.Format.JQCommand))
 	}
 
 	if cmdCfg.List.Updates {
-		return presentUpdatesTable(statuses)
+		return reportOnBus(renderListUpdatesTable(statuses), nil)
 	}
 
-	return presentListTable(statuses)
+	return reportOnBus(renderListTable(statuses), nil)
+}
+
+func reportOnBus(value string, err error) error {
+	if err != nil {
+		return err
+	}
+	bus.Report(value)
+	return nil
 }
 
 func filterStatus(status []toolStatus, includeFilter []string) []toolStatus {
@@ -110,82 +118,32 @@ func filterStatus(status []toolStatus, includeFilter []string) []toolStatus {
 	return filtered
 }
 
-func presentJSON(statuses []toolStatus, updatesOnly bool, jqCommand string) error {
-	if updatesOnly {
-		var updates []toolStatus
-		for _, status := range statuses {
-			if status.Error != nil {
-				status.InstalledVersion = ""
-				status.ResolvedVersion = ""
-				status.Constraint = ""
-				status.HashIsValid = false
-				updates = append(updates, status)
-				continue
-			}
-
-			if status.WantedVersion == "?" {
-				continue
-			}
-
-			if status.InstalledVersion != status.ResolvedVersion {
-				updates = append(updates, status)
-				continue
-			}
-
-			if !status.HashIsValid {
-				updates = append(updates, status)
-			}
-		}
-		statuses = updates
-	}
-
-	doc := make(map[string]any)
-	doc["tools"] = statuses
-
-	buf := bytes.Buffer{}
-	enc := json.NewEncoder(&buf)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(doc); err != nil {
-		return fmt.Errorf("unable to encode JSON: %w", err)
-	}
-
-	if jqCommand != "" {
-		query, err := gojq.Parse(jqCommand)
-		if err != nil {
-			return fmt.Errorf("unable to parse JQ command: %w", err)
+func filterToolsWithoutUpdates(statuses []toolStatus) []toolStatus {
+	var updates []toolStatus
+	for _, status := range statuses {
+		if status.Error != nil {
+			status.InstalledVersion = ""
+			status.ResolvedVersion = ""
+			status.Constraint = ""
+			status.HashIsValid = false
+			updates = append(updates, status)
+			continue
 		}
 
-		decodeDoc := make(map[string]any)
-		if err := json.Unmarshal(buf.Bytes(), &decodeDoc); err != nil {
-			return fmt.Errorf("unable to decode JSON: %w", err)
+		if status.WantVersion == "?" {
+			continue
 		}
 
-		buf.Reset()
-		iter := query.Run(decodeDoc)
-		for {
-			v, ok := iter.Next()
-			if !ok {
-				break
-			}
-			if err, ok := v.(error); ok {
-				return fmt.Errorf("error executing JQ command: %w", err)
-			}
+		if status.InstalledVersion != status.ResolvedVersion {
+			updates = append(updates, status)
+			continue
+		}
 
-			if err := enc.Encode(v); err != nil {
-				return fmt.Errorf("unable to encode JSON: %w", err)
-			}
+		if !status.HashIsValid {
+			updates = append(updates, status)
 		}
 	}
-
-	report := buf.String()
-
-	// default to raw output for simple JSON output
-	if strings.HasPrefix(report, "\"") && strings.HasSuffix(report, "\"\n") {
-		report = strings.ReplaceAll(report, "\"", "")
-	}
-
-	bus.Report(report)
-	return nil
+	return updates
 }
 
 func getAllStatuses(cmdCfg ListConfig, store *binny.Store) []toolStatus {
@@ -224,7 +182,7 @@ func getAllStatuses(cmdCfg ListConfig, store *binny.Store) []toolStatus {
 		}
 		allStatus = append(allStatus, toolStatus{
 			Name:             entry.Name,
-			WantedVersion:    "?",
+			WantVersion:      "?",
 			ResolvedVersion:  "",
 			Constraint:       "",
 			IsInstalled:      true,
@@ -241,9 +199,9 @@ func getAllStatuses(cmdCfg ListConfig, store *binny.Store) []toolStatus {
 			wantVersion = opt.Version.Want
 		}
 		allStatus = append(allStatus, toolStatus{
-			Name:          name,
-			WantedVersion: wantVersion,
-			Error:         err,
+			Name:        name,
+			WantVersion: wantVersion,
+			Error:       err,
 		})
 	}
 
@@ -284,7 +242,7 @@ func getStatus(store *binny.Store, opt option.Tool) (*toolStatus, *binny.StoreEn
 
 	return &toolStatus{
 		Name:             opt.Name,
-		WantedVersion:    opt.Version.Want,
+		WantVersion:      opt.Version.Want,
 		ResolvedVersion:  resolvedVersion,
 		Constraint:       opt.Version.Constraint,
 		IsInstalled:      isInstalled,
@@ -322,7 +280,69 @@ func removeEntry(entries []binny.StoreEntry, entry *binny.StoreEntry) []binny.St
 	return entries
 }
 
-func presentUpdatesTable(statuses []toolStatus) error {
+func renderListJSON(statuses []toolStatus, updatesOnly bool, jqCommand string) (string, error) {
+	if updatesOnly {
+		statuses = filterToolsWithoutUpdates(statuses)
+	}
+
+	doc := make(map[string]any)
+	if statuses == nil {
+		// always allocate collections
+		statuses = make([]toolStatus, 0)
+	}
+	doc["tools"] = statuses
+
+	buf := bytes.Buffer{}
+	enc := json.NewEncoder(&buf)
+	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(doc); err != nil {
+		return "", fmt.Errorf("unable to encode JSON: %w", err)
+	}
+
+	if jqCommand != "" {
+		query, err := gojq.Parse(jqCommand)
+		if err != nil {
+			return "", fmt.Errorf("unable to parse JQ command: %w", err)
+		}
+
+		decodeDoc := make(map[string]any)
+		if err := json.Unmarshal(buf.Bytes(), &decodeDoc); err != nil {
+			return "", fmt.Errorf("unable to decode JSON: %w", err)
+		}
+
+		buf.Reset()
+		iter := query.Run(decodeDoc)
+		for {
+			v, ok := iter.Next()
+			if !ok {
+				break
+			}
+			if err, ok := v.(error); ok {
+				return "", fmt.Errorf("error executing JQ command: %w", err)
+			}
+
+			if err := enc.Encode(v); err != nil {
+				return "", fmt.Errorf("unable to encode JSON: %w", err)
+			}
+		}
+	}
+
+	result := buf.String()
+
+	// default to raw output for simple JSON output
+	if strings.HasPrefix(result, "\"") && strings.HasSuffix(result, "\"\n") {
+		result = strings.ReplaceAll(result, "\"", "")
+	}
+
+	return result, nil
+}
+
+func renderListUpdatesTable(statuses []toolStatus) string {
+	if len(statuses) == 0 {
+		return "no tools to check"
+	}
+
 	t := table.NewWriter()
 	t.SetStyle(table.StyleLight)
 	t.Style().Options.DrawBorder = false
@@ -347,8 +367,7 @@ func presentUpdatesTable(statuses []toolStatus) error {
 	}
 
 	if len(rows) == 0 {
-		bus.Report("all tools up to date")
-		return nil
+		return "all tools up to date"
 	}
 
 	sort.Slice(rows, func(i, j int) bool {
@@ -360,8 +379,7 @@ func presentUpdatesTable(statuses []toolStatus) error {
 		t.AppendRow(row)
 	}
 
-	bus.Report(t.Render())
-	return nil
+	return t.Render()
 }
 
 func getToolUpdatesRow(item toolStatus) table.Row {
@@ -378,10 +396,10 @@ func getToolUpdatesRow(item toolStatus) table.Row {
 			commentary = "not installed"
 		} else {
 			switch {
-			case item.WantedVersion == "?":
+			case item.WantVersion == "?":
 				commentary = ""
 			case item.InstalledVersion != item.ResolvedVersion:
-				commentary = fmt.Sprintf("%s → %s", summarizeVersion(item.InstalledVersion), summarizeVersion(item.ResolvedVersion))
+				commentary = fmt.Sprintf("%s → %s", summarizeGitVersion(item.InstalledVersion), summarizeGitVersion(item.ResolvedVersion))
 			case !item.HashIsValid:
 				commentary = ""
 			}
@@ -400,10 +418,9 @@ func getToolUpdatesRow(item toolStatus) table.Row {
 	return row
 }
 
-func presentListTable(statuses []toolStatus) error {
+func renderListTable(statuses []toolStatus) string {
 	if len(statuses) == 0 {
-		bus.Report("no tools configured or installed")
-		return nil
+		return "no tools configured or installed"
 	}
 	t := table.NewWriter()
 	t.SetStyle(table.StyleLight)
@@ -455,8 +472,7 @@ func presentListTable(statuses []toolStatus) error {
 		t.AppendRow(row)
 	}
 
-	bus.Report(t.Render())
-	return nil
+	return t.Render()
 }
 
 func getToolStatusRow(item toolStatus, constraintNeeded bool) table.Row {
@@ -474,11 +490,11 @@ func getToolStatusRow(item toolStatus, constraintNeeded bool) table.Row {
 			severity = 1
 		} else {
 			switch {
-			case item.WantedVersion == "?":
+			case item.WantVersion == "?":
 				commentary = "tool is not configured"
 				severity = 2
 			case item.InstalledVersion != item.ResolvedVersion:
-				commentary = fmt.Sprintf("installed version (%s) does not match resolved version (%s)", summarizeVersion(item.InstalledVersion), summarizeVersion(item.ResolvedVersion))
+				commentary = fmt.Sprintf("installed version (%s) does not match resolved version (%s)", summarizeGitVersion(item.InstalledVersion), summarizeGitVersion(item.ResolvedVersion))
 				severity = 1
 			case !item.HashIsValid:
 				commentary = "hash is invalid"
@@ -487,10 +503,10 @@ func getToolStatusRow(item toolStatus, constraintNeeded bool) table.Row {
 		}
 	}
 
-	version := item.WantedVersion
+	version := item.WantVersion
 
-	if item.WantedVersion != item.ResolvedVersion && item.ResolvedVersion != "" {
-		version += fmt.Sprintf(" (%s)", summarizeVersion(item.ResolvedVersion))
+	if item.WantVersion != item.ResolvedVersion && item.ResolvedVersion != "" {
+		version += fmt.Sprintf(" (%s)", summarizeGitVersion(item.ResolvedVersion))
 	}
 
 	style := toolStatusStyle(severity)
@@ -509,13 +525,21 @@ func getToolStatusRow(item toolStatus, constraintNeeded bool) table.Row {
 	return row
 }
 
-func summarizeVersion(v string) string {
-	// TODO: there are probably better ways to do this
+func summarizeGitVersion(v string) string {
 	// if it looks like a git hash, then summarize it
-	if len(v) == 40 {
+	if len(v) == 40 && onlyAlphaNumeric(v) {
 		return v[:7]
 	}
 	return v
+}
+
+func onlyAlphaNumeric(v string) bool {
+	for _, c := range v {
+		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+			return false
+		}
+	}
+	return true
 }
 
 var (
