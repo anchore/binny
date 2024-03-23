@@ -1,0 +1,370 @@
+
+[Test_renderListTable/empty - 1]
+no tools configured or installed
+---
+
+[Test_renderListTable/has_update - 1]
+ TOOL  DESIRED VERSION  CONSTRAINT                                                                        
+──────────────────────────────────────────────────────────────────────────────────────────────────────────
+ syft  latest (v1.0.0)  <= v1.0.0   installed version (v0.105.1) does not match resolved version (v1.0.0) 
+---
+
+[Test_renderListTable/invalid_hash - 1]
+ TOOL  DESIRED VERSION  CONSTRAINT                  
+────────────────────────────────────────────────────
+ syft  v0.105.1         <= v1.0.0   hash is invalid 
+---
+
+[Test_renderListTable/error - 1]
+ TOOL  DESIRED VERSION  CONSTRAINT                     
+───────────────────────────────────────────────────────
+ syft  latest (v1.0.0)  <= v1.0.0   something is wrong 
+---
+
+[Test_renderListTable/unknown_wanted_version - 1]
+ TOOL  DESIRED VERSION  CONSTRAINT                         
+───────────────────────────────────────────────────────────
+ syft  ? (v1.0.1)       <= v1.0.1   tool is not configured 
+---
+
+[Test_renderListTable/not_installed - 1]
+ TOOL  DESIRED VERSION  CONSTRAINT                
+──────────────────────────────────────────────────
+ syft  latest (v1.0.0)  <= v1.0.0   not installed 
+---
+
+[Test_renderListTable/no_update - 1]
+ TOOL  DESIRED VERSION  CONSTRAINT   
+─────────────────────────────────────
+ syft  latest (v1.0.0)  <= v1.0.0    
+---
+
+[Test_renderListTable/sort_by_name - 1]
+ TOOL   DESIRED VERSION  CONSTRAINT                                                                        
+───────────────────────────────────────────────────────────────────────────────────────────────────────────
+ grype  v0.74.0          <= v1.0.0   installed version (v0.53.0) does not match resolved version (v0.74.0) 
+ syft   latest (v1.0.0)  <= v1.0.0   installed version (v0.105.1) does not match resolved version (v1.0.0) 
+---
+
+[Test_renderListUpdatesTable/empty - 1]
+no tools to check
+---
+
+[Test_renderListUpdatesTable/has_update - 1]
+ TOOL  UPDATE            
+─────────────────────────
+ syft  v0.105.1 → v1.0.0 
+---
+
+[Test_renderListUpdatesTable/invalid_hash - 1]
+all tools up to date
+---
+
+[Test_renderListUpdatesTable/error - 1]
+ TOOL  UPDATE             
+──────────────────────────
+ syft  something is wrong 
+---
+
+[Test_renderListUpdatesTable/unknown_wanted_version - 1]
+all tools up to date
+---
+
+[Test_renderListUpdatesTable/not_installed - 1]
+ TOOL  UPDATE        
+─────────────────────
+ syft  not installed 
+---
+
+[Test_renderListUpdatesTable/no_update - 1]
+all tools up to date
+---
+
+[Test_renderListUpdatesTable/sort_by_name - 1]
+ TOOL   UPDATE            
+──────────────────────────
+ grype  v0.53.0 → v0.74.0 
+ syft   v0.105.1 → v1.0.0 
+---
+
+[Test_renderListJSON/updates/empty - 1]
+{
+  "tools": []
+}
+
+---
+
+[Test_renderListJSON/updates/has_update - 1]
+{
+  "tools": [
+    {
+      "name": "syft",
+      "wantVersion": "latest",
+      "resolvedVersion": "v1.0.0",
+      "installedVersion": "v0.105.1",
+      "constraint": "<= v1.0.0",
+      "isInstalled": true,
+      "hashIsValid": true
+    }
+  ]
+}
+
+---
+
+[Test_renderListJSON/updates/invalid_hash - 1]
+{
+  "tools": [
+    {
+      "name": "syft",
+      "wantVersion": "v0.105.1",
+      "resolvedVersion": "v0.105.1",
+      "installedVersion": "v0.105.1",
+      "constraint": "<= v1.0.0",
+      "isInstalled": true,
+      "hashIsValid": false
+    }
+  ]
+}
+
+---
+
+[Test_renderListJSON/updates/error - 1]
+{
+  "tools": [
+    {
+      "name": "syft",
+      "wantVersion": "latest",
+      "resolvedVersion": "",
+      "installedVersion": "",
+      "constraint": "",
+      "isInstalled": true,
+      "hashIsValid": false,
+      "error": {}
+    }
+  ]
+}
+
+---
+
+[Test_renderListJSON/updates/unknown_wanted_version - 1]
+{
+  "tools": []
+}
+
+---
+
+[Test_renderListJSON/updates/not_installed - 1]
+{
+  "tools": [
+    {
+      "name": "syft",
+      "wantVersion": "latest",
+      "resolvedVersion": "v1.0.0",
+      "installedVersion": "",
+      "constraint": "<= v1.0.0",
+      "isInstalled": false,
+      "hashIsValid": true
+    }
+  ]
+}
+
+---
+
+[Test_renderListJSON/updates/no_update - 1]
+{
+  "tools": []
+}
+
+---
+
+[Test_renderListJSON/updates/sort_by_name - 1]
+{
+  "tools": [
+    {
+      "name": "syft",
+      "wantVersion": "latest",
+      "resolvedVersion": "v1.0.0",
+      "installedVersion": "v0.105.1",
+      "constraint": "<= v1.0.0",
+      "isInstalled": true,
+      "hashIsValid": true
+    },
+    {
+      "name": "grype",
+      "wantVersion": "v0.74.0",
+      "resolvedVersion": "v0.74.0",
+      "installedVersion": "v0.53.0",
+      "constraint": "<= v1.0.0",
+      "isInstalled": true,
+      "hashIsValid": true
+    }
+  ]
+}
+
+---
+
+[Test_renderListJSON/no_updates/empty - 1]
+{
+  "tools": []
+}
+
+---
+
+[Test_renderListJSON/no_updates/has_update - 1]
+{
+  "tools": [
+    {
+      "name": "syft",
+      "wantVersion": "latest",
+      "resolvedVersion": "v1.0.0",
+      "installedVersion": "v0.105.1",
+      "constraint": "<= v1.0.0",
+      "isInstalled": true,
+      "hashIsValid": true
+    }
+  ]
+}
+
+---
+
+[Test_renderListJSON/no_updates/invalid_hash - 1]
+{
+  "tools": [
+    {
+      "name": "syft",
+      "wantVersion": "v0.105.1",
+      "resolvedVersion": "v0.105.1",
+      "installedVersion": "v0.105.1",
+      "constraint": "<= v1.0.0",
+      "isInstalled": true,
+      "hashIsValid": false
+    }
+  ]
+}
+
+---
+
+[Test_renderListJSON/no_updates/error - 1]
+{
+  "tools": [
+    {
+      "name": "syft",
+      "wantVersion": "latest",
+      "resolvedVersion": "v1.0.0",
+      "installedVersion": "v1.0.0",
+      "constraint": "<= v1.0.0",
+      "isInstalled": true,
+      "hashIsValid": false,
+      "error": {}
+    }
+  ]
+}
+
+---
+
+[Test_renderListJSON/no_updates/unknown_wanted_version - 1]
+{
+  "tools": [
+    {
+      "name": "syft",
+      "wantVersion": "?",
+      "resolvedVersion": "v1.0.1",
+      "installedVersion": "v1.0.0",
+      "constraint": "<= v1.0.1",
+      "isInstalled": true,
+      "hashIsValid": false
+    }
+  ]
+}
+
+---
+
+[Test_renderListJSON/no_updates/not_installed - 1]
+{
+  "tools": [
+    {
+      "name": "syft",
+      "wantVersion": "latest",
+      "resolvedVersion": "v1.0.0",
+      "installedVersion": "",
+      "constraint": "<= v1.0.0",
+      "isInstalled": false,
+      "hashIsValid": true
+    }
+  ]
+}
+
+---
+
+[Test_renderListJSON/no_updates/no_update - 1]
+{
+  "tools": [
+    {
+      "name": "syft",
+      "wantVersion": "latest",
+      "resolvedVersion": "v1.0.0",
+      "installedVersion": "v1.0.0",
+      "constraint": "<= v1.0.0",
+      "isInstalled": true,
+      "hashIsValid": true
+    }
+  ]
+}
+
+---
+
+[Test_renderListJSON/no_updates/sort_by_name - 1]
+{
+  "tools": [
+    {
+      "name": "syft",
+      "wantVersion": "latest",
+      "resolvedVersion": "v1.0.0",
+      "installedVersion": "v0.105.1",
+      "constraint": "<= v1.0.0",
+      "isInstalled": true,
+      "hashIsValid": true
+    },
+    {
+      "name": "grype",
+      "wantVersion": "v0.74.0",
+      "resolvedVersion": "v0.74.0",
+      "installedVersion": "v0.53.0",
+      "constraint": "<= v1.0.0",
+      "isInstalled": true,
+      "hashIsValid": true
+    }
+  ]
+}
+
+---
+
+[Test_renderListJSON/jq/show_keys - 1]
+[
+  "tools"
+]
+
+---
+
+[Test_renderListJSON/jq/bad_jq_expression - 1]
+
+---
+
+[Test_renderListJSON/jq/filter_by_name - 1]
+{
+  "constraint": "<= v1.0.0",
+  "hashIsValid": true,
+  "installedVersion": "v0.105.1",
+  "isInstalled": true,
+  "name": "syft",
+  "resolvedVersion": "v1.0.0",
+  "wantVersion": "latest"
+}
+
+---
+
+[Test_renderListJSON/jq/raw_scalar_values - 1]
+latest
+v0.74.0
+
+---
