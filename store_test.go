@@ -3,6 +3,7 @@ package binny
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -104,6 +105,9 @@ func TestStore_GetByName(t *testing.T) {
 }
 
 func TestStore_Entries(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test fixtures have different sha256 digests on Windows due to linbreak conversion")
+	}
 	tests := []struct {
 		name      string
 		storeRoot string
