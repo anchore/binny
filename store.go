@@ -133,15 +133,9 @@ func (s *Store) AddTool(toolName string, resolvedVersion, pathOutsideRoot string
 		}
 	}
 
-	file, err := os.Open(pathOutsideRoot)
+	digests, err := getDigestsForFile(pathOutsideRoot)
 	if err != nil {
-		return fmt.Errorf("failed to open temp copy of binary %q: %w", pathOutsideRoot, err)
-	}
-	defer file.Close()
-
-	digests, err := getDigestsForReader(file)
-	if err != nil {
-		return nil
+		return err
 	}
 
 	sha256Hash, ok := digests[internal.SHA256Algorithm]
@@ -336,6 +330,16 @@ func xxh64File(path string) (string, error) {
 	}
 
 	return fmt.Sprintf("%x", hash.Sum(nil)), nil
+}
+
+func getDigestsForFile(filePath string) (map[string]string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open temp copy of binary %q: %w", filePath, err)
+	}
+	defer file.Close()
+
+	return getDigestsForReader(file)
 }
 
 func getDigestsForReader(r io.Reader) (map[string]string, error) {

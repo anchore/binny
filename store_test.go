@@ -223,6 +223,7 @@ func TestStore_AddTool(t *testing.T) {
 
 	createFile := func(path, contents string) {
 		fh, err := os.Create(path)
+		defer fh.Close()
 		require.NoError(t, err)
 		_, err = fh.WriteString(contents)
 		require.NoError(t, err)

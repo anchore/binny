@@ -133,13 +133,13 @@ func (i Installer) InstallTo(version, destDir string) (string, error) {
 }
 
 func downloadAndExtractAsset(lgr logger.Logger, asset ghAsset, checksumAsset *ghAsset, destDir string) (string, error) {
-	assetPath := path.Join(destDir, asset.Name)
+	assetPath := filepath.Join(destDir, asset.Name)
 
 	checksum := asset.Checksum
 	if checksumAsset != nil && checksum == "" {
 		lgr.WithFields("asset", checksumAsset.Name).Trace("downloading checksum manifest")
 
-		checksumsPath := path.Join(destDir, checksumsFilename)
+		checksumsPath := filepath.Join(destDir, checksumsFilename)
 
 		if err := internal.DownloadFile(lgr, checksumAsset.URL, checksumsPath, ""); err != nil {
 			return "", fmt.Errorf("unable to download checksum asset %q: %w", checksumAsset.Name, err)
