@@ -28,6 +28,7 @@ jobs:
       - name: Run all validations
         run: make pr-validations
 
+  WindowsValidations:
     name: "Windows units"
     runs-on: windows-2022
     steps:
