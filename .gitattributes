@@ -1,0 +1,4 @@
+# Prevent CRLF correction from changing digest of
+# text files that are committed as stand-ins for binaries
+# in text fixtures:
+/tool/testdata/store/** -text
