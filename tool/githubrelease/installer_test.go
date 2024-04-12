@@ -290,7 +290,9 @@ func Test_findBinaryAssetInDir(t *testing.T) {
 			got, err := findBinaryAssetInDir(tt.destDir)
 			tt.wantErr(t, err)
 
-			assert.Equal(t, tt.want, got)
+			want := strings.ReplaceAll(tt.want, "/", string(os.PathSeparator))
+
+			assert.Equal(t, want, got)
 		})
 	}
 }
