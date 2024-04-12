@@ -131,7 +131,7 @@ tasks:
       - cmd: "{{ .MAKEDIR_P }} {{ .TMP_DIR }}"
         silent: true
       - "go test -coverprofile {{ .TMP_DIR }}/unit-coverage-details.txt {{ .TEST_PKGS }}"
-      - cmd: ".github/scripts/coverage.py {{ .COVERAGE_THRESHOLD }} {{ .TMP_DIR }}/unit-coverage-details.txt"
+      - cmd: '{{if eq OS "windows"}}python {{end}}.github/scripts/coverage.py {{ .COVERAGE_THRESHOLD }} {{ .TMP_DIR }}/unit-coverage-details.txt'
         silent: true
 
   ## Build-related targets #################################

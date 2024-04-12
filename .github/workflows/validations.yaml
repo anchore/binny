@@ -27,3 +27,14 @@ jobs:
 
       - name: Run all validations
         run: make pr-validations
+
+    name: "Windows units"
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: install make
+        run: "choco install make"
+
+      - name: run units
+        run: "make unit"
