@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"text/template"
 
@@ -113,6 +114,10 @@ func templateFlags(args string, version, destination string) (string, error) {
 }
 
 func runScript(scriptPath, argStr string) error {
+	if runtime.GOOS == "windows" {
+		return fmt.Errorf("script based installers are not supported on %s", runtime.GOOS)
+	}
+
 	userArgs, err := shlex.Split(argStr)
 	if err != nil {
 		return fmt.Errorf("failed to parse args: %v", err)

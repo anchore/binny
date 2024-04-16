@@ -9,6 +9,7 @@ vars:
   SNAPSHOT_DIR: snapshot
   CHANGELOG: CHANGELOG.md
   NEXT_VERSION: VERSION
+  MAKEDIR_P: 'python -c "import sys; import os; os.makedirs(sys.argv[1], exist_ok=True)"'
 
 tasks:
 
@@ -122,15 +123,15 @@ tasks:
     desc: Run all unit tests
     vars:
       TEST_PKGS:
-          sh: "go list ./... | grep -v {{ .OWNER }}/{{ .PROJECT }}/test | tr '\n' ' '"
+          sh: "python ./scripts/list_units.py anchore binny"
 
       # unit test coverage threshold (in % coverage)
-      COVERAGE_THRESHOLD: 45
+      COVERAGE_THRESHOLD: '{{if eq OS "windows"}} 43 {{else}} 45 {{end}}'
     cmds:
-      - cmd: "mkdir -p {{ .TMP_DIR }}"
+      - cmd: "{{ .MAKEDIR_P }} {{ .TMP_DIR }}"
         silent: true
       - "go test -coverprofile {{ .TMP_DIR }}/unit-coverage-details.txt {{ .TEST_PKGS }}"
-      - cmd: ".github/scripts/coverage.py {{ .COVERAGE_THRESHOLD }} {{ .TMP_DIR }}/unit-coverage-details.txt"
+      - cmd: '{{if eq OS "windows"}}python {{end}}.github/scripts/coverage.py {{ .COVERAGE_THRESHOLD }} {{ .TMP_DIR }}/unit-coverage-details.txt'
         silent: true
 
   ## Build-related targets #################################

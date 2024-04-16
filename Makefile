@@ -10,9 +10,9 @@ TASK = $(TOOL_DIR)/task
 ## Bootstrapping targets #################################
 
 $(BINNY):
-	@mkdir -p $(TOOL_DIR)
-	@# we don't have a release of binny yet, so build off of the current branch
-	@#curl -sSfL https://raw.githubusercontent.com/$(OWNER)/$(PROJECT)/main/install.sh | sh -s -- -b $(TOOL_DIR)
+	@-mkdir $(TOOL_DIR)
+# we don't have a release of binny yet, so build off of the current branch
+# curl -sSfL https://raw.githubusercontent.com/$(OWNER)/$(PROJECT)/main/install.sh | sh -s -- -b $(TOOL_DIR)
 	go build -o $(TOOL_DIR)/$(PROJECT) ./cmd/$(PROJECT)
 
 .PHONY: task

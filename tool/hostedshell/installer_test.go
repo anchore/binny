@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,6 +14,10 @@ import (
 )
 
 func TestInstaller_InstallTo(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("script based installer is not supported on windows")
+	}
+
 	type fields struct {
 		config       InstallerParameters
 		scriptRunner func(scriptPath string, argStr string) error
