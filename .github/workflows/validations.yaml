@@ -37,5 +37,5 @@ jobs:
       - name: install make
         run: "choco install make"
 
-      - name: run units
-        run: "make unit"
+      - name: run tests
+        run: "make test"

@@ -41,16 +41,15 @@ builds:
           env:
             - QUILL_LOG_FILE=/tmp/quill-{{ .Target }}.log
 
-# not supported yet
-#  - id: windows-build
-#    dir: ./cmd/binny
-#    binary: binny
-#    goos:
-#      - windows
-#    goarch:
-#      - amd64
-#    mod_timestamp: *build-timestamp
-#    ldflags: *build-ldflags
+  - id: windows-build
+    dir: ./cmd/binny
+    binary: binny
+    goos:
+      - windows
+    goarch:
+      - amd64
+    mod_timestamp: *build-timestamp
+    ldflags: *build-ldflags
 
 archives:
   - id: linux-archives
@@ -61,11 +60,10 @@ archives:
     builds:
       - darwin-build
 
-# not supported yet
-#  - id: windows-archives
-#    format: zip
-#    builds:
-#      - windows-build
+  - id: windows-archives
+    format: zip
+    builds:
+      - windows-build
 
 sboms:
   - artifacts: binary
