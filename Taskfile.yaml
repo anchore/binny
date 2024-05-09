@@ -37,6 +37,7 @@ tasks:
 
   test:
     desc: Run all levels of test
+    deps: [tools]
     cmds:
       - task: unit
       - task: cli
@@ -53,7 +54,9 @@ tasks:
     # we just need a release of binny, doesn't matter which one (binny will update itself, this is just a bootstrap step)
     # note: on the first release of binny, switch to the curl approach
     # cmd: "curl -sSfL https://raw.githubusercontent.com/{{ .OWNER }}/{{ .PROJECT }}/main/install.sh | sh -s -- -b {{ .TOOL_DIR }}"
-    cmd: "go build -o {{ .TOOL_DIR }}/binny ./cmd/binny"
+    cmds:
+      - cmd: "{{ .MAKEDIR_P }} {{ .TOOL_DIR }}"
+      - cmd: "go build -o {{ .TOOL_DIR }}/binny ./cmd/binny"
     silent: true
 
   tools:

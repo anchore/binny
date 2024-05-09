@@ -29,7 +29,7 @@ jobs:
         run: make pr-validations
 
   WindowsValidations:
-    name: "Windows units"
+    name: "Windows validations"
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v3
