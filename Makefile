@@ -46,5 +46,9 @@ TASKS := $(shell bash -c "$(TASK) -l | grep '^\* ' | cut -d' ' -f2 | tr -d ':' |
 $(TASKS): $(TASK)
 	@$(TASK) $@
 
+.PHONY: test
+test: $(TASK)
+	$(TASK) $@
+
 help: $(TASK)
 	@$(TASK) -l
