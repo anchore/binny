@@ -3,7 +3,12 @@ PROJECT = binny
 
 TOOL_DIR = .tool
 BINNY = $(TOOL_DIR)/binny
+
+ifeq ($(OS),Windows_NT)
+TASK = $(TOOL_DIR)/task.exe
+else
 TASK = $(TOOL_DIR)/task
+endif
 
 .DEFAULT_GOAL := make-default
 
