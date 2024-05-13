@@ -23,6 +23,7 @@ $(BINNY):
 .PHONY: task
 $(TASK) task: $(BINNY)
 	$(BINNY) install task
+	ls $(TOOL_DIR)
 
 .PHONY: ci-bootstrap-go
 ci-bootstrap-go:
