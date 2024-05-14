@@ -12,6 +12,7 @@ vars:
   CHANGELOG: CHANGELOG.md
   NEXT_VERSION: VERSION
   MAKEDIR_P: 'python -c "import sys; import os; os.makedirs(sys.argv[1], exist_ok=True)"'
+  CAT: '{{ if eq OS "windows" }}type{{ else }}cat{{ end }}'
 
 tasks:
 
@@ -178,7 +179,7 @@ tasks:
       - silent: true
         cmd: |        
           echo "dist: {{ .SNAPSHOT_DIR }}" > {{ .TMP_DIR }}/goreleaser.yaml
-          cat .goreleaser.yaml >> {{ .TMP_DIR }}/goreleaser.yaml
+          {{ .CAT }} .goreleaser.yaml >> {{ .TMP_DIR }}/goreleaser.yaml
 
       - "{{ .TOOL_DIR }}/goreleaser release --clean --skip=publish --skip=sign --snapshot --config {{ .TMP_DIR }}/goreleaser.yaml"
 
