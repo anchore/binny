@@ -46,7 +46,7 @@ func (i Installer) InstallTo(version, destDir string) (string, error) {
 	binPath := filepath.Join(destDir, binName)
 	// TODO: probably refactor this somewhere
 	if runtime.GOOS == "windows" {
-		binPath = binPath + ".exe"
+		binPath = fmt.Sprintf("%s.exe", binPath)
 	}
 
 	spec := fmt.Sprintf("%s@%s", path, version)
