@@ -2,7 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"github.com/google/go-cmp/cmp"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/acarl005/stripansi"
+	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/require"
 )
 
