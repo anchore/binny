@@ -84,15 +84,15 @@ with:
   # arbitrary key-value pairs for the install method
 ```
 
-| Option         | Description                                                                                                                                            |
-|----------------|--------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `name`         | The name of the tool to install. This is used to determine the installation directory and the name of the binary.                                      |
-| `version.want` | The version of the tool to install. This can be a specific version, or a version range.                                                                |
-| `version.constraint` | A constraint on the version of the tool to install. This is used to determine the latest version of the tool to update to.                             |
-| `version.method` | The method to use to determine the latest version of the tool. See the [Version Resolver Methods](#version-resolver-methods) section for more details. |
-| `version.with` | The configuration options for the version method. See the [Version Resolver Methods](#version-resolver-methods) section for more details.                       |
-| `method`       | The method to use to install the tool. See the [Install Methods](#install-methods) section for more details.                                           |
-| `with`        | The configuration options for the install method. See the [Install Methods](#install-methods) section for more details.                                |
+| Option         | Description                                                                                                                                               |
+|----------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `name`         | The name of the tool to install. This is used to determine the installation directory and the name of the binary.                                         |
+| `version.want` | The version of the tool to install. This can be a specific version, or a version range.                                                                   |
+| `version.constraint` | A constraint on the version of the tool to install. This is used to determine the latest version of the tool to update to.                          |
+| `version.method` | The method to use to determine the latest version of the tool. See the [Version Resolver Methods](#version-resolver-methods) section for more details.  |
+| `version.with` | The configuration options for the version method. See the [Version Resolver Methods](#version-resolver-methods) section for more details.                                       |
+| `method`       | The method to use to install the tool. See the [Install Methods](#install-methods) section for more details.                                                           |
+| `with`        | The configuration options for the install method. See the [Install Methods](#install-methods) section for more details.                                                 |
 
 
 ### Install Methods
@@ -115,20 +115,22 @@ The default version resolver for this method is `github-release`.
 
 The `go-install` install method uses `go install` to install a tool. It requires the following configuration options:
 
-| Option                  | Description                                                                 |
-|-------------------------|-----------------------------------------------------------------------------|
-| `module`           | The FQDN to the Go module (e.g. `github.com/anchore/syft`)                  |
-| `entrypoint` (optional) | The path within the repo to the main package for the tool (e.g. `cmd/syft`) |
-| `ldflags` (optional)    | A list of ldflags to pass to `go install` (e.g. `-X main.version={{ .Version }}`)                    |
+| Option                  | Description                                                                          |
+|-------------------------|--------------------------------------------------------------------------------------|
+| `module`                | The FQDN to the Go module (e.g. `github.com/anchore/syft`)                           |
+| `entrypoint` (optional) | The path within the repo to the main package for the tool (e.g. `cmd/syft`)          |
+| `ldflags` (optional)    | A list of ldflags to pass to `go install` (e.g. `-X main.version={{ .Version }}`)    |
+| `args` (optional)       | A list of args/flags to pass to `go install` (e.g. `-tags containers_image_openpgp`) |
+| `env` (optional)        | A list key=value environment variables to use when running `go install`              |
 
 The `module` option allows for a special entry:
 - `.` or `path/to/module/on/disk`
 
 The `ldflags` allow for templating with the following variables:
 
-| Variable | Description                                                                                |
-|--------|--------------------------------------------------------------------------------------------|
-| `{{ .Version }}` | The resolved version of the tool (which may differe from that of the `version.want` value) |
+| Variable | Description                                                                                         |
+|--------|-------------------------------------------------------------------------------------------------------|
+| `{{ .Version }}` | The resolved version of the tool (which may differe from that of the `version.want` value)  |
 
 In addition to these variables, [sprig functions](http://masterminds.github.io/sprig/) are allowed; for example:
 ```yaml
@@ -145,10 +147,10 @@ The default version resolver for this method is `go-proxy`.
 
 The `hosted-shell` install method uses a hosted shell script to install a tool. It requires the following configuration options:
 
-| Option | Description                                                |
-|--------|------------------------------------------------------------|
-| `url` | The URL to the hosted shell script (e.g. `https://raw.githubusercontent.com/anchore/syft/main/install.sh`)                 |
-| `args` (optional) | Arguments to pass to the shell script (as a single string) |
+| Option | Description                                                                                                |
+|--------|------------------------------------------------------------------------------------------------------------|
+| `url` | The URL to the hosted shell script (e.g. `https://raw.githubusercontent.com/anchore/syft/main/install.sh`)  |
+| `args` (optional) | Arguments to pass to the shell script (as a single string)                                      |
 
 If the URL refers to either `github.com` or `raw.githubusercontent.com` then the default version resolver is `github-release`. 
 Otherwise, the version resolver must be specified manually.
@@ -208,9 +210,9 @@ is a version constraint used.
 
 The `go-proxy` version method reaches out to `proxy.golang.org` to determine the latest version of a Go module. It requires the following configuration options:
 
-| Option | Description                                                                                                          |
-|--------|----------------------------------------------------------------------------------------------------------------------|
-| `module` | The FQDN to the Go module (e.g. `github.com/anchore/syft`)                                                           |
+| Option | Description                                                                                                                              |
+|--------|------------------------------------------------------------------------------------------------------------------------------------------|
+| `module` | The FQDN to the Go module (e.g. `github.com/anchore/syft`)                                                                             |
 | `allow-unresolved-version` | If the latest version cannot be found by the proxy allow for "latest" as a valid value (which `go install` supports) | 
 
 The `version.want` option allows a special entry:

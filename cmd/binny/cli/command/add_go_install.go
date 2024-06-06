@@ -75,10 +75,16 @@ func runAddGoInstallConfig(cmdCfg AddGoInstallConfig, nameVersion string) error 
 		return fmt.Errorf("invalid ldflags: %w", err)
 	}
 
+	if err := validateEnvSlice(iCfg.Env); err != nil {
+		return err
+	}
+
 	coreInstallParams := goinstall.InstallerParameters{
 		Module:     iCfg.Module,
 		Entrypoint: iCfg.Entrypoint,
 		LDFlags:    ldFlagsList,
+		Args:       iCfg.Args,
+		Env:        iCfg.Env,
 	}
 
 	installParamMap, err := toMap(coreInstallParams)
@@ -102,4 +108,13 @@ func runAddGoInstallConfig(cmdCfg AddGoInstallConfig, nameVersion string) error 
 	}
 
 	return updateConfiguration(cmdCfg.Config, toolCfg)
+}
+
+func validateEnvSlice(env []string) error {
+	for _, e := range env {
+		if !strings.Contains(e, "=") {
+			return fmt.Errorf("invalid env format: %q", e)
+		}
+	}
+	return nil
 }
