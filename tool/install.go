@@ -91,6 +91,13 @@ func makeStagingArea(store *binny.Store, toolName string) (string, func(), error
 	if err != nil {
 		return "", cleanup, fmt.Errorf("failed to get absolute path for store root: %w", err)
 	}
+
+	if _, err := os.Stat(absRoot); os.IsNotExist(err) {
+		if err := os.MkdirAll(absRoot, 0755); err != nil {
+			return "", cleanup, fmt.Errorf("failed to create store root: %w", err)
+		}
+	}
+
 	tmpdir, err := os.MkdirTemp(absRoot, fmt.Sprintf("binny-install-%s-", toolName))
 	if err != nil {
 		return "", cleanup, fmt.Errorf("failed to create temp directory: %w", err)

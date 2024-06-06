@@ -18,11 +18,11 @@ import (
 var _ binny.Installer = (*Installer)(nil)
 
 type InstallerParameters struct {
-	Module     string         `json:"module" yaml:"module" mapstructure:"module"`
-	Entrypoint string         `json:"entrypoint" yaml:"entrypoint" mapstructure:"entrypoint"`
-	LDFlags    []string       `json:"ldflags" yaml:"ldflags" mapstructure:"ldflags"`
-	Args       []string       `json:"args" yaml:"args" mapstructure:"args"`
-	Env        map[string]any `json:"env" yaml:"env" mapstructure:"env"`
+	Module     string   `json:"module" yaml:"module" mapstructure:"module"`
+	Entrypoint string   `json:"entrypoint" yaml:"entrypoint" mapstructure:"entrypoint"`
+	LDFlags    []string `json:"ldflags" yaml:"ldflags" mapstructure:"ldflags"`
+	Args       []string `json:"args" yaml:"args" mapstructure:"args"`
+	Env        []string `json:"env" yaml:"env" mapstructure:"env"`
 }
 
 type Installer struct {
@@ -64,7 +64,11 @@ func (i Installer) InstallTo(version, destDir string) (string, error) {
 		return "", fmt.Errorf("failed to template args: %v", err)
 	}
 
-	env, err := templateSlice(toEnvSlice(i.config.Env), version)
+	if err := validateEnvSlice(i.config.Env); err != nil {
+		return "", err
+	}
+
+	env, err := templateSlice(i.config.Env, version)
 	if err != nil {
 		return "", fmt.Errorf("failed to template env: %v", err)
 	}
@@ -74,6 +78,15 @@ func (i Installer) InstallTo(version, destDir string) (string, error) {
 	}
 
 	return binPath, nil
+}
+
+func validateEnvSlice(env []string) error {
+	for _, e := range env {
+		if !strings.Contains(e, "=") {
+			return fmt.Errorf("invalid env format: %q", e)
+		}
+	}
+	return nil
 }
 
 func templateSlice(in []string, version string) ([]string, error) {
@@ -138,12 +151,4 @@ func runGoInstall(spec, ldflags string, userArgs, userEnv []string, destDir stri
 		return fmt.Errorf("installation failed: %v\nOutput: %s", err, output)
 	}
 	return nil
-}
-
-func toEnvSlice(env map[string]any) []string {
-	var envSlice []string
-	for k, v := range env {
-		envSlice = append(envSlice, fmt.Sprintf("%s=%v", k, v))
-	}
-	return envSlice
 }

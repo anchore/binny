@@ -121,7 +121,7 @@ The `go-install` install method uses `go install` to install a tool. It requires
 | `entrypoint` (optional) | The path within the repo to the main package for the tool (e.g. `cmd/syft`)          |
 | `ldflags` (optional)    | A list of ldflags to pass to `go install` (e.g. `-X main.version={{ .Version }}`)    |
 | `args` (optional)       | A list of args/flags to pass to `go install` (e.g. `-tags containers_image_openpgp`) |
-| `env` (optional)        | A map environment variables to use when running `go install`                         |
+| `env` (optional)        | A list key=value environment variables to use when running `go install`              |
 
 The `module` option allows for a special entry:
 - `.` or `path/to/module/on/disk`

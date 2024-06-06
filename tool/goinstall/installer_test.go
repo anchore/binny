@@ -92,9 +92,9 @@ func TestInstaller_InstallTo(t *testing.T) {
 						"-tags",
 						"containers_image_openpgp",
 					},
-					Env: map[string]any{
-						"FOO": "BAR",
-						"BAZ": 0,
+					Env: []string{
+						"FOO=BAR",
+						"BAZ=0",
 					},
 				},
 				goInstallRunner: func(spec, ldflags string, userArgs, userEnv []string, destDir string) error {
