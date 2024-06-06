@@ -66,7 +66,7 @@ func Test_templateFlags(t *testing.T) {
 func TestInstaller_InstallTo(t *testing.T) {
 	type fields struct {
 		config          InstallerParameters
-		goInstallRunner func(spec, ldflags, destDir string) error
+		goInstallRunner func(spec, ldflags string, args, env []string, destDir string) error
 	}
 	type args struct {
 		version string
@@ -88,11 +88,21 @@ func TestInstaller_InstallTo(t *testing.T) {
 					LDFlags: []string{
 						"-X github.com/anchore/binny/internal/version.Version={{.Version}}",
 					},
+					Args: []string{
+						"-tags",
+						"containers_image_openpgp",
+					},
+					Env: map[string]any{
+						"FOO": "BAR",
+						"BAZ": 0,
+					},
 				},
-				goInstallRunner: func(spec, ldflags, destDir string) error {
+				goInstallRunner: func(spec, ldflags string, userArgs, userEnv []string, destDir string) error {
 					assert.Equal(t, "github.com/anchore/binny/cmd/binny@1.2.3", spec)
 					assert.Equal(t, "-X github.com/anchore/binny/internal/version.Version=1.2.3", ldflags)
 					assert.Equal(t, "/tmp/to/place", destDir)
+					assert.Equal(t, []string{"-tags", "containers_image_openpgp"}, userArgs)
+					assert.Equal(t, []string{"FOO=BAR", "BAZ=0"}, userEnv)
 					return nil
 				},
 			},
