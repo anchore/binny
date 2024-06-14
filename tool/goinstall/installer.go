@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"text/template"
 
@@ -44,6 +45,10 @@ func (i Installer) InstallTo(version, destDir string) (string, error) {
 	}
 	fields := strings.Split(path, "/")
 	binName := fields[len(fields)-1]
+	// account for "/v2" type modules
+	if regexp.MustCompile(`v\d+`).MatchString(binName) && len(fields) > 2 {
+		binName = fields[len(fields)-2]
+	}
 	binPath := filepath.Join(destDir, binName)
 
 	spec := fmt.Sprintf("%s@%s", path, version)
@@ -74,10 +79,34 @@ func (i Installer) InstallTo(version, destDir string) (string, error) {
 	}
 
 	if err := i.goInstallRunner(spec, ldflags, args, env, destDir); err != nil {
+		// if there is a replace directive this is not allowed, so clone the repo at the given version tag/etc. and build
+		if strings.Contains(err.Error(), "replace directive") {
+			return i.installFromGitCloneBuild(version, destDir, binPath)
+		}
 		return "", fmt.Errorf("failed to install: %v", err)
 	}
 
 	return binPath, nil
+}
+
+func (i Installer) installFromGitCloneBuild(version, destDir, binPath string) (string, error) {
+	run := func(cmd string, args ...string) error {
+		c := exec.Command(cmd, args...)
+		c.Stdout = os.Stdout
+		c.Stderr = os.Stderr
+		c.Stdin = os.Stdin
+		return c.Run()
+	}
+	cloneDir := filepath.Join(destDir, ".repo")
+	err := run("git", "clone", "--depth", "1", "--branch", version, "https://"+i.config.Module, cloneDir)
+	if err != nil {
+		return "", err
+	}
+	entryPoint := cloneDir
+	if i.config.Entrypoint != "" {
+		entryPoint = filepath.Join(entryPoint, i.config.Entrypoint)
+	}
+	return binPath, run("go", "build", "-C", entryPoint, "-o", binPath, ".")
 }
 
 func validateEnvSlice(env []string) error {
