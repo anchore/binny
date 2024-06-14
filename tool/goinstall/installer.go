@@ -92,10 +92,11 @@ func (i Installer) InstallTo(version, destDir string) (string, error) {
 func (i Installer) installFromGitCloneBuild(version, destDir, binPath string) (string, error) {
 	run := func(cmd string, args ...string) error {
 		c := exec.Command(cmd, args...)
-		c.Stdout = os.Stdout
-		c.Stderr = os.Stderr
-		c.Stdin = os.Stdin
-		return c.Run()
+		out, err := c.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("unable to run: %s %s: %w\nOutput:\n%s", cmd, strings.Join(args, " "), err, string(out))
+		}
+		return nil
 	}
 	cloneDir := filepath.Join(destDir, ".repo")
 	err := run("git", "clone", "--depth", "1", "--branch", version, "https://"+i.config.Module, cloneDir)

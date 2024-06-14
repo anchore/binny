@@ -48,7 +48,11 @@ type StoreEntry struct {
 }
 
 func (e StoreEntry) Path() string {
-	return filepath.Join(e.root, e.PathInRoot)
+	path := e.PathInRoot
+	if runtime.GOOS == "windows" {
+		path += ".exe"
+	}
+	return filepath.Join(e.root, path)
 }
 
 func NewStore(root string) (*Store, error) {
