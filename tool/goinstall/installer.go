@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"text/template"
 
@@ -48,6 +49,9 @@ func (i Installer) InstallTo(version, destDir string) (string, error) {
 	// account for "/v2" type modules
 	if regexp.MustCompile(`v\d+`).MatchString(binName) && len(fields) > 2 {
 		binName = fields[len(fields)-2]
+	}
+	if runtime.GOOS == "windows" {
+		binName += ".exe"
 	}
 	binPath := filepath.Join(destDir, binName)
 

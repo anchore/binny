@@ -1,3 +1,6 @@
+# always use unix-style line endings for all text files
+* text=lf
+
 # Prevent CRLF correction from changing digest of
 # text files that are committed as stand-ins for binaries
 # in text fixtures:
