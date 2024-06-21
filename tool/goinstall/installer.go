@@ -111,7 +111,7 @@ func (i Installer) installFromGitCloneBuild(version, destDir, binPath string) (s
 	if i.config.Entrypoint != "" {
 		entryPoint = filepath.Join(entryPoint, i.config.Entrypoint)
 	}
-	return binPath, run("go", "build", "-C", entryPoint, "-o", binPath, ".")
+	return binPath, run("go", "build", "-C", entryPoint, "-buildvcs=false", "-o", binPath, ".")
 }
 
 func validateEnvSlice(env []string) error {
