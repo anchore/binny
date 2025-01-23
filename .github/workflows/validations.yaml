@@ -20,7 +20,7 @@ jobs:
     name: "Validations"
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Bootstrap environment
         uses: ./.github/actions/bootstrap
@@ -32,7 +32,7 @@ jobs:
     name: "Windows units"
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: install make
         run: "choco install make"
