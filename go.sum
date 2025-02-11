@@ -79,8 +79,8 @@ github.com/aymanbagabas/go-osc52/v2 v2.0.1 h1:HwpRHbFMcZLEVr42D4p7XBqjyuxQH5SMiE
 github.com/aymanbagabas/go-osc52/v2 v2.0.1/go.mod h1:uYgXzlJ7ZpABp8OJ+exZzJJhRNQ2ASbcXHWsFqH8hp8=
 github.com/bmatcuk/doublestar/v4 v4.7.1 h1:fdDeAqgT47acgwd9bd9HxJRDmc9UAmPpc+2m0CXv75Q=
 github.com/bmatcuk/doublestar/v4 v4.7.1/go.mod h1:xBQ8jztBU6kakFMg+8WGxn0c6z1fTSPVIjEY1Wr7jzc=
-github.com/braydonk/yaml v0.7.0 h1:ySkqO7r0MGoCNhiRJqE0Xe9yhINMyvOAB3nFjgyJn2k=
-github.com/braydonk/yaml v0.7.0/go.mod h1:hcm3h581tudlirk8XEUPDBAimBPbmnL0Y45hCRl47N4=
+github.com/braydonk/yaml v0.9.0 h1:ewGMrVmEVpsm3VwXQDR388sLg5+aQ8Yihp6/hc4m+h4=
+github.com/braydonk/yaml v0.9.0/go.mod h1:hcm3h581tudlirk8XEUPDBAimBPbmnL0Y45hCRl47N4=
 github.com/census-instrumentation/opencensus-proto v0.2.1/go.mod h1:f6KPmirojxKA12rnyqOA5BBL4O983OfeGPqjHWSTneU=
 github.com/chainguard-dev/yam v0.0.0-20230904174023-8d3c53b7e9d7 h1:YbqxaW3oq3br7zAKZ6rKJYZzvjBLY2OcZCSyU6d3aD4=
 github.com/chainguard-dev/yam v0.0.0-20230904174023-8d3c53b7e9d7/go.mod h1:okUhPc01MlA/ss50BH6m4pYGs13ErgelZYP1a0LEHTk=
@@ -229,8 +229,8 @@ github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510/go.mod h1:pupxD2MaaD3
 github.com/google/uuid v1.1.2/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
 github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
 github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
-github.com/google/yamlfmt v0.15.0 h1:8VqeHp87EEyfAeCTp3QpV/8bnhDh04jKN6EeifiTM70=
-github.com/google/yamlfmt v0.15.0/go.mod h1:MPmHSVetV8ofpKmeiEZAh2p4jbDapC+FNqilNN7JQVk=
+github.com/google/yamlfmt v0.16.0 h1:5auoxqdx2CxOb022XGBElFFVH8uE/lAJDCWKRMq4mT8=
+github.com/google/yamlfmt v0.16.0/go.mod h1:/fF8jQmFopG3InQoWYG3gTORPXqLwNkcBqAT4UA4ab0=
 github.com/googleapis/gax-go/v2 v2.0.4/go.mod h1:0Wqv26UfaUD9n4G6kQubkQ+KchISgw+vpHVxEJEs9eg=
 github.com/googleapis/gax-go/v2 v2.0.5/go.mod h1:DWXyrwAJ9X0FpwwEdw+IPEYBICEFu5mhpdKc/us6bOk=
 github.com/googleapis/google-cloud-go-testing v0.0.0-20200911160855-bcd43fbb19e8/go.mod h1:dvDLG8qkwmyD9a/MJJN3XJcT3xFxOKAvTZGvuZmac9g=
