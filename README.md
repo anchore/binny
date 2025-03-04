@@ -196,9 +196,10 @@ The `version.want` option allows a special entry:
 
 The `github-release` version method uses the GitHub Releases API to determine the latest release of a tool. It requires the following configuration options:
 
-| Option | Description                                                                                     |
-|--------|-------------------------------------------------------------------------------------------------|
-| `repo` | The GitHub repository to reference releases from. This should be in the format `<owner>/<repo>` |
+| Option   | Description                                                                                     |
+|----------|-------------------------------------------------------------------------------------------------|
+| `binary` | Binary to select if there are multiple within the release archive (defaults to the tool name)   |
+| `repo`   | The GitHub repository to reference releases from. This should be in the format `<owner>/<repo>` |
 
 The `version.want` option allows a special entry:
 - `latest`: don't pin to a version, use the latest available
