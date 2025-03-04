@@ -76,8 +76,7 @@ func (p updateLockYamlPatcher) PatchYaml(node *yaml.Node) error {
 	return nil
 }
 
-// nolint: funlen,gocognit
-func getUpdatedConfig(cfg UpdateConfig, names []string) (*option.Core, error) {
+func getUpdatedConfig(cfg UpdateConfig, names []string) (*option.Core, error) { //nolint: funlen,gocognit
 	var (
 		errs                 error
 		newCfgs              []option.Tool

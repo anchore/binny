@@ -49,8 +49,7 @@ func Install(app clio.Application) *cobra.Command {
 	}, cfg)
 }
 
-// nolint: funlen
-func runInstall(cmdCfg InstallConfig, names []string) error {
+func runInstall(cmdCfg InstallConfig, names []string) error { //nolint: funlen
 	names, toolOpts := selectNamesAndConfigs(cmdCfg.Core, names)
 
 	if len(toolOpts) == 0 {
