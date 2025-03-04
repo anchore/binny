@@ -110,7 +110,7 @@ func (v VersionResolver) findLatestVersion(versionConstraint string) (string, er
 	return latestVersion.Tag, nil
 }
 
-// nolint:gocognit
+//nolint:gocognit
 func filterToLatestVersion(releases []ghRelease, versionConstraint string) (*ghRelease, error) {
 	var constraint *semver.Constraints
 	var err error

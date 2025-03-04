@@ -288,45 +288,54 @@ func findBinaryAssetInDir(binary, destDir string) (string, error) {
 
 		binPath = filteredPaths[0]
 	default:
-		// do mime type detection to find only binaries
-		var candidates []string
-		for _, p := range filteredPaths {
-			tyName, err := mimeTypeOfFile(p)
-			if err != nil {
-				log.WithFields("file", p).Tracef("unable to detect mime type: %s", err)
-				continue
-			}
-
-			if binaryMimeTypes.Has(tyName) {
-				candidates = append(candidates, p)
-			}
+		bp, err := filterMultipleArchiveBinaries(binary, destDir, filteredPaths, binPath)
+		if err != nil {
+			return "", err
 		}
-
-		switch len(candidates) {
-		case 0:
-			return "", fmt.Errorf("no binary files found in %q", destDir)
-		case 1:
-			if binary != "" && binary != path.Base(candidates[0]) {
-				return "", fmt.Errorf("binary file %q not found in %q (found %q)", binary, destDir, candidates[0])
-			}
-
-			binPath = candidates[0]
-		default:
-			if binary != "" {
-				for _, p := range candidates {
-					if binary == path.Base(p) {
-						binPath = p
-					}
-				}
-			}
-			if binPath == "" {
-				return "", fmt.Errorf("multiple files found in %q", destDir)
-			}
-		}
+		binPath = bp
 	}
 
 	log.WithFields("file", binPath).Trace("found binary asset")
 
+	return binPath, nil
+}
+
+func filterMultipleArchiveBinaries(binary string, destDir string, filteredPaths []string, binPath string) (string, error) {
+	// do mime type detection to find only binaries
+	var candidates []string
+	for _, p := range filteredPaths {
+		tyName, err := mimeTypeOfFile(p)
+		if err != nil {
+			log.WithFields("file", p).Tracef("unable to detect mime type: %s", err)
+			continue
+		}
+
+		if binaryMimeTypes.Has(tyName) {
+			candidates = append(candidates, p)
+		}
+	}
+
+	switch len(candidates) {
+	case 0:
+		return "", fmt.Errorf("no binary files found in %q", destDir)
+	case 1:
+		if binary != "" && binary != path.Base(candidates[0]) {
+			return "", fmt.Errorf("binary file %q not found in %q (found %q)", binary, destDir, candidates[0])
+		}
+
+		binPath = candidates[0]
+	default:
+		if binary != "" {
+			for _, p := range candidates {
+				if binary == path.Base(p) {
+					binPath = p
+				}
+			}
+		}
+		if binPath == "" {
+			return "", fmt.Errorf("multiple files found in %q", destDir)
+		}
+	}
 	return binPath, nil
 }
 
@@ -750,7 +759,7 @@ func processExpandedAssets(lgr logger.Logger, reader io.Reader, from string) []g
 	return assets
 }
 
-// nolint:funlen
+//nolint:funlen
 func fetchReleaseGithubV4API(user, repo, tag string) (*ghRelease, error) {
 	token := os.Getenv("GITHUB_TOKEN")
 	if token == "" {

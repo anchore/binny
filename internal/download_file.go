@@ -1,8 +1,8 @@
 package internal
 
 import (
-	"crypto/md5"  // nolint:gosec // MD5 is used for legacy compatibility
-	"crypto/sha1" // nolint:gosec // SHA1 is used for legacy compatibility
+	"crypto/md5"  //nolint:gosec // MD5 is used for legacy compatibility
+	"crypto/sha1" //nolint:gosec // SHA1 is used for legacy compatibility
 	"crypto/sha256"
 	"crypto/sha512"
 	"fmt"
@@ -53,7 +53,7 @@ func DownloadFile(lgr logger.Logger, url string, filepath string, checksum strin
 }
 
 func DownloadURL(lgr logger.Logger, url string) (io.ReadCloser, error) {
-	resp, err := http.Get(url) // nolint: gosec  // we must be able to get arbitrary URLs
+	resp, err := http.Get(url) //nolint: gosec  // we must be able to get arbitrary URLs
 	if err != nil {
 		return nil, fmt.Errorf("unable to download %q: %w", url, err)
 	}
@@ -90,11 +90,11 @@ func getHasher(checksum string) hash.Hash {
 	case "sha256":
 		return sha256.New()
 	case "sha1":
-		return sha1.New() // nolint:gosec // SHA1 is used for legacy compatibility
+		return sha1.New() //nolint:gosec // SHA1 is used for legacy compatibility
 	case "sha512":
 		return sha512.New()
 	case "md5":
-		return md5.New() // nolint:gosec // MD5 is used for legacy compatibility
+		return md5.New() //nolint:gosec // MD5 is used for legacy compatibility
 	default:
 		return defaultHash
 	}
