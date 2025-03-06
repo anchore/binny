@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -202,7 +201,7 @@ func isBinaryAsset(asset ghAsset) bool {
 }
 
 func hasArchiveExtension(name string) bool {
-	ext := path.Ext(name)
+	ext := filepath.Ext(name)
 	switch ext {
 	// note: we only need to check for the last part of any archive extension (that is, only ".gz" not ".tar.gz")
 	case ".tar", ".zip", ".gz", ".bz2", ".xz", ".rar", ".7z", ".tgz", ".bz", ".tbz", ".zst", ".zstd":
@@ -271,7 +270,7 @@ func findBinaryAssetInDir(binary, destDir string) (string, error) {
 	ignore := strset.New("LICENSE", "README.md", checksumsFilename)
 	var filteredPaths []string
 	for _, p := range paths {
-		if ignore.Has(path.Base(p)) {
+		if ignore.Has(filepath.Base(p)) {
 			continue
 		}
 		filteredPaths = append(filteredPaths, p)
@@ -282,7 +281,7 @@ func findBinaryAssetInDir(binary, destDir string) (string, error) {
 	case 0:
 		return "", fmt.Errorf("no files found in %q", destDir)
 	case 1:
-		if binary != "" && binary != path.Base(filteredPaths[0]) {
+		if binary != "" && binary != filepath.Base(filteredPaths[0]) {
 			return "", fmt.Errorf("binary file %q not found in %q (found %q)", binary, destDir, filteredPaths[0])
 		}
 
@@ -319,7 +318,7 @@ func filterMultipleArchiveBinaries(binary string, destDir string, filteredPaths 
 	case 0:
 		return "", fmt.Errorf("no binary files found in %q", destDir)
 	case 1:
-		if binary != "" && binary != path.Base(candidates[0]) {
+		if binary != "" && binary != filepath.Base(candidates[0]) {
 			return "", fmt.Errorf("binary file %q not found in %q (found %q)", binary, destDir, candidates[0])
 		}
 
@@ -327,7 +326,7 @@ func filterMultipleArchiveBinaries(binary string, destDir string, filteredPaths 
 	default:
 		if binary != "" {
 			for _, p := range candidates {
-				if binary == path.Base(p) {
+				if binary == filepath.Base(p) {
 					binPath = p
 				}
 			}
@@ -488,7 +487,7 @@ func normalizedAssetName(name string) string {
 }
 
 func hasBinaryExtension(name string) bool {
-	ext := path.Ext(name)
+	ext := filepath.Ext(name)
 	switch ext {
 	case ".exe", "":
 		return true
@@ -747,7 +746,7 @@ func processExpandedAssets(lgr logger.Logger, reader io.Reader, from string) []g
 				for _, attr := range token.Attr {
 					if attr.Key == "href" && strings.Contains(attr.Val, "/releases/download/") {
 						assets = append(assets, ghAsset{
-							Name:        path.Base(attr.Val),
+							Name:        filepath.Base(attr.Val),
 							ContentType: "",
 							URL:         fmt.Sprintf("https://github.com%s", attr.Val),
 						})

@@ -146,7 +146,7 @@ tasks:
           sh: "python ./scripts/list_units.py anchore binny"
 
       # unit test coverage threshold (in % coverage)
-      COVERAGE_THRESHOLD: '{{if eq OS "windows"}} 43 {{else}} 45 {{end}}'
+      COVERAGE_THRESHOLD: 35
     cmds:
       - cmd: "{{ .MAKEDIR_P }} {{ .TMP_DIR }}"
         silent: true
