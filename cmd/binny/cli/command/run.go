@@ -29,7 +29,7 @@ func Run(app clio.Application) *cobra.Command {
 		Short:              "run a specific tool",
 		DisableFlagParsing: true, // pass these as arguments to the tool
 		Args:               cobra.ArbitraryArgs,
-		PreRunE: func(cmd *cobra.Command, args []string) error {
+		PreRunE: func(_ *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return fmt.Errorf("no tool name provided")
 			}

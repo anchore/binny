@@ -44,14 +44,14 @@ func List(app clio.Application) *cobra.Command {
 			"ls",
 		},
 		Args: cobra.ArbitraryArgs,
-		PreRunE: func(cmd *cobra.Command, args []string) error {
+		PreRunE: func(_ *cobra.Command, args []string) error {
 			if cfg.Format.JQCommand != "" && cfg.Format.Output != "json" {
 				return fmt.Errorf("--jq can only be used when --output format is 'json'")
 			}
 			cfg.IncludeFilter = args
 			return nil
 		},
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, _ []string) error {
 			return runList(*cfg)
 		},
 	}, cfg)

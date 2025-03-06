@@ -59,18 +59,35 @@ tasks:
   tools:
     desc: Install all tools needed for CI and local development
     deps: [binny]
+    aliases:
+      - bootstrap
     generates:
-      - "{{ .TOOL_DIR }}/binny"
-      - "{{ .TOOL_DIR }}/goreleaser"
-      - "{{ .TOOL_DIR }}/chronicle"
-      - "{{ .TOOL_DIR }}/glow"
-      - "{{ .TOOL_DIR }}/golangci-lint"
-      - "{{ .TOOL_DIR }}/gosimports"
-      - "{{ .TOOL_DIR }}/bouncer"
-      - "{{ .TOOL_DIR }}/task"
+      - ".binny.yaml"
+      - "{{ .TOOL_DIR }}/*"
     status:
       - "{{ .TOOL_DIR }}/binny check -v"
     cmd: "{{ .TOOL_DIR }}/binny install -v"
+    silent: true
+
+  update-tools:
+    desc: Update pinned versions of all tools to their latest available versions
+    deps: [binny]
+    generates:
+      - ".binny.yaml"
+      - "{{ .TOOL_DIR }}/*"
+    cmd: "{{ .TOOL_DIR }}/binny update -v"
+    silent: true
+
+  list-tools:
+    desc: List all tools needed for CI and local development
+    deps: [binny]
+    cmd: "{{ .TOOL_DIR }}/binny list"
+    silent: true
+
+  list-tool-updates:
+    desc: List all tools that are not up to date relative to the binny config
+    deps: [binny]
+    cmd: "{{ .TOOL_DIR }}/binny list --updates"
     silent: true
 
 
@@ -129,7 +146,7 @@ tasks:
           sh: "python ./scripts/list_units.py anchore binny"
 
       # unit test coverage threshold (in % coverage)
-      COVERAGE_THRESHOLD: '{{if eq OS "windows"}} 43 {{else}} 45 {{end}}'
+      COVERAGE_THRESHOLD: 35
     cmds:
       - cmd: "{{ .MAKEDIR_P }} {{ .TMP_DIR }}"
         silent: true

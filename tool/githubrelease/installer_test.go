@@ -178,20 +178,27 @@ func Test_getChecksumForAsset(t *testing.T) {
 }
 
 func Test_extractArchive(t *testing.T) {
-	tarPath, expectedBinName := createTestArchive(t)
+	expectedBinName := "binary_file.bin"
 
 	tests := []struct {
-		name        string
-		archivePath string
-		destDir     string
-		wantName    string
-		wantErr     require.ErrorAssertionFunc
+		name     string
+		binary   string
+		wantName string
+		wantErr  require.ErrorAssertionFunc
 	}{
 		{
-			name:        "happy path",
-			archivePath: tarPath,
-			destDir:     t.TempDir(),
-			wantName:    expectedBinName,
+			name:     "happy path (no binary specified)",
+			wantName: expectedBinName,
+		},
+		{
+			name:     "happy path (binary specified)",
+			binary:   expectedBinName,
+			wantName: expectedBinName,
+		},
+		{
+			name:    "no matching asset found",
+			binary:  "not-thing",
+			wantErr: require.Error,
 		},
 	}
 	for _, tt := range tests {
@@ -200,18 +207,25 @@ func Test_extractArchive(t *testing.T) {
 				tt.wantErr = require.NoError
 			}
 
-			expectedBinPath := filepath.Join(tt.destDir, tt.wantName)
+			dir := t.TempDir()
 
-			got, err := extractArchive(tt.archivePath, tt.destDir)
+			tarPath := createTestArchive(t, dir, expectedBinName)
+
+			expectedBinPath := filepath.Join(dir, tt.wantName)
+
+			got, err := extractArchive(tarPath, dir, tt.binary)
 			tt.wantErr(t, err)
+			if err != nil {
+				return
+			}
 
 			assert.Equal(t, expectedBinPath, got)
 		})
 	}
 }
 
-func createTestArchive(t *testing.T) (string, string) {
-	archivePath := filepath.Join(t.TempDir(), "test_fixture.tar.gz")
+func createTestArchive(t *testing.T, dir, binaryFilename string) string {
+	archivePath := filepath.Join(dir, "test_fixture.tar.gz")
 	archiveFile, err := os.Create(archivePath)
 	require.NoError(t, err)
 
@@ -245,7 +259,6 @@ func createTestArchive(t *testing.T) (string, string) {
 	}
 
 	// create a binary file
-	binaryFilename := "binary_file.bin"
 	binaryContent := []byte{0x03, 0x4B, 0x04, 0x0A, 0x50, 0x4B, 0x03, 0x50, 0x04, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00}
 	binaryHeader := &tar.Header{
 		Name: binaryFilename,
@@ -256,30 +269,39 @@ func createTestArchive(t *testing.T) (string, string) {
 	_, err = tarWriter.Write(binaryContent)
 	require.NoError(t, err)
 
-	return archivePath, binaryFilename
+	return archivePath
 }
 
 func Test_findBinaryAssetInDir(t *testing.T) {
 	tests := []struct {
 		name    string
 		destDir string
+		binary  string
 		want    string
 		wantErr require.ErrorAssertionFunc
 	}{
 		{
 			name:    "flat assets",
+			binary:  "syft",
 			destDir: "testdata/archive-contents/flat",
 			want:    "testdata/archive-contents/flat/syft",
 		},
 		{
 			name:    "nested assets",
+			binary:  "syft",
 			destDir: "testdata/archive-contents/nested",
 			want:    "testdata/archive-contents/nested/syft/syft",
 		},
 		{
-			name:    "multiple binaries",
+			name:    "multiple binaries (no binary specified)",
 			destDir: "testdata/archive-contents/multiple-bins",
 			wantErr: require.Error,
+		},
+		{
+			name:    "multiple binaries (binary matches)",
+			binary:  "syft-2",
+			destDir: "testdata/archive-contents/multiple-bins",
+			want:    "testdata/archive-contents/multiple-bins/syft-2",
 		},
 	}
 	for _, tt := range tests {
@@ -287,7 +309,7 @@ func Test_findBinaryAssetInDir(t *testing.T) {
 			if tt.wantErr == nil {
 				tt.wantErr = require.NoError
 			}
-			got, err := findBinaryAssetInDir(tt.destDir)
+			got, err := findBinaryAssetInDir(tt.binary, tt.destDir)
 			tt.wantErr(t, err)
 
 			want := strings.ReplaceAll(tt.want, "/", string(os.PathSeparator))

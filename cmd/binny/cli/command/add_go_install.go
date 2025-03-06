@@ -35,13 +35,13 @@ func AddGoInstall(app clio.Application) *cobra.Command {
 		Use:   "go-install NAME@VERSION --module GOMODULE [--entrypoint PATH] [--ldflags FLAGS]",
 		Short: "Add a new tool configuration from 'go install ...' invocations",
 		Args:  cobra.ExactArgs(1),
-		PreRunE: func(cmd *cobra.Command, args []string) error {
+		PreRunE: func(_ *cobra.Command, _ []string) error {
 			if cfg.Install.GoInstall.Module == "" {
 				return fmt.Errorf("go-install configuration requires '--module' option")
 			}
 			return nil
 		},
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
 			return runAddGoInstallConfig(*cfg, args[0])
 		},
 	}, cfg)

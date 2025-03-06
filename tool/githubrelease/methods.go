@@ -28,7 +28,7 @@ func DefaultVersionResolverConfig(installParams any) (string, any, error) {
 		return "", nil, fmt.Errorf("invalid go install parameters")
 	}
 
-	return ResolveMethod, VersionResolutionParameters{ // nolint: gosimple
+	return ResolveMethod, VersionResolutionParameters{
 		Repo: params.Repo,
 	}, nil
 }

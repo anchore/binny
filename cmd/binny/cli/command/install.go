@@ -39,18 +39,17 @@ func Install(app clio.Application) *cobra.Command {
 		Use:   "install",
 		Short: "Install tools",
 		Args:  cobra.ArbitraryArgs,
-		PreRunE: func(cmd *cobra.Command, args []string) error {
+		PreRunE: func(_ *cobra.Command, args []string) error {
 			names = args
 			return nil
 		},
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, _ []string) error {
 			return runInstall(*cfg, names)
 		},
 	}, cfg)
 }
 
-// nolint: funlen
-func runInstall(cmdCfg InstallConfig, names []string) error {
+func runInstall(cmdCfg InstallConfig, names []string) error { //nolint: funlen
 	names, toolOpts := selectNamesAndConfigs(cmdCfg.Core, names)
 
 	if len(toolOpts) == 0 {
@@ -115,7 +114,7 @@ func runInstall(cmdCfg InstallConfig, names []string) error {
 	}
 
 	// note: we can ignore the error here because we are tracking the error through the multierror object
-	g.Wait() // nolint: errcheck
+	g.Wait() //nolint: errcheck
 
 	alreadyInstalled = len(alreadyInstalledTools) > 0 && len(alreadyInstalledTools) == len(toolOpts)
 

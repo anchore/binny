@@ -2,6 +2,7 @@ package option
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 
 	"github.com/mitchellh/mapstructure"
@@ -44,7 +45,7 @@ func (t Tool) ToTool() (binny.Tool, *binny.VersionIntent, error) {
 }
 
 func (t Tool) ToConfig() (*tool.Config, *binny.VersionIntent, error) {
-	installParams, err := deriveInstallParameters(t.InstallMethod, t.Parameters)
+	installParams, err := deriveInstallParameters(t.Name, t.InstallMethod, t.Parameters, runtime.GOOS)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to derive install parameters for tool %q: %w", t.Name, err)
 	}
@@ -74,7 +75,7 @@ func (t Tool) ToConfig() (*tool.Config, *binny.VersionIntent, error) {
 	return cfg, intent, nil
 }
 
-func deriveInstallParameters(installMethod string, installParams map[string]any) (any, error) {
+func deriveInstallParameters(name string, installMethod string, installParams map[string]any, goos string) (any, error) {
 	switch {
 	case goinstall.IsInstallMethod(installMethod):
 		var params goinstall.InstallerParameters
@@ -94,6 +95,13 @@ func deriveInstallParameters(installMethod string, installParams map[string]any)
 		var params githubrelease.InstallerParameters
 		if err := mapstructure.Decode(installParams, &params); err != nil {
 			return nil, err
+		}
+		if params.Binary == "" {
+			// if not provided, assume that the binary name is the same as the configured tool name
+			params.Binary = name
+			if goos == "windows" {
+				params.Binary += ".exe"
+			}
 		}
 		return params, nil
 	case installMethod == "":

@@ -39,11 +39,11 @@ func Update(app clio.Application) *cobra.Command {
 		Use:   "update",
 		Short: "Update pinned tool version configuration with latest available versions (that are still within any provided constraints)",
 		Args:  cobra.ArbitraryArgs,
-		PreRunE: func(cmd *cobra.Command, args []string) error {
+		PreRunE: func(_ *cobra.Command, args []string) error {
 			names = args
 			return nil
 		},
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, _ []string) error {
 			return runUpdate(*cfg, names)
 		},
 	}, cfg)
@@ -76,8 +76,7 @@ func (p updateLockYamlPatcher) PatchYaml(node *yaml.Node) error {
 	return nil
 }
 
-// nolint: funlen,gocognit
-func getUpdatedConfig(cfg UpdateConfig, names []string) (*option.Core, error) {
+func getUpdatedConfig(cfg UpdateConfig, names []string) (*option.Core, error) { //nolint: funlen,gocognit
 	var (
 		errs                 error
 		newCfgs              []option.Tool
@@ -160,7 +159,7 @@ func getUpdatedConfig(cfg UpdateConfig, names []string) (*option.Core, error) {
 	}
 
 	// note: we can ignore the error here because we are tracking the error through the multierror object
-	g.Wait() // nolint: errcheck
+	g.Wait() //nolint: errcheck
 
 	newCfg := cfg
 	newCfg.Tools = newCfgs

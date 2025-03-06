@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -86,7 +85,8 @@ var binaryMimeTypes = strset.New(
 var _ binny.Installer = (*Installer)(nil)
 
 type InstallerParameters struct {
-	Repo string `json:"repo" yaml:"repo" mapstructure:"repo"`
+	Binary string `json:"binary" yaml:"binary" mapstructure:"binary"`
+	Repo   string `json:"repo" yaml:"repo" mapstructure:"repo"`
 }
 
 type Installer struct {
@@ -124,7 +124,7 @@ func (i Installer) InstallTo(version, destDir string) (string, error) {
 
 	checksumAsset := selectChecksumAsset(lgr, release.Assets)
 
-	binPath, err := downloadAndExtractAsset(lgr, *asset, checksumAsset, destDir)
+	binPath, err := downloadAndExtractAsset(lgr, *asset, checksumAsset, destDir, i.config.Binary)
 	if err != nil {
 		return "", fmt.Errorf("unable to download and extract asset %s@%s: %w", i.config.Repo, version, err)
 	}
@@ -132,7 +132,7 @@ func (i Installer) InstallTo(version, destDir string) (string, error) {
 	return binPath, nil
 }
 
-func downloadAndExtractAsset(lgr logger.Logger, asset ghAsset, checksumAsset *ghAsset, destDir string) (string, error) {
+func downloadAndExtractAsset(lgr logger.Logger, asset ghAsset, checksumAsset *ghAsset, destDir string, binary string) (string, error) {
 	assetPath := filepath.Join(destDir, asset.Name)
 
 	checksum := asset.Checksum
@@ -177,7 +177,7 @@ func downloadAndExtractAsset(lgr logger.Logger, asset ghAsset, checksumAsset *gh
 	switch {
 	case isArchiveAsset(asset):
 		lgr.WithFields("asset", asset.Name).Trace("asset is an archive")
-		return extractArchive(assetPath, destDir)
+		return extractArchive(assetPath, destDir, binary)
 	case isBinaryAsset(asset):
 		lgr.WithFields("asset", asset.Name).Trace("asset could be a binary")
 		return assetPath, nil
@@ -201,7 +201,7 @@ func isBinaryAsset(asset ghAsset) bool {
 }
 
 func hasArchiveExtension(name string) bool {
-	ext := path.Ext(name)
+	ext := filepath.Ext(name)
 	switch ext {
 	// note: we only need to check for the last part of any archive extension (that is, only ".gz" not ".tar.gz")
 	case ".tar", ".zip", ".gz", ".bz2", ".xz", ".rar", ".7z", ".tgz", ".bz", ".tbz", ".zst", ".zstd":
@@ -231,7 +231,7 @@ func getChecksumForAsset(assetName, checksumsPath string) (string, error) {
 	return "", nil
 }
 
-func extractArchive(archivePath, destDir string) (string, error) {
+func extractArchive(archivePath, destDir, binary string) (string, error) {
 	// extract tar.gz to destDir
 	if err := archiver.Unarchive(archivePath, destDir); err != nil {
 		return "", fmt.Errorf("unable to extract asset %q: %w", archivePath, err)
@@ -242,7 +242,7 @@ func extractArchive(archivePath, destDir string) (string, error) {
 	}
 
 	// look for the binary recursively in the destDir and return that
-	binPath, err := findBinaryAssetInDir(destDir)
+	binPath, err := findBinaryAssetInDir(binary, destDir)
 	if err != nil {
 		return "", fmt.Errorf("unable to find binary in %q: %w", destDir, err)
 	}
@@ -250,7 +250,7 @@ func extractArchive(archivePath, destDir string) (string, error) {
 	return binPath, nil
 }
 
-func findBinaryAssetInDir(destDir string) (string, error) {
+func findBinaryAssetInDir(binary, destDir string) (string, error) {
 	var paths []string
 	if err := filepath.Walk(destDir,
 		func(path string, info os.FileInfo, err error) error {
@@ -270,7 +270,7 @@ func findBinaryAssetInDir(destDir string) (string, error) {
 	ignore := strset.New("LICENSE", "README.md", checksumsFilename)
 	var filteredPaths []string
 	for _, p := range paths {
-		if ignore.Has(path.Base(p)) {
+		if ignore.Has(filepath.Base(p)) {
 			continue
 		}
 		filteredPaths = append(filteredPaths, p)
@@ -281,34 +281,60 @@ func findBinaryAssetInDir(destDir string) (string, error) {
 	case 0:
 		return "", fmt.Errorf("no files found in %q", destDir)
 	case 1:
+		if binary != "" && binary != filepath.Base(filteredPaths[0]) {
+			return "", fmt.Errorf("binary file %q not found in %q (found %q)", binary, destDir, filteredPaths[0])
+		}
+
 		binPath = filteredPaths[0]
 	default:
-		// do mime type detection to find only binaries
-		var candidates []string
-		for _, p := range filteredPaths {
-			tyName, err := mimeTypeOfFile(p)
-			if err != nil {
-				log.WithFields("file", p).Tracef("unable to detect mime type: %s", err)
-				continue
-			}
-
-			if binaryMimeTypes.Has(tyName) {
-				candidates = append(candidates, p)
-			}
+		bp, err := filterMultipleArchiveBinaries(binary, destDir, filteredPaths, binPath)
+		if err != nil {
+			return "", err
 		}
-
-		switch len(candidates) {
-		case 0:
-			return "", fmt.Errorf("no binary files found in %q", destDir)
-		case 1:
-			binPath = candidates[0]
-		default:
-			return "", fmt.Errorf("multiple files found in %q", destDir)
-		}
+		binPath = bp
 	}
 
 	log.WithFields("file", binPath).Trace("found binary asset")
 
+	return binPath, nil
+}
+
+func filterMultipleArchiveBinaries(binary string, destDir string, filteredPaths []string, binPath string) (string, error) {
+	// do mime type detection to find only binaries
+	var candidates []string
+	for _, p := range filteredPaths {
+		tyName, err := mimeTypeOfFile(p)
+		if err != nil {
+			log.WithFields("file", p).Tracef("unable to detect mime type: %s", err)
+			continue
+		}
+
+		if binaryMimeTypes.Has(tyName) {
+			candidates = append(candidates, p)
+		}
+	}
+
+	switch len(candidates) {
+	case 0:
+		return "", fmt.Errorf("no binary files found in %q", destDir)
+	case 1:
+		if binary != "" && binary != filepath.Base(candidates[0]) {
+			return "", fmt.Errorf("binary file %q not found in %q (found %q)", binary, destDir, candidates[0])
+		}
+
+		binPath = candidates[0]
+	default:
+		if binary != "" {
+			for _, p := range candidates {
+				if binary == filepath.Base(p) {
+					binPath = p
+				}
+			}
+		}
+		if binPath == "" {
+			return "", fmt.Errorf("multiple files found in %q", destDir)
+		}
+	}
 	return binPath, nil
 }
 
@@ -461,7 +487,7 @@ func normalizedAssetName(name string) string {
 }
 
 func hasBinaryExtension(name string) bool {
-	ext := path.Ext(name)
+	ext := filepath.Ext(name)
 	switch ext {
 	case ".exe", "":
 		return true
@@ -720,7 +746,7 @@ func processExpandedAssets(lgr logger.Logger, reader io.Reader, from string) []g
 				for _, attr := range token.Attr {
 					if attr.Key == "href" && strings.Contains(attr.Val, "/releases/download/") {
 						assets = append(assets, ghAsset{
-							Name:        path.Base(attr.Val),
+							Name:        filepath.Base(attr.Val),
 							ContentType: "",
 							URL:         fmt.Sprintf("https://github.com%s", attr.Val),
 						})
@@ -732,7 +758,7 @@ func processExpandedAssets(lgr logger.Logger, reader io.Reader, from string) []g
 	return assets
 }
 
-// nolint:funlen
+//nolint:funlen
 func fetchReleaseGithubV4API(user, repo, tag string) (*ghRelease, error) {
 	token := os.Getenv("GITHUB_TOKEN")
 	if token == "" {

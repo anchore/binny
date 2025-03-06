@@ -102,7 +102,7 @@ func availableVersionsFetcher(url string) ([]string, error) {
 
 	log.WithFields("url", url).Trace("requesting latest version")
 
-	resp, err := http.Get(url) // nolint:gosec
+	resp, err := http.Get(url) //nolint:gosec
 	if err != nil {
 		return nil, err
 	}

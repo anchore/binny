@@ -30,13 +30,13 @@ func AddGithubRelease(app clio.Application) *cobra.Command {
 		Use:   "github-release OWNER/REPO@VERSION",
 		Short: "Add a new tool configuration that sources binaries from GitHub releases",
 		Args:  cobra.ExactArgs(1),
-		PreRunE: func(cmd *cobra.Command, args []string) error {
+		PreRunE: func(_ *cobra.Command, args []string) error {
 			if !strings.Contains(args[0], "/") {
 				return fmt.Errorf("invalid 'owner/project@version' format: %q", args[0])
 			}
 			return nil
 		},
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
 			return runGithubReleaseConfig(*cfg, args[0])
 		},
 	}, cfg)

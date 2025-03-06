@@ -33,11 +33,11 @@ func Check(app clio.Application) *cobra.Command {
 		Use:   "check",
 		Short: "Verify tool are installed at the configured version",
 		Args:  cobra.ArbitraryArgs,
-		PreRunE: func(cmd *cobra.Command, args []string) error {
+		PreRunE: func(_ *cobra.Command, args []string) error {
 			names = args
 			return nil
 		},
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, _ []string) error {
 			return runCheck(*cfg, names)
 		},
 	}, cfg)
