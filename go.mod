@@ -17,7 +17,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.0.0
 	github.com/creack/pty v1.1.24
 	github.com/gabriel-vasile/mimetype v1.4.9
-	github.com/gkampitakis/go-snaps v0.5.13
+	github.com/gkampitakis/go-snaps v0.5.14
 	github.com/go-git/go-git/v5 v5.16.2
 	github.com/google/go-cmp v0.7.0
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
