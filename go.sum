@@ -80,8 +80,8 @@ github.com/aymanbagabas/go-osc52/v2 v2.0.1/go.mod h1:uYgXzlJ7ZpABp8OJ+exZzJJhRNQ
 github.com/bmatcuk/doublestar/v4 v4.7.1 h1:fdDeAqgT47acgwd9bd9HxJRDmc9UAmPpc+2m0CXv75Q=
 github.com/bmatcuk/doublestar/v4 v4.7.1/go.mod h1:xBQ8jztBU6kakFMg+8WGxn0c6z1fTSPVIjEY1Wr7jzc=
 github.com/census-instrumentation/opencensus-proto v0.2.1/go.mod h1:f6KPmirojxKA12rnyqOA5BBL4O983OfeGPqjHWSTneU=
-github.com/chainguard-dev/yam v0.2.26 h1:d/26Dm/5+0CPG2cBKOn76gS0iC5hFKBfAGlgt41pC2Q=
-github.com/chainguard-dev/yam v0.2.26/go.mod h1:FBsSbqX1ryE3iOVhxgDGi4tKi835l27xoH8dYWKa4XM=
+github.com/chainguard-dev/yam v0.2.27 h1:3zqhl2bCq/A3iNrmEaouWrJoGKgiZu1JXqoEw5rq398=
+github.com/chainguard-dev/yam v0.2.27/go.mod h1:FBsSbqX1ryE3iOVhxgDGi4tKi835l27xoH8dYWKa4XM=
 github.com/charmbracelet/bubbles v0.20.0 h1:jSZu6qD8cRQ6k9OMfR1WlM+ruM8fkPWkHvQWD9LIutE=
 github.com/charmbracelet/bubbles v0.20.0/go.mod h1:39slydyswPy+uVOHZ5x/GjwVAFkCsV8IIVy+4MhzwwU=
 github.com/charmbracelet/bubbletea v1.2.4 h1:KN8aCViA0eps9SCOThb2/XPIlea3ANJLUkv3KnQRNCE=
