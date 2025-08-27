@@ -1,0 +1,49 @@
+# Anchore binny
+
+Manage a directory of binaries without a package manager.
+
+## Project Overview
+
+binny is a CLI tool that helps manage binary dependencies for projects without relying on traditional package managers. It allows you to:
+
+- Install and manage binary tools from various sources (GitHub releases, Go modules, shell scripts)
+- Pin specific versions with constraint support
+- Keep all your binary dependencies configured in a single YAML file
+- Update to latest versions within constraints
+- Check for missing or inconsistent installations
+
+## Architecture
+
+The project is structured as a Go CLI application with the following key components:
+
+- **CLI Interface** (`cmd/binny/`): Main command-line interface with subcommands (install, check, update, list, add, run)
+- **Tool Management** (`tool/`): Core logic for different installation methods:
+  - `githubrelease/`: Install from GitHub releases
+  - `goinstall/`: Install via `go install`
+  - `hostedshell/`: Install via hosted shell scripts
+- **Storage** (`store.go`): Manages installed binary storage and metadata
+- **Configuration**: YAML-based configuration in `.binny.yaml` files
+- **Event System** (`event/`): Internal event handling for UI updates
+
+## Key Files
+
+- `cmd/binny/main.go`: Entry point
+- `store.go`: Binary storage management
+- `tool/`: Installation method implementations
+- `cmd/binny/cli/command/`: CLI command implementations
+
+## Installation Methods
+
+1. **github-release**: Downloads binaries from GitHub releases
+2. **go-install**: Uses `go install` to build and install Go tools
+3. **hosted-shell**: Executes installation shell scripts from URLs
+
+## Version Resolution
+
+Supports multiple strategies for determining available versions:
+- GitHub releases API
+- Go module proxy
+- Git repository tags
+- Direct version specification
+
+The tool is designed to be simple, reliable, and focused on binary dependency management for development workflows.
