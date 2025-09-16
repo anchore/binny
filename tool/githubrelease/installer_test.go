@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -673,7 +674,7 @@ func Test_selectBinaryAsset(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equalf(t, tt.want, selectBinaryAsset(discard.New(), tt.args.assets, tt.args.goOS, tt.args.goArch), "selectBinaryAsset(%v, %v, %v)", tt.args.assets, tt.args.goOS, tt.args.goArch)
+			assert.Equalf(t, tt.want, selectBinaryAsset(discard.New(), tt.args.assets, tt.args.goOS, tt.args.goArch, nil), "selectBinaryAsset(%v, %v, %v)", tt.args.assets, tt.args.goOS, tt.args.goArch)
 		})
 	}
 }
@@ -1090,6 +1091,130 @@ func Test_isArchiveAsset(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, isArchiveAsset(tt.asset))
+		})
+	}
+}
+
+func Test_compileAssetPatterns(t *testing.T) {
+	tests := []struct {
+		name             string
+		assets           any
+		expectedPatterns int
+		expectedFirst    string
+	}{
+		{
+			name:             "nil input",
+			assets:           nil,
+			expectedPatterns: 0,
+		},
+		{
+			name:             "empty string",
+			assets:           "",
+			expectedPatterns: 0,
+		},
+		{
+			name:             "single string pattern",
+			assets:           "^hugo_extended_[0-9]",
+			expectedPatterns: 1,
+			expectedFirst:    "^hugo_extended_[0-9]",
+		},
+		{
+			name:             "slice of strings",
+			assets:           []string{"^hugo_extended_[0-9]", "^hugo_[0-9]"},
+			expectedPatterns: 2,
+			expectedFirst:    "^hugo_extended_[0-9]",
+		},
+		{
+			name:             "slice of any",
+			assets:           []any{"^hugo_extended_[0-9]", "^hugo_[0-9]"},
+			expectedPatterns: 2,
+			expectedFirst:    "^hugo_extended_[0-9]",
+		},
+		{
+			name:             "invalid regex pattern",
+			assets:           "^hugo_extended_[",
+			expectedPatterns: 0, // invalid regex should be ignored
+		},
+		{
+			name:             "mixed valid and invalid patterns",
+			assets:           []string{"^hugo_extended_[0-9]", "^hugo_extended_["},
+			expectedPatterns: 1, // only valid regex should be compiled
+			expectedFirst:    "^hugo_extended_[0-9]",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			patterns := compileAssetPatterns(tt.assets)
+			assert.Equal(t, tt.expectedPatterns, len(patterns))
+			if tt.expectedPatterns > 0 {
+				assert.Equal(t, tt.expectedFirst, patterns[0].String())
+			}
+		})
+	}
+}
+
+func Test_selectBinaryAsset_withRegexPatterns(t *testing.T) {
+	assets := []ghAsset{
+		{Name: "hugo_0.150.0_darwin_arm64.tar.gz", ContentType: "application/gzip"},
+		{Name: "hugo_extended_0.150.0_darwin_arm64.tar.gz", ContentType: "application/gzip"},
+		{Name: "hugo_extended_with_deploy_0.150.0_darwin_arm64.tar.gz", ContentType: "application/gzip"},
+	}
+
+	tests := []struct {
+		name            string
+		assetPatterns   []string
+		expectedAsset   string
+		shouldFindAsset bool
+	}{
+		{
+			name:            "no patterns - returns first match",
+			assetPatterns:   nil,
+			expectedAsset:   "hugo_0.150.0_darwin_arm64.tar.gz",
+			shouldFindAsset: true,
+		},
+		{
+			name:            "pattern matches hugo_extended exactly",
+			assetPatterns:   []string{"^hugo_extended_[0-9]"},
+			expectedAsset:   "hugo_extended_0.150.0_darwin_arm64.tar.gz",
+			shouldFindAsset: true,
+		},
+		{
+			name:            "pattern matches hugo_extended_with_deploy",
+			assetPatterns:   []string{"^hugo_extended_with_deploy_[0-9]"},
+			expectedAsset:   "hugo_extended_with_deploy_0.150.0_darwin_arm64.tar.gz",
+			shouldFindAsset: true,
+		},
+		{
+			name:            "multiple patterns - first match wins",
+			assetPatterns:   []string{"^hugo_extended_with_deploy_[0-9]", "^hugo_extended_[0-9]"},
+			expectedAsset:   "hugo_extended_with_deploy_0.150.0_darwin_arm64.tar.gz",
+			shouldFindAsset: true,
+		},
+		{
+			name:            "pattern doesn't match any asset",
+			assetPatterns:   []string{"^chronicle_[0-9]"},
+			shouldFindAsset: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var patterns []*regexp.Regexp
+			for _, p := range tt.assetPatterns {
+				re, err := regexp.Compile(p)
+				require.NoError(t, err)
+				patterns = append(patterns, re)
+			}
+
+			result := selectBinaryAsset(discard.New(), assets, "darwin", "arm64", patterns)
+
+			if tt.shouldFindAsset {
+				require.NotNil(t, result)
+				assert.Equal(t, tt.expectedAsset, result.Name)
+			} else {
+				assert.Nil(t, result)
+			}
 		})
 	}
 }

@@ -107,6 +107,27 @@ The `github-release` install method uses the GitHub Releases API to download the
 | Option | Description                                                                                     |
 |--------|-------------------------------------------------------------------------------------------------|
 | `repo` | The GitHub repository to reference releases from. This should be in the format `<owner>/<repo>` |
+| `assets` (optional) | Regex pattern(s) to filter release assets. Can be a single string or array of strings for priority matching |
+
+When multiple assets match the OS/architecture, the `assets` field allows you to specify which one to select:
+
+```yaml
+# single regex pattern
+- name: hugo
+  method: github-release
+  with:
+    repo: gohugoio/hugo
+    assets: "^hugo_extended_[0-9]"  # match hugo_extended but not hugo_extended_withdeploy
+
+# multiple patterns (first match wins)
+- name: tool
+  method: github-release
+  with:
+    repo: owner/tool
+    assets:
+      - "^tool_premium_[0-9]"   # try premium version first
+      - "^tool_[0-9]"           # fall back to standard version
+```
 
 The default version resolver for this method is `github-release`.
 
