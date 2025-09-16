@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -87,18 +88,58 @@ var _ binny.Installer = (*Installer)(nil)
 type InstallerParameters struct {
 	Binary string `json:"binary" yaml:"binary" mapstructure:"binary"`
 	Repo   string `json:"repo" yaml:"repo" mapstructure:"repo"`
+	Assets any    `json:"assets" yaml:"assets" mapstructure:"assets"`
 }
 
 type Installer struct {
 	config         InstallerParameters
+	assetPatterns  []*regexp.Regexp
 	releaseFetcher func(lgr logger.Logger, user, repo, tag string) (*ghRelease, error)
 }
 
 func NewInstaller(cfg InstallerParameters) Installer {
+	patterns := compileAssetPatterns(cfg.Assets)
 	return Installer{
 		config:         cfg,
+		assetPatterns:  patterns,
 		releaseFetcher: fetchRelease,
 	}
+}
+
+// compileAssetPatterns converts the assets configuration into compiled regex patterns
+func compileAssetPatterns(assets any) []*regexp.Regexp {
+	if assets == nil {
+		return nil
+	}
+
+	var patterns []string
+	switch v := assets.(type) {
+	case string:
+		if v != "" {
+			patterns = append(patterns, v)
+		}
+	case []string:
+		patterns = v
+	case []any:
+		for _, item := range v {
+			if str, ok := item.(string); ok && str != "" {
+				patterns = append(patterns, str)
+			}
+		}
+	default:
+		// unsupported type, return nil to indicate no filtering
+		return nil
+	}
+
+	var compiled []*regexp.Regexp
+	for _, pattern := range patterns {
+		if re, err := regexp.Compile(pattern); err == nil {
+			compiled = append(compiled, re)
+		}
+		// note: silently ignore invalid regex patterns
+	}
+
+	return compiled
 }
 
 func (i Installer) InstallTo(version, destDir string) (string, error) {
@@ -117,7 +158,7 @@ func (i Installer) InstallTo(version, destDir string) (string, error) {
 		return "", fmt.Errorf("unable to fetch github release %s@%s: %w", i.config.Repo, version, err)
 	}
 
-	asset := selectBinaryAsset(lgr, release.Assets, runtime.GOOS, runtime.GOARCH)
+	asset := selectBinaryAsset(lgr, release.Assets, runtime.GOOS, runtime.GOARCH, i.assetPatterns)
 	if asset == nil {
 		return "", fmt.Errorf("unable to find matching asset for %s@%s", i.config.Repo, version)
 	}
@@ -438,7 +479,7 @@ func flattenAliases(aliases map[string][]string) []string {
 	return as
 }
 
-func selectBinaryAsset(lgr logger.Logger, assets []ghAsset, goOS, goArch string) *ghAsset {
+func selectBinaryAsset(lgr logger.Logger, assets []ghAsset, goOS, goArch string, assetPatterns []*regexp.Regexp) *ghAsset {
 	// search for the asset by name with the OS and arch in the name
 	// e.g. chronicle_0.7.0_linux_amd64.tar.gz
 
@@ -451,13 +492,14 @@ func selectBinaryAsset(lgr logger.Logger, assets []ghAsset, goOS, goArch string)
 
 	lgr.Trace("looking for binary artifact")
 
+	// first pass: filter by content type, OS, and architecture
+	var osArchCandidates []ghAsset
 	for _, asset := range assets {
 		switch {
 		case isBinaryAsset(asset) || isArchiveAsset(asset):
 			// pass
 		default:
 			lgr.WithFields("asset", asset.Name).Tracef("skipping asset (content type %q)", asset.ContentType)
-
 			continue
 		}
 
@@ -468,17 +510,39 @@ func selectBinaryAsset(lgr logger.Logger, assets []ghAsset, goOS, goArch string)
 			continue
 		}
 
-		if isHostDarwin && containsOneOf(cleanName, universalDarwinArchSuffix) {
-			lgr.WithFields("asset", asset.Name).Trace("found asset (universal binary)")
-			return &asset
-		} else if !containsOneOf(cleanName, goarchs) {
+		isUniversalDarwin := isHostDarwin && containsOneOf(cleanName, universalDarwinArchSuffix)
+		if !isUniversalDarwin && !containsOneOf(cleanName, goarchs) {
 			lgr.WithFields("asset", asset.Name).Tracef("skipping asset (missing arch %q)", goarchs)
 			continue
 		}
 
-		lgr.WithFields("asset", asset.Name).Trace("found asset")
-		return &asset
+		osArchCandidates = append(osArchCandidates, asset)
 	}
+
+	if len(osArchCandidates) == 0 {
+		return nil
+	}
+
+	// second pass: apply regex patterns if provided
+	if len(assetPatterns) == 0 {
+		// no asset patterns specified, return first matching asset
+		selectedAsset := &osArchCandidates[0]
+		lgr.WithFields("asset", selectedAsset.Name).Trace("found asset (no pattern filtering)")
+		return selectedAsset
+	}
+
+	// try each pattern in order until we find a match
+	for _, pattern := range assetPatterns {
+		for _, candidate := range osArchCandidates {
+			if pattern.MatchString(candidate.Name) {
+				lgr.WithFields("asset", candidate.Name, "pattern", pattern.String()).Trace("found asset (pattern matched)")
+				return &candidate
+			}
+		}
+	}
+
+	// no pattern matched
+	lgr.Trace("no asset matched any of the specified patterns")
 	return nil
 }
 
