@@ -27,7 +27,7 @@ type InstallerParameters struct {
 
 type Installer struct {
 	config          InstallerParameters
-	goInstallRunner func(spec, ldflags string, args []string, env []string, destDir string) error
+	goInstallRunner func(spec, ldflags string, args []string, env []string, destDir string, isLocal bool, binName string) error
 }
 
 func NewInstaller(cfg InstallerParameters) Installer {
@@ -47,7 +47,8 @@ func (i Installer) InstallTo(version, destDir string) (string, error) {
 	binPath := filepath.Join(destDir, binName)
 
 	spec := fmt.Sprintf("%s@%s", path, version)
-	if strings.HasPrefix(i.config.Module, ".") || strings.HasPrefix(i.config.Module, "/") {
+	isLocal := strings.HasPrefix(i.config.Module, ".") || strings.HasPrefix(i.config.Module, "/")
+	if isLocal {
 		spec = path
 		log.WithFields("module", i.config.Module, "version", version).Debug("installing go module (local)")
 	} else {
@@ -73,7 +74,7 @@ func (i Installer) InstallTo(version, destDir string) (string, error) {
 		return "", fmt.Errorf("failed to template env: %v", err)
 	}
 
-	if err := i.goInstallRunner(spec, ldflags, args, env, destDir); err != nil {
+	if err := i.goInstallRunner(spec, ldflags, args, env, destDir, isLocal, binName); err != nil {
 		return "", fmt.Errorf("failed to install: %v", err)
 	}
 
@@ -126,8 +127,14 @@ func templateString(in string, version string) (string, error) {
 	return buf.String(), nil
 }
 
-func runGoInstall(spec, ldflags string, userArgs, userEnv []string, destDir string) error {
-	args := []string{"install"}
+func runGoInstall(spec, ldflags string, userArgs, userEnv []string, destDir string, isLocal bool, binName string) error {
+	var args []string
+	if isLocal {
+		// go install in module mode for a local module is not a good idea, so use go build in this case since the source is already local
+		args = append(args, "build", "-o", filepath.Join(destDir, binName))
+	} else {
+		args = append(args, "install")
+	}
 	args = append(args, userArgs...)
 
 	if ldflags != "" {
@@ -143,7 +150,9 @@ func runGoInstall(spec, ldflags string, userArgs, userEnv []string, destDir stri
 	env := os.Environ()
 	env = append(env, userEnv...)
 	// always override any conflicting env vars
-	env = append(env, "GOBIN="+destDir)
+	if !isLocal {
+		env = append(env, "GOBIN="+destDir)
+	}
 	cmd.Env = env
 
 	output, err := cmd.CombinedOutput()
