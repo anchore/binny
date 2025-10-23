@@ -3,6 +3,7 @@ package goinstall
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -251,7 +252,11 @@ func TestInstaller_InstallTo(t *testing.T) {
 			if !tt.wantErr(t, err, fmt.Sprintf("InstallTo(%v, %v)", tt.args.version, tt.args.destDir)) {
 				return
 			}
-			assert.Equalf(t, tt.want, got, "InstallTo(%v, %v)", tt.args.version, tt.args.destDir)
+			wantPath := tt.want
+			if runtime.GOOS == "windows" {
+				wantPath = fmt.Sprintf("%s.exe", wantPath)
+			}
+			assert.Equalf(t, wantPath, got, "InstallTo(%v, %v)", tt.args.version, tt.args.destDir)
 		})
 	}
 }
