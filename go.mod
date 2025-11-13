@@ -16,7 +16,7 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/creack/pty v1.1.24
-	github.com/gabriel-vasile/mimetype v1.4.10
+	github.com/gabriel-vasile/mimetype v1.4.11
 	github.com/gkampitakis/go-snaps v0.5.15
 	github.com/go-git/go-git/v5 v5.16.3
 	github.com/google/go-cmp v0.7.0
