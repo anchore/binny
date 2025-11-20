@@ -61,7 +61,9 @@ func DownloadURL(lgr logger.Logger, url string) (io.ReadCloser, error) {
 	lgr.WithFields("http-status", resp.StatusCode).Tracef("http get %q", url)
 
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
+		if resp.Body != nil {
+			resp.Body.Close()
+		}
 		return nil, fmt.Errorf("unexpected status code %d for %q", resp.StatusCode, url)
 	}
 	return resp.Body, nil
