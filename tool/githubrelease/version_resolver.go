@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Masterminds/semver/v3"
+	"github.com/hashicorp/go-retryablehttp"
 	"github.com/shurcooL/githubv4"
 	"golang.org/x/oauth2"
 
@@ -209,19 +210,15 @@ func fetchLatestReleaseFromGithubFacade(user, repo string) (*ghRelease, error) {
 }
 
 func downloadJSON(url string) (*http.Response, error) {
-	headers := map[string]string{"Accept": "application/json"}
+	client := retryablehttp.NewClient()
+	client.HTTPClient.Timeout = 10 * time.Second
+	client.Logger = nil
 
-	client := &http.Client{
-		Timeout: time.Second * 10,
-	}
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := retryablehttp.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
-
-	for key, value := range headers {
-		req.Header.Set(key, value)
-	}
+	req.Header.Set("Accept", "application/json")
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -233,18 +230,26 @@ func downloadJSON(url string) (*http.Response, error) {
 	return resp, nil
 }
 
+// newRetryableGitHubClient creates an HTTP client with OAuth2 authentication and retry logic.
+func newRetryableGitHubClient(token string) *http.Client {
+	src := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
+	oauth2Client := oauth2.NewClient(context.Background(), src)
+
+	retryClient := retryablehttp.NewClient()
+	retryClient.HTTPClient.Transport = oauth2Client.Transport
+	retryClient.Logger = nil
+
+	return retryClient.StandardClient()
+}
+
 //nolint:funlen
 func fetchAllReleasesFromGithubV4API(user, repo string) ([]ghRelease, error) {
 	token := os.Getenv("GITHUB_TOKEN")
 	if token == "" {
 		return nil, fmt.Errorf("GITHUB_TOKEN environment variable not set but is required to use the GitHub v4 API")
 	}
-	src := oauth2.StaticTokenSource(
-		// TODO: DI this
-		&oauth2.Token{AccessToken: token},
-	)
-	httpClient := oauth2.NewClient(context.Background(), src)
-	client := githubv4.NewClient(httpClient)
+
+	client := githubv4.NewClient(newRetryableGitHubClient(token))
 	var allReleases []ghRelease
 
 	// Query some details about a repository, an ghIssue in it, and its comments.

@@ -17,7 +17,6 @@ import (
 	"github.com/scylladb/go-set/strset"
 	"github.com/shurcooL/githubv4"
 	"golang.org/x/net/html"
-	"golang.org/x/oauth2"
 
 	"github.com/anchore/binny"
 	"github.com/anchore/binny/internal"
@@ -822,18 +821,13 @@ func processExpandedAssets(lgr logger.Logger, reader io.Reader, from string) []g
 	return assets
 }
 
-//nolint:funlen
 func fetchReleaseGithubV4API(user, repo, tag string) (*ghRelease, error) {
 	token := os.Getenv("GITHUB_TOKEN")
 	if token == "" {
 		return nil, fmt.Errorf("GITHUB_TOKEN environment variable not set but is required to use the GitHub v4 API")
 	}
-	src := oauth2.StaticTokenSource(
-		// TODO: DI this
-		&oauth2.Token{AccessToken: token},
-	)
-	httpClient := oauth2.NewClient(context.Background(), src)
-	client := githubv4.NewClient(httpClient)
+
+	client := githubv4.NewClient(newRetryableGitHubClient(token))
 
 	// TODO: act on hitting a rate limit
 	type rateLimit struct {

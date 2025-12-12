@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/go-git/go-git/v5/plumbing/hash"
+	"github.com/hashicorp/go-retryablehttp"
 
 	"github.com/anchore/go-logger"
 )
@@ -53,7 +54,7 @@ func DownloadFile(lgr logger.Logger, url string, filepath string, checksum strin
 }
 
 func DownloadURL(lgr logger.Logger, url string) (io.ReadCloser, error) {
-	resp, err := http.Get(url) //nolint: gosec  // we must be able to get arbitrary URLs
+	resp, err := retryablehttp.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("unable to download %q: %w", url, err)
 	}
