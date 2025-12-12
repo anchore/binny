@@ -83,15 +83,44 @@ func Test_extractToDir_pathTraversal(t *testing.T) {
 }
 
 func Test_extractToDir_symlinkTraversal(t *testing.T) {
-	dir := t.TempDir()
+	tests := []struct {
+		name       string
+		linkTarget string
+	}{
+		{
+			name:       "relative path traversal",
+			linkTarget: "../../../etc/passwd",
+		},
+		{
+			name:       "absolute path",
+			linkTarget: "/etc/passwd",
+		},
+		{
+			name:       "complex traversal",
+			linkTarget: "subdir/../../../../../../etc/passwd",
+		},
+	}
 
-	// Create an archive with a symlink pointing outside the extraction directory
-	archivePath := createArchiveWithSymlink(t, dir, "malicious_link", "../../../etc/passwd")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
 
-	// Attempt extraction - should fail because symlink target escapes
-	err := extractToDir(context.Background(), archivePath, dir)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "symlink escapes extraction directory")
+			// Create an archive with a symlink pointing outside the extraction directory
+			archivePath := createArchiveWithSymlink(t, dir, "malicious_link", tt.linkTarget)
+
+			// Attempt extraction - should fail because symlink target would escape
+			err := extractToDir(context.Background(), archivePath, dir)
+			require.Error(t, err)
+			// The error could be about escaping or validation failure (if target doesn't exist)
+			assert.True(t, strings.Contains(err.Error(), "symlink") || strings.Contains(err.Error(), "validation"),
+				"error should mention symlink issue: %v", err)
+
+			// Verify no symlink was left behind
+			linkPath := filepath.Join(dir, "malicious_link")
+			_, err = os.Lstat(linkPath)
+			assert.True(t, os.IsNotExist(err), "malicious symlink should not exist")
+		})
+	}
 }
 
 func Test_extractToDir_symlinkInsideDir(t *testing.T) {
@@ -111,9 +140,22 @@ func Test_extractToDir_symlinkInsideDir(t *testing.T) {
 
 	// Verify symlink was created
 	linkPath := filepath.Join(dir, "valid_link")
-	linkTarget, err := os.Readlink(linkPath)
+	_, err = os.Lstat(linkPath)
+	require.NoError(t, err, "symlink should exist")
+
+	// Verify symlink can be followed and reads correct content
+	content, err := os.ReadFile(linkPath)
 	require.NoError(t, err)
-	assert.Equal(t, "target.txt", linkTarget)
+	assert.Equal(t, "target content", string(content))
+
+	// Verify symlink resolves inside destDir (defense in depth check)
+	realPath, err := filepath.EvalSymlinks(linkPath)
+	require.NoError(t, err)
+	// Resolve dir to canonical path too (handles macOS /var -> /private/var)
+	canonicalDir, err := filepath.EvalSymlinks(dir)
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(realPath, canonicalDir),
+		"symlink should resolve inside extraction directory, got: %s (expected prefix: %s)", realPath, canonicalDir)
 }
 
 func createMaliciousArchive(t *testing.T, dir, maliciousPath string) string {

@@ -47,27 +47,50 @@ func extractToDir(ctx context.Context, archivePath, destDir string) error {
 
 		// Handle symlinks
 		if f.LinkTarget != "" {
-			// Resolve the symlink target relative to the symlink's directory
-			// Use filepath.Clean to normalize without following symlinks
-			var resolvedTarget string
-			if filepath.IsAbs(f.LinkTarget) {
-				resolvedTarget = filepath.Clean(f.LinkTarget)
-			} else {
-				resolvedTarget = filepath.Clean(filepath.Join(filepath.Dir(destPath), f.LinkTarget))
-			}
-
-			// Ensure the resolved target stays within destDir
-			// We need to check the cleaned path, not use securejoin (which would sanitize it)
-			if !strings.HasPrefix(resolvedTarget, filepath.Clean(destDir)+string(filepath.Separator)) &&
-				resolvedTarget != filepath.Clean(destDir) {
-				return fmt.Errorf("symlink escapes extraction directory: %q -> %q", f.NameInArchive, f.LinkTarget)
+			// Validate symlink target using securejoin to prevent directory traversal
+			validatedTarget, err := securejoin.SecureJoin(destDir, f.LinkTarget)
+			if err != nil {
+				return fmt.Errorf("invalid symlink target %q: %w", f.LinkTarget, err)
 			}
 
 			// Ensure parent directory exists
 			if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
 				return err
 			}
-			return os.Symlink(f.LinkTarget, destPath)
+
+			// Calculate relative path from symlink location to validated target
+			relTarget, err := filepath.Rel(filepath.Dir(destPath), validatedTarget)
+			if err != nil {
+				return fmt.Errorf("unable to create relative symlink path: %w", err)
+			}
+
+			// Create symlink with the validated relative target
+			if err := os.Symlink(relTarget, destPath); err != nil {
+				return err
+			}
+
+			// Defense in depth: verify the symlink resolves inside destDir
+			realPath, err := filepath.EvalSymlinks(destPath)
+			if err != nil {
+				// If we can't resolve the symlink, remove it and fail
+				os.Remove(destPath)
+				return fmt.Errorf("symlink validation failed for %q: %w", f.NameInArchive, err)
+			}
+
+			// Resolve destDir to its canonical path (handles macOS /var -> /private/var, etc.)
+			canonicalDestDir, err := filepath.EvalSymlinks(destDir)
+			if err != nil {
+				os.Remove(destPath)
+				return fmt.Errorf("unable to resolve extraction directory: %w", err)
+			}
+
+			// Verify resolved path is inside destDir
+			if !strings.HasPrefix(realPath, canonicalDestDir+string(filepath.Separator)) && realPath != canonicalDestDir {
+				os.Remove(destPath)
+				return fmt.Errorf("symlink escapes extraction directory: %q resolves to %q", f.NameInArchive, realPath)
+			}
+
+			return nil
 		}
 
 		// Create parent directories
