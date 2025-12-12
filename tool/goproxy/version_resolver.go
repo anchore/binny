@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/hashicorp/go-retryablehttp"
+
 	"github.com/anchore/binny"
 	"github.com/anchore/binny/internal"
 	"github.com/anchore/binny/internal/log"
@@ -102,7 +104,7 @@ func availableVersionsFetcher(url string) ([]string, error) {
 
 	log.WithFields("url", url).Trace("requesting latest version")
 
-	resp, err := http.Get(url) //nolint:gosec
+	resp, err := retryablehttp.Get(url) //nolint:gosec
 	if err != nil {
 		return nil, err
 	}
