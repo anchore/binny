@@ -13,7 +13,6 @@ import (
 	"strings"
 
 	"github.com/gabriel-vasile/mimetype"
-	"github.com/mholt/archiver/v3"
 	"github.com/scylladb/go-set/strset"
 	"github.com/shurcooL/githubv4"
 	"golang.org/x/net/html"
@@ -272,8 +271,9 @@ func getChecksumForAsset(assetName, checksumsPath string) (string, error) {
 }
 
 func extractArchive(archivePath, destDir, binary string) (string, error) {
-	// extract tar.gz to destDir
-	if err := archiver.Unarchive(archivePath, destDir); err != nil {
+	// extract archive to destDir
+	ctx := context.Background()
+	if err := extractToDir(ctx, archivePath, destDir); err != nil {
 		return "", fmt.Errorf("unable to extract asset %q: %w", archivePath, err)
 	}
 
