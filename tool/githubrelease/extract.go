@@ -6,7 +6,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
+	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/mholt/archives"
 )
 
@@ -32,12 +34,11 @@ func extractToDir(ctx context.Context, archivePath, destDir string) error {
 
 	// Extract files
 	return extractor.Extract(ctx, reader, func(ctx context.Context, f archives.FileInfo) error {
-		// Sanitize path to prevent directory traversal
-		if !filepath.IsLocal(f.NameInArchive) {
-			return fmt.Errorf("invalid path in archive: %s", f.NameInArchive)
+		// SecureJoin resolves the path safely, preventing traversal outside destDir
+		destPath, err := securejoin.SecureJoin(destDir, f.NameInArchive)
+		if err != nil {
+			return fmt.Errorf("invalid path in archive %q: %w", f.NameInArchive, err)
 		}
-
-		destPath := filepath.Join(destDir, f.NameInArchive)
 
 		// Handle directories
 		if f.IsDir() {
@@ -46,6 +47,22 @@ func extractToDir(ctx context.Context, archivePath, destDir string) error {
 
 		// Handle symlinks
 		if f.LinkTarget != "" {
+			// Resolve the symlink target relative to the symlink's directory
+			// Use filepath.Clean to normalize without following symlinks
+			var resolvedTarget string
+			if filepath.IsAbs(f.LinkTarget) {
+				resolvedTarget = filepath.Clean(f.LinkTarget)
+			} else {
+				resolvedTarget = filepath.Clean(filepath.Join(filepath.Dir(destPath), f.LinkTarget))
+			}
+
+			// Ensure the resolved target stays within destDir
+			// We need to check the cleaned path, not use securejoin (which would sanitize it)
+			if !strings.HasPrefix(resolvedTarget, filepath.Clean(destDir)+string(filepath.Separator)) &&
+				resolvedTarget != filepath.Clean(destDir) {
+				return fmt.Errorf("symlink escapes extraction directory: %q -> %q", f.NameInArchive, f.LinkTarget)
+			}
+
 			// Ensure parent directory exists
 			if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
 				return err
