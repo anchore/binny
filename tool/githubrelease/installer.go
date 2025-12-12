@@ -821,7 +821,6 @@ func processExpandedAssets(lgr logger.Logger, reader io.Reader, from string) []g
 	return assets
 }
 
-//nolint:funlen
 func fetchReleaseGithubV4API(user, repo, tag string) (*ghRelease, error) {
 	token := os.Getenv("GITHUB_TOKEN")
 	if token == "" {
