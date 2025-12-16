@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/mholt/archives"
@@ -47,7 +46,8 @@ func extractToDir(ctx context.Context, archivePath, destDir string) error {
 
 		// Handle symlinks
 		if f.LinkTarget != "" {
-			// Validate symlink target using securejoin to prevent directory traversal
+			// Validate symlink target using securejoin to prevent directory traversal.
+			// SecureJoin ensures the target path resolves to somewhere inside destDir.
 			validatedTarget, err := securejoin.SecureJoin(destDir, f.LinkTarget)
 			if err != nil {
 				return fmt.Errorf("invalid symlink target %q: %w", f.LinkTarget, err)
@@ -65,32 +65,7 @@ func extractToDir(ctx context.Context, archivePath, destDir string) error {
 			}
 
 			// Create symlink with the validated relative target
-			if err := os.Symlink(relTarget, destPath); err != nil {
-				return err
-			}
-
-			// Defense in depth: verify the symlink resolves inside destDir
-			realPath, err := filepath.EvalSymlinks(destPath)
-			if err != nil {
-				// If we can't resolve the symlink, remove it and fail
-				os.Remove(destPath)
-				return fmt.Errorf("symlink validation failed for %q: %w", f.NameInArchive, err)
-			}
-
-			// Resolve destDir to its canonical path (handles macOS /var -> /private/var, etc.)
-			canonicalDestDir, err := filepath.EvalSymlinks(destDir)
-			if err != nil {
-				os.Remove(destPath)
-				return fmt.Errorf("unable to resolve extraction directory: %w", err)
-			}
-
-			// Verify resolved path is inside destDir
-			if !strings.HasPrefix(realPath, canonicalDestDir+string(filepath.Separator)) && realPath != canonicalDestDir {
-				os.Remove(destPath)
-				return fmt.Errorf("symlink escapes extraction directory: %q resolves to %q", f.NameInArchive, realPath)
-			}
-
-			return nil
+			return os.Symlink(relTarget, destPath)
 		}
 
 		// Create parent directories

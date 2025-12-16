@@ -83,21 +83,28 @@ func Test_extractToDir_pathTraversal(t *testing.T) {
 }
 
 func Test_extractToDir_symlinkTraversal(t *testing.T) {
+	// securejoin sanitizes symlink targets the same way it sanitizes file paths.
+	// A symlink to "../../../etc/passwd" becomes a symlink to "destDir/etc/passwd".
+	// This is safe because the symlink points inside destDir, not outside.
 	tests := []struct {
-		name       string
-		linkTarget string
+		name               string
+		linkTarget         string
+		expectedTargetPath string // relative to destDir
 	}{
 		{
-			name:       "relative path traversal",
-			linkTarget: "../../../etc/passwd",
+			name:               "relative path traversal is sanitized",
+			linkTarget:         "../../../etc/passwd",
+			expectedTargetPath: "etc/passwd",
 		},
 		{
-			name:       "absolute path",
-			linkTarget: "/etc/passwd",
+			name:               "absolute path is sanitized",
+			linkTarget:         "/etc/passwd",
+			expectedTargetPath: "etc/passwd",
 		},
 		{
-			name:       "complex traversal",
-			linkTarget: "subdir/../../../../../../etc/passwd",
+			name:               "complex traversal is sanitized",
+			linkTarget:         "subdir/../../../../../../etc/passwd",
+			expectedTargetPath: "etc/passwd",
 		},
 	}
 
@@ -105,20 +112,27 @@ func Test_extractToDir_symlinkTraversal(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 
-			// Create an archive with a symlink pointing outside the extraction directory
-			archivePath := createArchiveWithSymlink(t, dir, "malicious_link", tt.linkTarget)
+			// Create an archive with a symlink that has a traversal path
+			archivePath := createArchiveWithSymlink(t, dir, "sanitized_link", tt.linkTarget)
 
-			// Attempt extraction - should fail because symlink target would escape
+			// Extraction should succeed - securejoin sanitizes the target
 			err := extractToDir(context.Background(), archivePath, dir)
-			require.Error(t, err)
-			// The error could be about escaping or validation failure (if target doesn't exist)
-			assert.True(t, strings.Contains(err.Error(), "symlink") || strings.Contains(err.Error(), "validation"),
-				"error should mention symlink issue: %v", err)
+			require.NoError(t, err)
 
-			// Verify no symlink was left behind
-			linkPath := filepath.Join(dir, "malicious_link")
+			// Verify symlink was created
+			linkPath := filepath.Join(dir, "sanitized_link")
 			_, err = os.Lstat(linkPath)
-			assert.True(t, os.IsNotExist(err), "malicious symlink should not exist")
+			require.NoError(t, err, "symlink should exist")
+
+			// Read where the symlink points
+			target, err := os.Readlink(linkPath)
+			require.NoError(t, err)
+
+			// The symlink should point to a sanitized path inside destDir
+			// (it will be a relative path to destDir/etc/passwd)
+			expectedTarget := tt.expectedTargetPath
+			assert.Equal(t, expectedTarget, target,
+				"symlink target should be sanitized to safe path inside destDir")
 		})
 	}
 }
@@ -126,16 +140,12 @@ func Test_extractToDir_symlinkTraversal(t *testing.T) {
 func Test_extractToDir_symlinkInsideDir(t *testing.T) {
 	dir := t.TempDir()
 
-	// First create a file to link to
-	targetFile := filepath.Join(dir, "target.txt")
-	err := os.WriteFile(targetFile, []byte("target content"), 0644)
-	require.NoError(t, err)
-
-	// Create an archive with a symlink pointing inside the extraction directory
-	archivePath := createArchiveWithSymlink(t, dir, "valid_link", "target.txt")
+	// Create an archive with BOTH a symlink and its target file
+	// This tests the realistic case where symlink and target are both in the archive
+	archivePath := createArchiveWithSymlinkAndTarget(t, dir)
 
 	// Extraction should succeed - symlink stays inside
-	err = extractToDir(context.Background(), archivePath, dir)
+	err := extractToDir(context.Background(), archivePath, dir)
 	require.NoError(t, err)
 
 	// Verify symlink was created
@@ -147,15 +157,35 @@ func Test_extractToDir_symlinkInsideDir(t *testing.T) {
 	content, err := os.ReadFile(linkPath)
 	require.NoError(t, err)
 	assert.Equal(t, "target content", string(content))
+}
 
-	// Verify symlink resolves inside destDir (defense in depth check)
-	realPath, err := filepath.EvalSymlinks(linkPath)
+func Test_extractToDir_symlinkBeforeTarget(t *testing.T) {
+	// This tests the edge case where a symlink appears in the archive BEFORE its target.
+	// The symlink is valid (points inside destDir) but the target doesn't exist yet
+	// when the symlink is created ("dangling symlink").
+	dir := t.TempDir()
+
+	// Create archive where symlink comes BEFORE the target file
+	archivePath := createArchiveWithSymlinkBeforeTarget(t, dir)
+
+	// Extraction should succeed - even though symlink is temporarily dangling
+	err := extractToDir(context.Background(), archivePath, dir)
 	require.NoError(t, err)
-	// Resolve dir to canonical path too (handles macOS /var -> /private/var)
-	canonicalDir, err := filepath.EvalSymlinks(dir)
+
+	// Verify both symlink and target exist
+	linkPath := filepath.Join(dir, "link_first")
+	targetPath := filepath.Join(dir, "target_second.txt")
+
+	_, err = os.Lstat(linkPath)
+	require.NoError(t, err, "symlink should exist")
+
+	_, err = os.Stat(targetPath)
+	require.NoError(t, err, "target file should exist")
+
+	// Verify symlink can be followed
+	content, err := os.ReadFile(linkPath)
 	require.NoError(t, err)
-	assert.True(t, strings.HasPrefix(realPath, canonicalDir),
-		"symlink should resolve inside extraction directory, got: %s (expected prefix: %s)", realPath, canonicalDir)
+	assert.Equal(t, "target content", string(content))
 }
 
 func createMaliciousArchive(t *testing.T, dir, maliciousPath string) string {
@@ -204,6 +234,80 @@ func createArchiveWithSymlink(t *testing.T, dir, linkName, linkTarget string) st
 		Mode:     0777,
 	}
 	require.NoError(t, tarWriter.WriteHeader(header))
+
+	return archivePath
+}
+
+// createArchiveWithSymlinkAndTarget creates an archive with a target file FIRST, then a symlink to it.
+// This is the "easy" case where the target exists when the symlink is validated.
+func createArchiveWithSymlinkAndTarget(t *testing.T, dir string) string {
+	archivePath := filepath.Join(dir, "symlink_with_target.tar.gz")
+	archiveFile, err := os.Create(archivePath)
+	require.NoError(t, err)
+	defer archiveFile.Close()
+
+	gzipWriter := gzip.NewWriter(archiveFile)
+	defer gzipWriter.Close()
+
+	tarWriter := tar.NewWriter(gzipWriter)
+	defer tarWriter.Close()
+
+	// First: create the target file
+	content := []byte("target content")
+	fileHeader := &tar.Header{
+		Name: "target.txt",
+		Size: int64(len(content)),
+		Mode: 0644,
+	}
+	require.NoError(t, tarWriter.WriteHeader(fileHeader))
+	_, err = tarWriter.Write(content)
+	require.NoError(t, err)
+
+	// Second: create a symlink pointing to the target
+	linkHeader := &tar.Header{
+		Name:     "valid_link",
+		Typeflag: tar.TypeSymlink,
+		Linkname: "target.txt",
+		Mode:     0777,
+	}
+	require.NoError(t, tarWriter.WriteHeader(linkHeader))
+
+	return archivePath
+}
+
+// createArchiveWithSymlinkBeforeTarget creates an archive with a symlink FIRST, then its target.
+// This exposes the "dangling symlink" edge case where the symlink is created before its target exists.
+func createArchiveWithSymlinkBeforeTarget(t *testing.T, dir string) string {
+	archivePath := filepath.Join(dir, "symlink_before_target.tar.gz")
+	archiveFile, err := os.Create(archivePath)
+	require.NoError(t, err)
+	defer archiveFile.Close()
+
+	gzipWriter := gzip.NewWriter(archiveFile)
+	defer gzipWriter.Close()
+
+	tarWriter := tar.NewWriter(gzipWriter)
+	defer tarWriter.Close()
+
+	// First: create the symlink (target doesn't exist yet!)
+	linkHeader := &tar.Header{
+		Name:     "link_first",
+		Typeflag: tar.TypeSymlink,
+		Linkname: "target_second.txt",
+		Mode:     0777,
+	}
+	require.NoError(t, tarWriter.WriteHeader(linkHeader))
+
+	// Second: create the target file
+	content := []byte("target content")
+	fileHeader := &tar.Header{
+		Name: "target_second.txt",
+		Size: int64(len(content)),
+		Mode: 0644,
+	}
+	require.NoError(t, tarWriter.WriteHeader(fileHeader))
+	_, err = tarWriter.Write(content)
+	require.NoError(t, err)
 
 	return archivePath
 }
