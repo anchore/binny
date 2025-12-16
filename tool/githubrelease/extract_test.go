@@ -130,7 +130,8 @@ func Test_extractToDir_symlinkTraversal(t *testing.T) {
 
 			// The symlink should point to a sanitized path inside destDir
 			// (it will be a relative path to destDir/etc/passwd)
-			expectedTarget := tt.expectedTargetPath
+			// Use filepath.FromSlash to handle Windows path separators
+			expectedTarget := filepath.FromSlash(tt.expectedTargetPath)
 			assert.Equal(t, expectedTarget, target,
 				"symlink target should be sanitized to safe path inside destDir")
 		})
