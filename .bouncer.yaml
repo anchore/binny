@@ -15,3 +15,7 @@ ignore-packages:
 
   # crypto/internal/boring is released under the openSSL license as a part of the Golang Standard Libary
   - crypto/internal/boring
+
+  # https://github.com/sorairolake/lzip-go/blob/fef65de9b5037fff09499b582712e8411d347249/go.sum.license#L3
+  # has `SPDX-License-Identifier: Apache-2.0 OR MIT`, both of which are acceptable
+  - github.com/sorairolake/lzip-go
