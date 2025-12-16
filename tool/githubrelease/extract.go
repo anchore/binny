@@ -32,7 +32,7 @@ func extractToDir(ctx context.Context, archivePath, destDir string) error {
 	}
 
 	// Extract files
-	return extractor.Extract(ctx, reader, func(ctx context.Context, f archives.FileInfo) error {
+	return extractor.Extract(ctx, reader, func(_ctx context.Context, f archives.FileInfo) error {
 		// SecureJoin resolves the path safely, preventing traversal outside destDir
 		destPath, err := securejoin.SecureJoin(destDir, f.NameInArchive)
 		if err != nil {
@@ -54,7 +54,7 @@ func extractToDir(ctx context.Context, archivePath, destDir string) error {
 			}
 
 			// Ensure parent directory exists
-			if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
 				return err
 			}
 
@@ -69,7 +69,7 @@ func extractToDir(ctx context.Context, archivePath, destDir string) error {
 		}
 
 		// Create parent directories
-		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
 			return err
 		}
 
