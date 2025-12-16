@@ -32,7 +32,7 @@ func extractToDir(ctx context.Context, archivePath, destDir string) error {
 	}
 
 	// Extract files
-	return extractor.Extract(ctx, reader, func(_ctx context.Context, f archives.FileInfo) error {
+	return extractor.Extract(ctx, reader, func(_ context.Context, f archives.FileInfo) error {
 		// SecureJoin resolves the path safely, preventing traversal outside destDir
 		destPath, err := securejoin.SecureJoin(destDir, f.NameInArchive)
 		if err != nil {
