@@ -2,6 +2,7 @@
 
 Manage a directory of binaries without a package manager.
 
+TEST CHANGE (I need a diff besides the bad gh actions yaml change)
 
 ![binny-demo](https://github.com/anchore/binny/assets/590471/cdfda64f-0ead-4604-8565-34a397a031b2)
 
