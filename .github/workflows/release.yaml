@@ -34,6 +34,7 @@ jobs:
           git tag "$VERSION"
 
       - name: Check validations results
+        # pointless chnage to trigger re-lint that should pass
         uses: fountainhead/action-wait-for-check@5a908a24814494009c4bb27c242ea38c93c593be # v1.2.0
         id: validations
         with:
