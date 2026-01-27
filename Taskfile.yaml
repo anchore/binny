@@ -191,6 +191,7 @@ tasks:
     cmds:
       - silent: true
         cmd: |        
+          mkdir -p {{ .TMP_DIR }}
           echo "dist: {{ .SNAPSHOT_DIR }}" > {{ .TMP_DIR }}/goreleaser.yaml
           cat .goreleaser.yaml >> {{ .TMP_DIR }}/goreleaser.yaml
 
