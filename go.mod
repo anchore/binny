@@ -1,6 +1,6 @@
 module github.com/anchore/binny
 
-go 1.24.0
+go 1.24.2
 
 require (
 	github.com/Masterminds/semver/v3 v3.4.0
@@ -12,7 +12,7 @@ require (
 	github.com/anchore/fangs v0.0.0-20230818131516-2186b10924fe
 	github.com/anchore/go-logger v0.0.0-20230725134548-c21dafa1ec5a
 	github.com/chainguard-dev/yam v0.2.47
-	github.com/charmbracelet/bubbles v0.21.0
+	github.com/charmbracelet/bubbles v0.21.1
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/creack/pty v1.1.24
@@ -58,13 +58,14 @@ require (
 	github.com/bodgit/plumbing v1.3.0 // indirect
 	github.com/bodgit/sevenzip v1.6.1 // indirect
 	github.com/bodgit/windows v1.0.1 // indirect
-	github.com/charmbracelet/colorprofile v0.2.3-0.20250311203215-f60798e515dc // indirect
+	github.com/charmbracelet/colorprofile v0.4.1 // indirect
 	github.com/charmbracelet/harmonica v0.2.0 // indirect
-	github.com/charmbracelet/x/ansi v0.10.1 // indirect
-	github.com/charmbracelet/x/cellbuf v0.0.13-0.20250311204145-2c3ea96c31dd // indirect
-	github.com/charmbracelet/x/term v0.2.1 // indirect
+	github.com/charmbracelet/x/ansi v0.11.5 // indirect
+	github.com/charmbracelet/x/cellbuf v0.0.15 // indirect
+	github.com/charmbracelet/x/term v0.2.2 // indirect
+	github.com/clipperhouse/displaywidth v0.9.0 // indirect
 	github.com/clipperhouse/stringish v0.1.1 // indirect
-	github.com/clipperhouse/uax29/v2 v2.3.0 // indirect
+	github.com/clipperhouse/uax29/v2 v2.5.0 // indirect
 	github.com/cloudflare/circl v1.6.1 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dsnet/compress v0.0.2-0.20230904184137-39efe44ab707 // indirect
@@ -96,7 +97,7 @@ require (
 	github.com/klauspost/pgzip v1.2.6 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
-	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect
+	github.com/lucasb-eyer/go-colorful v1.3.0 // indirect
 	github.com/magiconair/properties v1.8.7 // indirect
 	github.com/maruel/natural v1.1.1 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
