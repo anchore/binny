@@ -12,6 +12,11 @@ vars:
   CHANGELOG: CHANGELOG.md
   NEXT_VERSION: VERSION
   MAKEDIR_P: 'python -c "import sys; import os; os.makedirs(sys.argv[1], exist_ok=True)"'
+  TEST_F: 'python -c "import sys; import os; sys.exit(0) if os.path.isfile(sys.argv[1]) else sys.exit(1)"'
+  CAT: '{{ if eq OS "windows" }}type{{ else }}cat{{ end }}'
+  DOT_EXE: '{{ if eq OS "windows" }}.exe{{ else }}{{ end}}'
+  BINNY_FILENAME: '{{ .PROJECT }}{{ .DOT_EXE }}'
+  BINNY_PATH: '{{ .TOOL_DIR }}/{{ .BINNY_FILENAME }}'
 
 tasks:
 
@@ -37,6 +42,7 @@ tasks:
 
   test:
     desc: Run all levels of test
+    deps: [tools]
     cmds:
       - task: unit
       - task: cli
@@ -47,13 +53,16 @@ tasks:
     internal: true
     desc: Get the binny tool
     generates:
-      - "{{ .TOOL_DIR }}/binny"
+      - "{{ .BINNY_PATH }}"
     status:
-      - "test -f {{ .TOOL_DIR }}/binny"
+      - '{{ .TEST_F }} {{ .BINNY_PATH }}'
     # we just need a release of binny, doesn't matter which one (binny will update itself, this is just a bootstrap step)
     # note: on the first release of binny, switch to the curl approach
     # cmd: "curl -sSfL https://raw.githubusercontent.com/{{ .OWNER }}/{{ .PROJECT }}/main/install.sh | sh -s -- -b {{ .TOOL_DIR }}"
-    cmd: "go build -o {{ .TOOL_DIR }}/binny ./cmd/binny"
+    cmds:
+      - cmd: '{{ .MAKEDIR_P }} {{ .TOOL_DIR }}'
+      - cmd: "go build -o {{ .BINNY_PATH }} ./cmd/binny"
+      - cmd: 'echo "Built binny a {{ .BINNY_PATH }}"' # TODO: just added for debugging
     silent: true
 
   tools:
@@ -193,7 +202,7 @@ tasks:
         cmd: |        
           mkdir -p {{ .TMP_DIR }}
           echo "dist: {{ .SNAPSHOT_DIR }}" > {{ .TMP_DIR }}/goreleaser.yaml
-          cat .goreleaser.yaml >> {{ .TMP_DIR }}/goreleaser.yaml
+          {{ .CAT }} .goreleaser.yaml >> {{ .TMP_DIR }}/goreleaser.yaml
 
       - "{{ .TOOL_DIR }}/goreleaser release --clean --skip=publish --skip=sign --snapshot --config {{ .TMP_DIR }}/goreleaser.yaml"
 

@@ -40,7 +40,7 @@ make-default: $(TASK)
 	@$(TASK)
 
 # for those of us that can't seem to kick the habit of typing `make ...` lets wrap the superior `task` tool
-TASKS := $(shell bash -c "$(TASK) -l | grep '^\* ' | cut -d' ' -f2 | tr -d ':' | tr '\n' ' '" ) $(shell bash -c "$(TASK) -l | grep 'aliases:' | cut -d ':' -f 3 | tr '\n' ' ' | tr -d ','")
+TASKS := $(shell $(TASK) -l -j | jq -r '[.tasks[] | .name, (.aliases // empty)[]] | unique | join(" ")')
 
 .PHONY: $(TASKS)
 $(TASKS): $(TASK)
