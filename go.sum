@@ -66,8 +66,8 @@ github.com/bodgit/sevenzip v1.6.1/go.mod h1:GVoYQbEVbOGT8n2pfqCIMRUaRjQ8F9oSqoBE
 github.com/bodgit/windows v1.0.1 h1:tF7K6KOluPYygXa3Z2594zxlkbKPAOvqr97etrGNIz4=
 github.com/bodgit/windows v1.0.1/go.mod h1:a6JLwrB4KrTR5hBpp8FI9/9W9jJfeQ2h4XDXU74ZCdM=
 github.com/census-instrumentation/opencensus-proto v0.2.1/go.mod h1:f6KPmirojxKA12rnyqOA5BBL4O983OfeGPqjHWSTneU=
-github.com/chainguard-dev/yam v0.2.47 h1:6kWW5c/Q60IIZ2t4Xn//NYDcZfLy393Y7K47AIqML2o=
-github.com/chainguard-dev/yam v0.2.47/go.mod h1:Dwk2i+W3mifDxxM5nILZrvUs9GYZsIjVjEONgKMtBrI=
+github.com/chainguard-dev/yam v0.2.48 h1:34IT5etTRPSfZbX237T78pchioNGbcJEiyRcRyqJMfg=
+github.com/chainguard-dev/yam v0.2.48/go.mod h1:Dwk2i+W3mifDxxM5nILZrvUs9GYZsIjVjEONgKMtBrI=
 github.com/charmbracelet/bubbles v0.21.1 h1:nj0decPiixaZeL9diI4uzzQTkkz1kYY8+jgzCZXSmW0=
 github.com/charmbracelet/bubbles v0.21.1/go.mod h1:HHvIYRCpbkCJw2yo0vNX1O5loCwSr9/mWS8GYSg50Sk=
 github.com/charmbracelet/bubbletea v1.3.10 h1:otUDHWMMzQSB0Pkc87rm691KZ3SWa4KUlvF9nRvCICw=
