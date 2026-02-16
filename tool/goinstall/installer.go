@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"text/template"
 
@@ -44,6 +45,10 @@ func (i Installer) InstallTo(version, destDir string) (string, error) {
 	}
 	fields := strings.Split(path, "/")
 	binName := fields[len(fields)-1]
+	// account for "/v2" type modules
+	if regexp.MustCompile(`v\d+`).MatchString(binName) && len(fields) > 2 {
+		binName = fields[len(fields)-2]
+	}
 	binPath := filepath.Join(destDir, binName)
 
 	spec := fmt.Sprintf("%s@%s", path, version)
