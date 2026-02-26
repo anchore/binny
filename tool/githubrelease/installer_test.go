@@ -3,6 +3,7 @@ package githubrelease
 import (
 	"archive/tar"
 	"compress/gzip"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,9 +19,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/anchore/go-logger"
-	"github.com/anchore/go-logger/adapter/discard"
 )
 
 func TestInstaller_InstallTo(t *testing.T) {
@@ -29,7 +27,7 @@ func TestInstaller_InstallTo(t *testing.T) {
 	binaryAssetName := fmt.Sprintf("syft_%s_%s_%s", testTag, runtime.GOOS, runtime.GOARCH)
 	expectedChecksum := "688cf0875c5cc1c7d3a26249e48e8fa9f8cb61b79bdde593bfda6e4c367a692e"
 
-	setup := func(checksum string) func(lgr logger.Logger, user, repo, tag string) (*ghRelease, error) {
+	setup := func(checksum string) func(ctx context.Context, user, repo, tag string) (*ghRelease, error) {
 		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch {
 			case strings.Contains(r.URL.Path, "syft_"):
@@ -52,7 +50,7 @@ func TestInstaller_InstallTo(t *testing.T) {
 		}))
 		t.Cleanup(s.Close)
 
-		return func(_ logger.Logger, user, repo, tag string) (*ghRelease, error) {
+		return func(_ context.Context, user, repo, tag string) (*ghRelease, error) {
 			assets := []ghAsset{
 				{
 					Name:        binaryAssetName,
@@ -82,7 +80,7 @@ func TestInstaller_InstallTo(t *testing.T) {
 
 	tests := []struct {
 		name           string
-		releaseFetcher func(lgr logger.Logger, user, repo, tag string) (*ghRelease, error)
+		releaseFetcher func(ctx context.Context, user, repo, tag string) (*ghRelease, error)
 		wantErr        require.ErrorAssertionFunc
 	}{
 		{
@@ -116,7 +114,7 @@ func TestInstaller_InstallTo(t *testing.T) {
 
 			expectedDownloadPath := filepath.Join(destDir, binaryAssetName)
 
-			got, err := i.InstallTo(version, destDir)
+			got, err := i.InstallTo(context.Background(), version, destDir)
 			tt.wantErr(t, err)
 
 			if err != nil {
@@ -372,7 +370,7 @@ func Test_selectChecksumAsset(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, selectChecksumAsset(discard.New(), tt.assets))
+			assert.Equal(t, tt.want, selectChecksumAsset(context.Background(), tt.assets))
 		})
 	}
 }
@@ -674,7 +672,7 @@ func Test_selectBinaryAsset(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equalf(t, tt.want, selectBinaryAsset(discard.New(), tt.args.assets, tt.args.goOS, tt.args.goArch, nil), "selectBinaryAsset(%v, %v, %v)", tt.args.assets, tt.args.goOS, tt.args.goArch)
+			assert.Equalf(t, tt.want, selectBinaryAsset(context.Background(), tt.args.assets, tt.args.goOS, tt.args.goArch, nil), "selectBinaryAsset(%v, %v, %v)", tt.args.assets, tt.args.goOS, tt.args.goArch)
 		})
 	}
 }
@@ -774,11 +772,11 @@ func Test_handleChecksumsReader(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			d := cmp.Diff(tt.want, handleChecksumsReader(discard.New(), tt.user, tt.repo, tt.tag, tt.url, io.NopCloser(strings.NewReader(tt.contents))))
+			d := cmp.Diff(tt.want, handleChecksumsReader(context.Background(), tt.user, tt.repo, tt.tag, tt.url, io.NopCloser(strings.NewReader(tt.contents))))
 			if d != "" {
 				t.Log(d)
 			}
-			assert.Equal(t, tt.want, handleChecksumsReader(discard.New(), tt.user, tt.repo, tt.tag, tt.url, io.NopCloser(strings.NewReader(tt.contents))))
+			assert.Equal(t, tt.want, handleChecksumsReader(context.Background(), tt.user, tt.repo, tt.tag, tt.url, io.NopCloser(strings.NewReader(tt.contents))))
 		})
 	}
 }
@@ -864,7 +862,7 @@ func Test_processExpandedAssets(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			fh, err := os.Open(tt.fixture)
 			require.NoError(t, err)
-			assert.Equal(t, tt.want, processExpandedAssets(discard.New(), fh, "my-url"))
+			assert.Equal(t, tt.want, processExpandedAssets(context.Background(), fh, "my-url"))
 		})
 	}
 }
@@ -1207,7 +1205,7 @@ func Test_selectBinaryAsset_withRegexPatterns(t *testing.T) {
 				patterns = append(patterns, re)
 			}
 
-			result := selectBinaryAsset(discard.New(), assets, "darwin", "arm64", patterns)
+			result := selectBinaryAsset(context.Background(), assets, "darwin", "arm64", patterns)
 
 			if tt.shouldFindAsset {
 				require.NotNil(t, result)

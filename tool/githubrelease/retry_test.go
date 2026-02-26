@@ -1,6 +1,7 @@
 package githubrelease
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -26,7 +27,7 @@ func TestNewRetryableGitHubClient_RetriesWithAuthHeader(t *testing.T) {
 	defer server.Close()
 
 	token := "test-token-12345"
-	client := newRetryableGitHubClient(token)
+	client := newRetryableGitHubClient(context.Background(), token)
 
 	resp, err := client.Get(server.URL)
 	require.NoError(t, err)

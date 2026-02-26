@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,8 +10,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/anchore/go-logger/adapter/discard"
 )
 
 func Test_DownloadFile(t *testing.T) {
@@ -51,7 +50,7 @@ func Test_DownloadFile(t *testing.T) {
 			dir := t.TempDir()
 			dlPath := filepath.Join(dir, "the-file-path.txt")
 
-			tt.wantErr(t, DownloadFile(discard.New(), s.URL, dlPath, tt.checksum))
+			tt.wantErr(t, DownloadFile(context.Background(), s.URL, dlPath, tt.checksum))
 
 			gotContents, err := os.ReadFile(dlPath)
 			require.NoError(t, err)
