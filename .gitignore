@@ -5,6 +5,10 @@
 /.task
 /bin
 
+# local development
+.claude
+CLAUDE.md
+
 # release locations
 /snapshot
 /dist

@@ -9,7 +9,6 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/hashicorp/go-retryablehttp"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/anchore/binny"
 	"github.com/anchore/binny/internal"
+	internalhttp "github.com/anchore/binny/internal/http"
 	"github.com/anchore/binny/internal/log"
 )
 
@@ -25,8 +25,8 @@ var _ binny.VersionResolver = (*VersionResolver)(nil)
 
 type VersionResolver struct {
 	config               VersionResolutionParameters
-	latestReleaseFetcher func(user, repo string) (*ghRelease, error)
-	releasesFetcher      func(user, repo string) ([]ghRelease, error)
+	latestReleaseFetcher func(ctx context.Context, user, repo string) (*ghRelease, error)
+	releasesFetcher      func(ctx context.Context, user, repo string) ([]ghRelease, error)
 }
 
 type VersionResolutionParameters struct {
@@ -41,33 +41,34 @@ func NewVersionResolver(cfg VersionResolutionParameters) *VersionResolver {
 	}
 }
 
-func (v VersionResolver) UpdateVersion(want, constraint string) (string, error) {
+func (v VersionResolver) UpdateVersion(ctx context.Context, want, constraint string) (string, error) {
 	if want == "latest" {
 		return want, nil
 	}
 
 	if internal.IsSemver(want) {
-		return v.findLatestVersion(constraint)
+		return v.findLatestVersion(ctx, constraint)
 	}
 
 	return want, nil
 }
 
-func (v VersionResolver) ResolveVersion(want, constraint string) (string, error) {
-	log.WithFields("repo", v.config.Repo, "version", want).Trace("resolving version from github release")
+func (v VersionResolver) ResolveVersion(ctx context.Context, want, constraint string) (string, error) {
+	log.FromContext(ctx).WithFields("repo", v.config.Repo, "version", want).Trace("resolving version from github release")
 
 	if internal.IsSemver(want) {
 		return want, nil
 	}
 
 	if want == "latest" {
-		return v.findLatestVersion(constraint)
+		return v.findLatestVersion(ctx, constraint)
 	}
 
 	return want, nil
 }
 
-func (v VersionResolver) findLatestVersion(versionConstraint string) (string, error) {
+func (v VersionResolver) findLatestVersion(ctx context.Context, versionConstraint string) (string, error) {
+	lgr := log.FromContext(ctx)
 	cfg := v.config
 	fields := strings.Split(cfg.Repo, "/")
 	if len(fields) != 2 {
@@ -75,7 +76,7 @@ func (v VersionResolver) findLatestVersion(versionConstraint string) (string, er
 	}
 	user, repo := fields[0], fields[1]
 
-	latestRelease, err := v.latestReleaseFetcher(user, repo)
+	latestRelease, err := v.latestReleaseFetcher(ctx, user, repo)
 	if err != nil {
 		return "", fmt.Errorf("unable to fetch latest release: %v", err)
 	}
@@ -92,7 +93,7 @@ func (v VersionResolver) findLatestVersion(versionConstraint string) (string, er
 	}
 
 	// this path requires the most work, but is typically needed if there is a constraint
-	releases, err := v.releasesFetcher(user, repo)
+	releases, err := v.releasesFetcher(ctx, user, repo)
 	if err != nil {
 		return "", fmt.Errorf("unable to fetch all releases: %v", err)
 	}
@@ -105,7 +106,7 @@ func (v VersionResolver) findLatestVersion(versionConstraint string) (string, er
 		return "", fmt.Errorf("no latest version found")
 	}
 
-	log.WithFields("latest", latestVersion.Tag, "repo", cfg.Repo).
+	lgr.WithFields("latest", latestVersion.Tag, "repo", cfg.Repo).
 		Trace("found latest version from the github release")
 
 	return latestVersion.Tag, nil
@@ -174,9 +175,9 @@ func filterToLatestVersion(releases []ghRelease, versionConstraint string) (*ghR
 	return latest, nil
 }
 
-func fetchLatestReleaseFromGithubFacade(user, repo string) (*ghRelease, error) {
+func fetchLatestReleaseFromGithubFacade(ctx context.Context, user, repo string) (*ghRelease, error) {
 	url := fmt.Sprintf("https://github.com/%s/%s/releases/latest", user, repo)
-	resp, err := downloadJSON(url)
+	resp, err := downloadJSON(ctx, url)
 	if err != nil {
 		return nil, err
 	}
@@ -209,12 +210,11 @@ func fetchLatestReleaseFromGithubFacade(user, repo string) (*ghRelease, error) {
 	}, nil
 }
 
-func downloadJSON(url string) (*http.Response, error) {
-	client := retryablehttp.NewClient()
-	client.HTTPClient.Timeout = 10 * time.Second
-	client.Logger = nil
+func downloadJSON(ctx context.Context, url string) (*http.Response, error) {
+	lgr := log.FromContext(ctx)
+	client := internalhttp.ClientFromContext(ctx)
 
-	req, err := retryablehttp.NewRequest(http.MethodGet, url, nil)
+	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -225,16 +225,17 @@ func downloadJSON(url string) (*http.Response, error) {
 		return nil, err
 	}
 
-	log.WithFields("http-status", resp.StatusCode).Tracef("http get [application/json] %q", url)
+	lgr.WithFields("http-status", resp.StatusCode).Tracef("http get [application/json] %q", url)
 
 	return resp, nil
 }
 
 // newRetryableGitHubClient creates an HTTP client with OAuth2 authentication and retry logic.
-func newRetryableGitHubClient(token string) *http.Client {
+func newRetryableGitHubClient(ctx context.Context, token string) *http.Client {
 	src := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
-	oauth2Client := oauth2.NewClient(context.Background(), src)
+	oauth2Client := oauth2.NewClient(ctx, src)
 
+	// get base client from context and use oauth2 transport
 	retryClient := retryablehttp.NewClient()
 	retryClient.HTTPClient.Transport = oauth2Client.Transport
 	retryClient.Logger = nil
@@ -243,13 +244,13 @@ func newRetryableGitHubClient(token string) *http.Client {
 }
 
 //nolint:funlen
-func fetchAllReleasesFromGithubV4API(user, repo string) ([]ghRelease, error) {
+func fetchAllReleasesFromGithubV4API(ctx context.Context, user, repo string) ([]ghRelease, error) {
 	token := os.Getenv("GITHUB_TOKEN")
 	if token == "" {
 		return nil, fmt.Errorf("GITHUB_TOKEN environment variable not set but is required to use the GitHub v4 API")
 	}
 
-	client := githubv4.NewClient(newRetryableGitHubClient(token))
+	client := githubv4.NewClient(newRetryableGitHubClient(ctx, token))
 	var allReleases []ghRelease
 
 	// Query some details about a repository, an ghIssue in it, and its comments.
@@ -305,7 +306,7 @@ func fetchAllReleasesFromGithubV4API(user, repo string) ([]ghRelease, error) {
 		// TODO: go to the next page :) (cosign was taking a while here so this needs investigation)
 		// var limit rateLimit
 		// for {
-		err := client.Query(context.Background(), &query, variables)
+		err := client.Query(ctx, &query, variables)
 		if err != nil {
 			return nil, err
 		}

@@ -1,6 +1,7 @@
 package githubrelease
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,8 +14,8 @@ func TestVersionResolver_ResolveVersion(t *testing.T) {
 		config               VersionResolutionParameters
 		version              string
 		constraint           string
-		releasesFetcher      func(user, repo string) ([]ghRelease, error)
-		latestReleaseFetcher func(user, repo string) (*ghRelease, error)
+		releasesFetcher      func(ctx context.Context, user, repo string) ([]ghRelease, error)
+		latestReleaseFetcher func(ctx context.Context, user, repo string) (*ghRelease, error)
 		want                 string
 		wantErr              require.ErrorAssertionFunc
 	}{
@@ -25,12 +26,12 @@ func TestVersionResolver_ResolveVersion(t *testing.T) {
 			},
 			version: "latest",
 			want:    "2.0.0",
-			latestReleaseFetcher: func(user, repo string) (*ghRelease, error) {
+			latestReleaseFetcher: func(_ context.Context, user, repo string) (*ghRelease, error) {
 				return &ghRelease{
 					Tag: "2.0.0",
 				}, nil
 			},
-			releasesFetcher: func(user, repo string) ([]ghRelease, error) {
+			releasesFetcher: func(_ context.Context, user, repo string) ([]ghRelease, error) {
 				t.Fatal("should not have been called")
 				return nil, nil
 			},
@@ -42,10 +43,10 @@ func TestVersionResolver_ResolveVersion(t *testing.T) {
 			},
 			version: "latest",
 			want:    "2.0.0",
-			latestReleaseFetcher: func(user, repo string) (*ghRelease, error) {
+			latestReleaseFetcher: func(_ context.Context, user, repo string) (*ghRelease, error) {
 				return nil, nil
 			},
-			releasesFetcher: func(user, repo string) ([]ghRelease, error) {
+			releasesFetcher: func(_ context.Context, user, repo string) ([]ghRelease, error) {
 				return []ghRelease{
 					{
 						Tag: "1.0.0",
@@ -85,7 +86,7 @@ func TestVersionResolver_ResolveVersion(t *testing.T) {
 			v.latestReleaseFetcher = tt.latestReleaseFetcher
 			v.releasesFetcher = tt.releasesFetcher
 
-			got, err := v.ResolveVersion(tt.version, tt.constraint)
+			got, err := v.ResolveVersion(context.Background(), tt.version, tt.constraint)
 			tt.wantErr(t, err)
 			assert.Equal(t, tt.want, got)
 		})
@@ -98,8 +99,8 @@ func TestVersionResolver_UpdateVersion(t *testing.T) {
 		config               VersionResolutionParameters
 		version              string
 		constraint           string
-		releaseFetcher       func(user, repo string) ([]ghRelease, error)
-		latestReleaseFetcher func(user, repo string) (*ghRelease, error)
+		releaseFetcher       func(ctx context.Context, user, repo string) ([]ghRelease, error)
+		latestReleaseFetcher func(ctx context.Context, user, repo string) (*ghRelease, error)
 		want                 string
 		wantErr              require.ErrorAssertionFunc
 	}{
@@ -118,10 +119,10 @@ func TestVersionResolver_UpdateVersion(t *testing.T) {
 			},
 			version: "1.0.0",
 			want:    "2.0.0",
-			latestReleaseFetcher: func(user, repo string) (*ghRelease, error) {
+			latestReleaseFetcher: func(_ context.Context, user, repo string) (*ghRelease, error) {
 				return nil, nil
 			},
-			releaseFetcher: func(user, repo string) ([]ghRelease, error) {
+			releaseFetcher: func(_ context.Context, user, repo string) ([]ghRelease, error) {
 				return []ghRelease{
 					{
 						Tag: "1.0.0",
@@ -142,12 +143,12 @@ func TestVersionResolver_UpdateVersion(t *testing.T) {
 			},
 			version: "1.0.0",
 			want:    "2.0.0",
-			latestReleaseFetcher: func(user, repo string) (*ghRelease, error) {
+			latestReleaseFetcher: func(_ context.Context, user, repo string) (*ghRelease, error) {
 				return &ghRelease{
 					Tag: "2.0.0",
 				}, nil
 			},
-			releaseFetcher: func(user, repo string) ([]ghRelease, error) {
+			releaseFetcher: func(_ context.Context, user, repo string) ([]ghRelease, error) {
 				t.Fatal("should not have been called")
 				return nil, nil
 			},
@@ -170,7 +171,7 @@ func TestVersionResolver_UpdateVersion(t *testing.T) {
 			v.latestReleaseFetcher = tt.latestReleaseFetcher
 			v.releasesFetcher = tt.releaseFetcher
 
-			got, err := v.UpdateVersion(tt.version, tt.constraint)
+			got, err := v.UpdateVersion(context.Background(), tt.version, tt.constraint)
 			tt.wantErr(t, err)
 			assert.Equal(t, tt.want, got)
 		})

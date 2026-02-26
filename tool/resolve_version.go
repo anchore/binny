@@ -1,6 +1,7 @@
 package tool
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/Masterminds/semver/v3"
@@ -19,13 +20,13 @@ func VersionResolverMethods() []string {
 	}
 }
 
-func ResolveVersion(tool binny.VersionResolver, intent binny.VersionIntent) (string, error) {
+func ResolveVersion(ctx context.Context, tool binny.VersionResolver, intent binny.VersionIntent) (string, error) {
 	want := intent.Want
 	constraint := intent.Constraint
 
 	var resolvedVersion string
 
-	resolvedVersion, err := tool.ResolveVersion(want, constraint)
+	resolvedVersion, err := tool.ResolveVersion(ctx, want, constraint)
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve version: %w", err)
 	}

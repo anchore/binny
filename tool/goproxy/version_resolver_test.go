@@ -1,6 +1,7 @@
 package goproxy
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -14,7 +15,7 @@ func TestVersionResolver_ResolveVersion(t *testing.T) {
 		config                   VersionResolutionParameters
 		version                  string
 		constraint               string
-		availableVersionsFetcher func(url string) ([]string, error)
+		availableVersionsFetcher func(ctx context.Context, url string) ([]string, error)
 		want                     string
 		wantErr                  require.ErrorAssertionFunc
 	}{
@@ -25,7 +26,7 @@ func TestVersionResolver_ResolveVersion(t *testing.T) {
 			},
 			version: "latest",
 			want:    "2.0.0",
-			availableVersionsFetcher: func(url string) ([]string, error) {
+			availableVersionsFetcher: func(_ context.Context, url string) ([]string, error) {
 				return []string{"1.0.0", "2.0.0", "1.1.0"}, nil
 			},
 		},
@@ -52,7 +53,7 @@ func TestVersionResolver_ResolveVersion(t *testing.T) {
 			},
 			version: "latest",
 			wantErr: require.Error,
-			availableVersionsFetcher: func(url string) ([]string, error) {
+			availableVersionsFetcher: func(_ context.Context, url string) ([]string, error) {
 				return []string{""}, nil
 			},
 		},
@@ -64,7 +65,7 @@ func TestVersionResolver_ResolveVersion(t *testing.T) {
 			},
 			version: "latest",
 			want:    "latest", // this is a pass through to go-install, which supports this as input
-			availableVersionsFetcher: func(url string) ([]string, error) {
+			availableVersionsFetcher: func(_ context.Context, url string) ([]string, error) {
 				return nil, fmt.Errorf("should never be called")
 			},
 		},
@@ -77,7 +78,7 @@ func TestVersionResolver_ResolveVersion(t *testing.T) {
 			v := NewVersionResolver(tt.config)
 			v.availableVersionsFetcher = tt.availableVersionsFetcher
 
-			got, err := v.ResolveVersion(tt.version, tt.constraint)
+			got, err := v.ResolveVersion(context.Background(), tt.version, tt.constraint)
 			tt.wantErr(t, err)
 			assert.Equal(t, tt.want, got)
 		})
@@ -90,7 +91,7 @@ func TestVersionResolver_UpdateVersion(t *testing.T) {
 		config                   VersionResolutionParameters
 		version                  string
 		constraint               string
-		availableVersionsFetcher func(url string) ([]string, error)
+		availableVersionsFetcher func(ctx context.Context, url string) ([]string, error)
 		want                     string
 		wantErr                  require.ErrorAssertionFunc
 	}{
@@ -109,7 +110,7 @@ func TestVersionResolver_UpdateVersion(t *testing.T) {
 			},
 			version: "1.0.0",
 			want:    "2.0.0",
-			availableVersionsFetcher: func(url string) ([]string, error) {
+			availableVersionsFetcher: func(_ context.Context, url string) ([]string, error) {
 				return []string{"1.0.0", "2.0.0", "1.1.0"}, nil
 			},
 		},
@@ -130,7 +131,7 @@ func TestVersionResolver_UpdateVersion(t *testing.T) {
 			v := NewVersionResolver(tt.config)
 			v.availableVersionsFetcher = tt.availableVersionsFetcher
 
-			got, err := v.UpdateVersion(tt.version, tt.constraint)
+			got, err := v.UpdateVersion(context.Background(), tt.version, tt.constraint)
 			tt.wantErr(t, err)
 			assert.Equal(t, tt.want, got)
 		})

@@ -2,6 +2,7 @@ package hostedshell
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -37,15 +38,15 @@ func NewInstaller(cfg InstallerParameters) Installer {
 	}
 }
 
-func (i Installer) InstallTo(version, destDir string) (string, error) {
-	lgr := log.Nested("tool", fmt.Sprintf("%s@%s", i.config.URL, version))
+func (i Installer) InstallTo(ctx context.Context, version, destDir string) (string, error) {
+	ctx, lgr := log.WithNested(ctx, "tool", fmt.Sprintf("%s@%s", i.config.URL, version))
 
 	lgr.Debug("installing from hosted shell script")
 
 	const scriptName = "install.sh"
 
 	scriptPath := filepath.Join(destDir, scriptName)
-	if err := internal.DownloadFile(lgr, i.config.URL, scriptPath, ""); err != nil {
+	if err := internal.DownloadFile(ctx, i.config.URL, scriptPath, ""); err != nil {
 		return "", fmt.Errorf("failed to download script: %v", err)
 	}
 
