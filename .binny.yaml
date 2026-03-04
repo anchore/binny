@@ -17,7 +17,7 @@ tools:
 
   - name: gh
     version:
-      want: v2.67.0
+      want: v2.87.3
     method: github-release
     with:
       repo: cli/cli
@@ -45,21 +45,21 @@ tools:
 
   - name: glow
     version:
-      want: v2.1.0
+      want: v2.1.1
     method: github-release
     with:
       repo: charmbracelet/glow
 
   - name: goreleaser
     version:
-      want: v2.7.0
+      want: v2.14.1
     method: github-release
     with:
       repo: goreleaser/goreleaser
 
   - name: golangci-lint
     version:
-      want: v1.64.6
+      want: v2.10.1
     method: github-release
     with:
       repo: golangci/golangci-lint
@@ -73,14 +73,14 @@ tools:
 
   - name: task
     version:
-      want: v3.41.0
+      want: v3.48.0
     method: github-release
     with:
       repo: go-task/task
 
   - name: syft
     version:
-      want: v1.20.0
+      want: v1.42.1
     method: github-release
     with:
       repo: anchore/syft
