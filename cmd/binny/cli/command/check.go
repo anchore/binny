@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -37,13 +38,13 @@ func Check(app clio.Application) *cobra.Command {
 			names = args
 			return nil
 		},
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return runCheck(*cfg, names)
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runCheck(cmd.Context(), *cfg, names)
 		},
 	}, cfg)
 }
 
-func runCheck(cmdCfg CheckConfig, names []string) (errs error) {
+func runCheck(ctx context.Context, cmdCfg CheckConfig, names []string) (errs error) {
 	names, toolOpts := selectNamesAndConfigs(cmdCfg.Core, names)
 
 	if len(toolOpts) == 0 {
@@ -82,7 +83,7 @@ func runCheck(cmdCfg CheckConfig, names []string) (errs error) {
 		monitor.Increment()
 		monitor.AtomicStage.Set(opt.Name)
 
-		resolvedVersion, err := checkTool(store, opt, cmdCfg.VerifySHA256Digest)
+		resolvedVersion, err := checkTool(ctx, store, opt, cmdCfg.VerifySHA256Digest)
 		if err != nil {
 			failedTools = append(failedTools, opt.Name)
 			errs = multierror.Append(errs, fmt.Errorf("failed to check tool %q: %w", opt.Name, err))
@@ -104,13 +105,13 @@ func runCheck(cmdCfg CheckConfig, names []string) (errs error) {
 	return nil
 }
 
-func checkTool(store *binny.Store, opt option.Tool, verifySha256Digest bool) (string, error) {
+func checkTool(ctx context.Context, store *binny.Store, opt option.Tool, verifySha256Digest bool) (string, error) {
 	t, intent, err := opt.ToTool()
 	if err != nil {
 		return "", err
 	}
 
-	resolvedVersion, err := tool.ResolveVersion(t, *intent)
+	resolvedVersion, err := tool.ResolveVersion(ctx, t, *intent)
 	if err != nil {
 		return "", err
 	}

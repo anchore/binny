@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -43,14 +44,14 @@ func Update(app clio.Application) *cobra.Command {
 			names = args
 			return nil
 		},
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return runUpdate(*cfg, names)
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runUpdate(cmd.Context(), *cfg, names)
 		},
 	}, cfg)
 }
 
-func runUpdate(cfg UpdateConfig, names []string) error {
-	newCfg, err := getUpdatedConfig(cfg, names)
+func runUpdate(ctx context.Context, cfg UpdateConfig, names []string) error {
+	newCfg, err := getUpdatedConfig(ctx, cfg, names)
 	if err != nil {
 		return err
 	}
@@ -76,7 +77,7 @@ func (p updateLockYamlPatcher) PatchYaml(node *yaml.Node) error {
 	return nil
 }
 
-func getUpdatedConfig(cfg UpdateConfig, names []string) (*option.Core, error) { //nolint: funlen,gocognit
+func getUpdatedConfig(ctx context.Context, cfg UpdateConfig, names []string) (*option.Core, error) { //nolint: funlen,gocognit
 	var (
 		errs                 error
 		newCfgs              []option.Tool
@@ -124,7 +125,7 @@ func getUpdatedConfig(cfg UpdateConfig, names []string) (*option.Core, error) { 
 			}()
 
 			tProg.Increment()
-			newVersion, err = getUpdatedToolVersion(toolCfg)
+			newVersion, err = getUpdatedToolVersion(ctx, toolCfg)
 
 			lock.Lock()
 
@@ -246,13 +247,13 @@ func (t *toolVersionUpdate) Updated() string {
 	return t.updated.Stage()
 }
 
-func getUpdatedToolVersion(toolCfg option.Tool) (*string, error) {
+func getUpdatedToolVersion(ctx context.Context, toolCfg option.Tool) (*string, error) {
 	t, intent, err := toolCfg.ToTool()
 	if err != nil {
 		return nil, err
 	}
 
-	newVersion, err := t.UpdateVersion(intent.Want, intent.Constraint)
+	newVersion, err := t.UpdateVersion(ctx, intent.Want, intent.Constraint)
 	if err != nil {
 		return nil, fmt.Errorf("unable to update version for tool %q: %w", toolCfg.Name, err)
 	}

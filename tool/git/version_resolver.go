@@ -1,6 +1,7 @@
 package git
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -27,16 +28,16 @@ func NewVersionResolver(cfg VersionResolutionParameters) *VersionResolver {
 	}
 }
 
-func (v VersionResolver) UpdateVersion(want, constraint string) (string, error) {
+func (v VersionResolver) UpdateVersion(ctx context.Context, want, constraint string) (string, error) {
 	if want == "current" {
 		// always use the same reference
 		return want, nil
 	}
-	return v.ResolveVersion(want, constraint)
+	return v.ResolveVersion(ctx, want, constraint)
 }
 
-func (v VersionResolver) ResolveVersion(want, _ string) (string, error) {
-	log.WithFields("path", v.config.Path, "version", want).Trace("resolving version from git")
+func (v VersionResolver) ResolveVersion(ctx context.Context, want, _ string) (string, error) {
+	log.FromContext(ctx).WithFields("path", v.config.Path, "version", want).Trace("resolving version from git")
 
 	if want == "current" {
 		commit, err := headCommit(v.config.Path)

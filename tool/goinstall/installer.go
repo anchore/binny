@@ -2,6 +2,7 @@ package goinstall
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -37,7 +38,8 @@ func NewInstaller(cfg InstallerParameters) Installer {
 	}
 }
 
-func (i Installer) InstallTo(version, destDir string) (string, error) {
+func (i Installer) InstallTo(ctx context.Context, version, destDir string) (string, error) {
+	lgr := log.FromContext(ctx)
 	path := i.config.Module
 	if i.config.Entrypoint != "" {
 		path += "/" + i.config.Entrypoint
@@ -50,9 +52,9 @@ func (i Installer) InstallTo(version, destDir string) (string, error) {
 	isLocal := strings.HasPrefix(i.config.Module, ".") || strings.HasPrefix(i.config.Module, "/")
 	if isLocal {
 		spec = path
-		log.WithFields("module", i.config.Module, "version", version).Debug("installing go module (local)")
+		lgr.WithFields("module", i.config.Module, "version", version).Debug("installing go module (local)")
 	} else {
-		log.WithFields("module", i.config.Module, "version", version).Debug("installing go module (remote)")
+		lgr.WithFields("module", i.config.Module, "version", version).Debug("installing go module (remote)")
 	}
 
 	ldflags, err := templateFlags(i.config.LDFlags, version)

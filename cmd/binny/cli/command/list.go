@@ -2,6 +2,7 @@ package command
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -51,8 +52,8 @@ func List(app clio.Application) *cobra.Command {
 			cfg.IncludeFilter = args
 			return nil
 		},
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return runList(*cfg)
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runList(cmd.Context(), *cfg)
 		},
 	}, cfg)
 }
@@ -68,14 +69,14 @@ type toolStatus struct {
 	Error            error  `json:"error,omitempty"`  // if there was an error getting the status for this tool, it will be here
 }
 
-func runList(cmdCfg ListConfig) error {
+func runList(ctx context.Context, cmdCfg ListConfig) error {
 	// get the current store state
 	store, err := binny.NewStore(cmdCfg.Store.Root)
 	if err != nil {
 		return err
 	}
 
-	allStatuses := getAllStatuses(cmdCfg, store)
+	allStatuses := getAllStatuses(ctx, cmdCfg, store)
 
 	// look for items in the store root that cannot be accounted for
 	// TODO
@@ -146,7 +147,7 @@ func filterToolsWithoutUpdates(statuses []toolStatus) []toolStatus {
 	return updates
 }
 
-func getAllStatuses(cmdCfg ListConfig, store *binny.Store) []toolStatus {
+func getAllStatuses(ctx context.Context, cmdCfg ListConfig, store *binny.Store) []toolStatus {
 	var (
 		failedTools = make(map[string]error)
 		allStatus   []toolStatus
@@ -157,7 +158,7 @@ func getAllStatuses(cmdCfg ListConfig, store *binny.Store) []toolStatus {
 	storedEntries := store.Entries()
 
 	for _, opt := range toolOpts {
-		status, entry, err := getStatus(store, opt)
+		status, entry, err := getStatus(ctx, store, opt)
 		if err != nil {
 			failedTools[opt.Name] = err
 			continue
@@ -208,7 +209,7 @@ func getAllStatuses(cmdCfg ListConfig, store *binny.Store) []toolStatus {
 	return allStatus
 }
 
-func getStatus(store *binny.Store, opt option.Tool) (*toolStatus, *binny.StoreEntry, error) {
+func getStatus(ctx context.Context, store *binny.Store, opt option.Tool) (*toolStatus, *binny.StoreEntry, error) {
 	t, intent, err := opt.ToTool()
 	if err != nil {
 		return nil, nil, err
@@ -235,7 +236,7 @@ func getStatus(store *binny.Store, opt option.Tool) (*toolStatus, *binny.StoreEn
 		}
 	}
 
-	resolvedVersion, err := tool.ResolveVersion(t, *intent)
+	resolvedVersion, err := tool.ResolveVersion(ctx, t, *intent)
 	if err != nil {
 		return nil, nil, err
 	}

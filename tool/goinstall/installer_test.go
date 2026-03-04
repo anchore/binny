@@ -1,6 +1,7 @@
 package goinstall
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -246,7 +247,7 @@ func TestInstaller_InstallTo(t *testing.T) {
 			i := NewInstaller(tt.fields.config)
 			i.goInstallRunner = tt.fields.goInstallRunner
 
-			got, err := i.InstallTo(tt.args.version, tt.args.destDir)
+			got, err := i.InstallTo(context.Background(), tt.args.version, tt.args.destDir)
 			got = strings.ReplaceAll(got, string(os.PathSeparator), "/")
 			if !tt.wantErr(t, err, fmt.Sprintf("InstallTo(%v, %v)", tt.args.version, tt.args.destDir)) {
 				return

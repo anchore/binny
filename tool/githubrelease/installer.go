@@ -20,7 +20,6 @@ import (
 	"github.com/anchore/binny"
 	"github.com/anchore/binny/internal"
 	"github.com/anchore/binny/internal/log"
-	"github.com/anchore/go-logger"
 )
 
 const checksumsFilename = "checksums.txt"
@@ -92,7 +91,7 @@ type InstallerParameters struct {
 type Installer struct {
 	config         InstallerParameters
 	assetPatterns  []*regexp.Regexp
-	releaseFetcher func(lgr logger.Logger, user, repo, tag string) (*ghRelease, error)
+	releaseFetcher func(ctx context.Context, user, repo, tag string) (*ghRelease, error)
 }
 
 func NewInstaller(cfg InstallerParameters) Installer {
@@ -140,8 +139,8 @@ func compileAssetPatterns(assets any) []*regexp.Regexp {
 	return compiled
 }
 
-func (i Installer) InstallTo(version, destDir string) (string, error) {
-	lgr := log.Nested("tool", fmt.Sprintf("%s@%s", i.config.Repo, version))
+func (i Installer) InstallTo(ctx context.Context, version, destDir string) (string, error) {
+	ctx, lgr := log.WithNested(ctx, "tool", fmt.Sprintf("%s@%s", i.config.Repo, version))
 
 	lgr.Debug("installing from github release assets")
 
@@ -151,19 +150,19 @@ func (i Installer) InstallTo(version, destDir string) (string, error) {
 	}
 	user, repo := fields[0], fields[1]
 
-	release, err := i.releaseFetcher(lgr, user, repo, version)
+	release, err := i.releaseFetcher(ctx, user, repo, version)
 	if err != nil {
 		return "", fmt.Errorf("unable to fetch github release %s@%s: %w", i.config.Repo, version, err)
 	}
 
-	asset := selectBinaryAsset(lgr, release.Assets, runtime.GOOS, runtime.GOARCH, i.assetPatterns)
+	asset := selectBinaryAsset(ctx, release.Assets, runtime.GOOS, runtime.GOARCH, i.assetPatterns)
 	if asset == nil {
 		return "", fmt.Errorf("unable to find matching asset for %s@%s", i.config.Repo, version)
 	}
 
-	checksumAsset := selectChecksumAsset(lgr, release.Assets)
+	checksumAsset := selectChecksumAsset(ctx, release.Assets)
 
-	binPath, err := downloadAndExtractAsset(lgr, *asset, checksumAsset, destDir, i.config.Binary)
+	binPath, err := downloadAndExtractAsset(ctx, *asset, checksumAsset, destDir, i.config.Binary)
 	if err != nil {
 		return "", fmt.Errorf("unable to download and extract asset %s@%s: %w", i.config.Repo, version, err)
 	}
@@ -171,7 +170,8 @@ func (i Installer) InstallTo(version, destDir string) (string, error) {
 	return binPath, nil
 }
 
-func downloadAndExtractAsset(lgr logger.Logger, asset ghAsset, checksumAsset *ghAsset, destDir string, binary string) (string, error) {
+func downloadAndExtractAsset(ctx context.Context, asset ghAsset, checksumAsset *ghAsset, destDir string, binary string) (string, error) {
+	lgr := log.FromContext(ctx)
 	assetPath := filepath.Join(destDir, asset.Name)
 
 	checksum := asset.Checksum
@@ -180,7 +180,7 @@ func downloadAndExtractAsset(lgr logger.Logger, asset ghAsset, checksumAsset *gh
 
 		checksumsPath := filepath.Join(destDir, checksumsFilename)
 
-		if err := internal.DownloadFile(lgr, checksumAsset.URL, checksumsPath, ""); err != nil {
+		if err := internal.DownloadFile(ctx, checksumAsset.URL, checksumsPath, ""); err != nil {
 			return "", fmt.Errorf("unable to download checksum asset %q: %w", checksumAsset.Name, err)
 		}
 
@@ -191,7 +191,7 @@ func downloadAndExtractAsset(lgr logger.Logger, asset ghAsset, checksumAsset *gh
 		}
 	}
 
-	logFields := logger.Fields{
+	logFields := map[string]interface{}{
 		"destination": assetPath,
 	}
 
@@ -201,7 +201,7 @@ func downloadAndExtractAsset(lgr logger.Logger, asset ghAsset, checksumAsset *gh
 
 	lgr.WithFields(logFields).Trace("downloading asset")
 
-	if err := internal.DownloadFile(lgr, asset.URL, assetPath, checksum); err != nil {
+	if err := internal.DownloadFile(ctx, asset.URL, assetPath, checksum); err != nil {
 		return "", fmt.Errorf("unable to download asset %q: %w", asset.Name, err)
 	}
 
@@ -387,7 +387,8 @@ func mimeTypeOfFile(p string) (string, error) {
 	return strings.Split(mimeType.String(), ";")[0], nil
 }
 
-func selectChecksumAsset(lgr logger.Logger, assets []ghAsset) *ghAsset {
+func selectChecksumAsset(ctx context.Context, assets []ghAsset) *ghAsset {
+	lgr := log.FromContext(ctx)
 	// search for the asset by name with the OS and arch in the name
 	// e.g. chronicle_0.7.0_checksums.txt
 
@@ -478,7 +479,8 @@ func flattenAliases(aliases map[string][]string) []string {
 	return as
 }
 
-func selectBinaryAsset(lgr logger.Logger, assets []ghAsset, goOS, goArch string, assetPatterns []*regexp.Regexp) *ghAsset {
+func selectBinaryAsset(ctx context.Context, assets []ghAsset, goOS, goArch string, assetPatterns []*regexp.Regexp) *ghAsset {
+	lgr := log.FromContext(ctx)
 	// search for the asset by name with the OS and arch in the name
 	// e.g. chronicle_0.7.0_linux_amd64.tar.gz
 
@@ -602,7 +604,8 @@ func containsOneOf(subject string, needles []string) bool {
 	return false
 }
 
-func fetchRelease(lgr logger.Logger, user, repo, tag string) (r *ghRelease, err error) {
+func fetchRelease(ctx context.Context, user, repo, tag string) (r *ghRelease, err error) {
+	lgr := log.FromContext(ctx)
 	summary := fmt.Sprintf("%s/%s@%s", user, repo, tag)
 
 	lgr.Trace("fetching release info")
@@ -616,7 +619,7 @@ func fetchRelease(lgr logger.Logger, user, repo, tag string) (r *ghRelease, err 
 		lgr.Tracef("release found with %d release assets", len(r.Assets))
 	}()
 
-	r, err = fetchReleaseByScrape(lgr, user, repo, tag)
+	r, err = fetchReleaseByScrape(ctx, user, repo, tag)
 	if err != nil {
 		return nil, fmt.Errorf("unable to fetch release %s via scrape: %w", summary, err)
 	}
@@ -630,7 +633,7 @@ func fetchRelease(lgr logger.Logger, user, repo, tag string) (r *ghRelease, err 
 	// why try this second instead of first? there are multiple reasons:
 	// - there are multiple places to look for checksums
 	// - there is no guarantee they even exist!
-	r, err = fetchReleaseByChecksums(lgr, user, repo, tag)
+	r, err = fetchReleaseByChecksums(ctx, user, repo, tag)
 	if err != nil {
 		return nil, fmt.Errorf("unable to fetch release %s via checksums: %w", summary, err)
 	}
@@ -643,7 +646,7 @@ func fetchRelease(lgr logger.Logger, user, repo, tag string) (r *ghRelease, err 
 
 	// note: I would remove this approach, however, it is the most kosher way to get this information so I'm leaving it in for now.
 	// It is quite unfortunate that either auth is required (v4) or there is extreme rate limiting (v3).
-	r, err = fetchReleaseGithubV4API(user, repo, tag)
+	r, err = fetchReleaseGithubV4API(ctx, user, repo, tag)
 	if err != nil {
 		return nil, fmt.Errorf("unable to fetch release %s via GitHub v4 API: %w", summary, err)
 	}
@@ -651,7 +654,8 @@ func fetchRelease(lgr logger.Logger, user, repo, tag string) (r *ghRelease, err 
 	return r, nil
 }
 
-func fetchReleaseByChecksums(lgr logger.Logger, user, repo, tag string) (*ghRelease, error) {
+func fetchReleaseByChecksums(ctx context.Context, user, repo, tag string) (*ghRelease, error) {
+	lgr := log.FromContext(ctx)
 	// look for a {checksums.txt, repo_tag_checksums.txt, repo_tag-without-v_checksums.txt} file in the release assets
 	// if found, download it and parse it to find the asset we want
 	// e.g.
@@ -661,12 +665,12 @@ func fetchReleaseByChecksums(lgr logger.Logger, user, repo, tag string) (*ghRele
 
 	for _, url := range checksumURLVariants(user, repo, tag) {
 		lgr.WithFields("url", url).Trace("trying checksums url")
-		reader, err := internal.DownloadURL(lgr, url)
+		reader, err := internal.DownloadURL(ctx, url)
 		if err != nil {
 			return nil, err
 		}
 
-		release := handleChecksumsReader(lgr, user, repo, tag, url, reader)
+		release := handleChecksumsReader(ctx, user, repo, tag, url, reader)
 		if release == nil {
 			continue
 		}
@@ -701,7 +705,8 @@ func checksumURLVariants(user, repo, tag string) []string {
 	return urls
 }
 
-func handleChecksumsReader(lgr logger.Logger, user, repo, tag, url string, reader io.ReadCloser) *ghRelease {
+func handleChecksumsReader(ctx context.Context, user, repo, tag, url string, reader io.ReadCloser) *ghRelease {
+	lgr := log.FromContext(ctx)
 	if reader == nil {
 		return nil
 	}
@@ -760,7 +765,7 @@ func handleChecksumsReader(lgr logger.Logger, user, repo, tag, url string, reade
 	return release
 }
 
-func fetchReleaseByScrape(lgr logger.Logger, user, repo, tag string) (*ghRelease, error) {
+func fetchReleaseByScrape(ctx context.Context, user, repo, tag string) (*ghRelease, error) {
 	// fetch assets list via the expanded assets view endpoint used by the GitHub UI
 	// note: this is quite brittle, super grain of salt here...
 	// e.g. https://github.com/anchore/syft/releases/expanded_assets/v0.93.0
@@ -768,7 +773,7 @@ func fetchReleaseByScrape(lgr logger.Logger, user, repo, tag string) (*ghRelease
 
 	url := fmt.Sprintf("https://github.com/%s/%s/releases/expanded_assets/%s", user, repo, tag)
 
-	reader, err := internal.DownloadURL(lgr, url)
+	reader, err := internal.DownloadURL(ctx, url)
 	if err != nil {
 		return nil, err
 	}
@@ -781,11 +786,12 @@ func fetchReleaseByScrape(lgr logger.Logger, user, repo, tag string) (*ghRelease
 
 	return &ghRelease{
 		Tag:    tag,
-		Assets: processExpandedAssets(lgr, reader, url),
+		Assets: processExpandedAssets(ctx, reader, url),
 	}, nil
 }
 
-func processExpandedAssets(lgr logger.Logger, reader io.Reader, from string) []ghAsset {
+func processExpandedAssets(ctx context.Context, reader io.Reader, from string) []ghAsset {
+	lgr := log.FromContext(ctx)
 	tokenizer := html.NewTokenizer(reader)
 
 	var assets []ghAsset
@@ -821,13 +827,13 @@ func processExpandedAssets(lgr logger.Logger, reader io.Reader, from string) []g
 	return assets
 }
 
-func fetchReleaseGithubV4API(user, repo, tag string) (*ghRelease, error) {
+func fetchReleaseGithubV4API(ctx context.Context, user, repo, tag string) (*ghRelease, error) {
 	token := os.Getenv("GITHUB_TOKEN")
 	if token == "" {
 		return nil, fmt.Errorf("GITHUB_TOKEN environment variable not set but is required to use the GitHub v4 API")
 	}
 
-	client := githubv4.NewClient(newRetryableGitHubClient(token))
+	client := githubv4.NewClient(newRetryableGitHubClient(ctx, token))
 
 	// TODO: act on hitting a rate limit
 	type rateLimit struct {
@@ -869,7 +875,7 @@ func fetchReleaseGithubV4API(user, repo, tag string) (*ghRelease, error) {
 		"assetsCursor":    (*githubv4.String)(nil), // Null after argument to get first page.
 	}
 
-	err := client.Query(context.Background(), &query, variables)
+	err := client.Query(ctx, &query, variables)
 	if err != nil {
 		return nil, err
 	}

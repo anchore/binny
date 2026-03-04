@@ -1,5 +1,7 @@
 package binny
 
+import "context"
+
 type Tool interface {
 	Name() string
 	Installer
@@ -7,12 +9,12 @@ type Tool interface {
 }
 
 type Installer interface {
-	InstallTo(version, destDir string) (string, error)
+	InstallTo(ctx context.Context, version, destDir string) (string, error)
 }
 
 type VersionResolver interface {
-	ResolveVersion(want, constraint string) (string, error)
-	UpdateVersion(want, constraint string) (string, error)
+	ResolveVersion(ctx context.Context, want, constraint string) (string, error)
+	UpdateVersion(ctx context.Context, want, constraint string) (string, error)
 }
 
 type VersionIntent struct {

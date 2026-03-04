@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -43,13 +44,13 @@ func Install(app clio.Application) *cobra.Command {
 			names = args
 			return nil
 		},
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return runInstall(*cfg, names)
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runInstall(cmd.Context(), *cfg, names)
 		},
 	}, cfg)
 }
 
-func runInstall(cmdCfg InstallConfig, names []string) error { //nolint: funlen
+func runInstall(ctx context.Context, cmdCfg InstallConfig, names []string) error { //nolint: funlen
 	names, toolOpts := selectNamesAndConfigs(cmdCfg.Core, names)
 
 	if len(toolOpts) == 0 {
@@ -94,7 +95,7 @@ func runInstall(cmdCfg InstallConfig, names []string) error { //nolint: funlen
 		opt := toolOpts[i]
 
 		g.Go(func() error {
-			err := installTool(store, cmdCfg, opt)
+			err := installTool(ctx, store, cmdCfg, opt)
 			if err != nil {
 				lock.Lock()
 				if errors.Is(err, tool.ErrAlreadyInstalled) {
@@ -151,14 +152,14 @@ func trackInstallCmd(toolNames []string) (*progress.Manual, *progress.AtomicStag
 	return prog, stage
 }
 
-func installTool(store *binny.Store, cfg InstallConfig, opt option.Tool) error {
+func installTool(ctx context.Context, store *binny.Store, cfg InstallConfig, opt option.Tool) error {
 	t, intent, err := opt.ToTool()
 	if err != nil {
 		return fmt.Errorf("failed to resolve tool config %q: %w", opt.Name, err)
 	}
 
 	// otherwise continue to install the tool
-	if err := tool.Install(t, *intent, store, tool.VerifyConfig{
+	if err := tool.Install(ctx, t, *intent, store, tool.VerifyConfig{
 		VerifyXXH64Digest:  true,
 		VerifySHA256Digest: cfg.VerifySHA256Digest,
 	}); err != nil {
