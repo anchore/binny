@@ -46,7 +46,7 @@ func List(app clio.Application) *cobra.Command {
 		},
 		Args: cobra.ArbitraryArgs,
 		PreRunE: func(_ *cobra.Command, args []string) error {
-			if cfg.Format.JQCommand != "" && cfg.Format.Output != "json" {
+			if cfg.JQCommand != "" && cfg.Output != "json" {
 				return fmt.Errorf("--jq can only be used when --output format is 'json'")
 			}
 			cfg.IncludeFilter = args
@@ -71,7 +71,7 @@ type toolStatus struct {
 
 func runList(ctx context.Context, cmdCfg ListConfig) error {
 	// get the current store state
-	store, err := binny.NewStore(cmdCfg.Store.Root)
+	store, err := binny.NewStore(cmdCfg.Root)
 	if err != nil {
 		return err
 	}
@@ -81,13 +81,13 @@ func runList(ctx context.Context, cmdCfg ListConfig) error {
 	// look for items in the store root that cannot be accounted for
 	// TODO
 
-	statuses := filterStatus(allStatuses, cmdCfg.List.IncludeFilter)
+	statuses := filterStatus(allStatuses, cmdCfg.IncludeFilter)
 
-	if cmdCfg.Format.Output == "json" {
-		return reportOnBus(renderListJSON(statuses, cmdCfg.List.Updates, cmdCfg.Format.JQCommand))
+	if cmdCfg.Output == "json" {
+		return reportOnBus(renderListJSON(statuses, cmdCfg.Updates, cmdCfg.JQCommand))
 	}
 
-	if cmdCfg.List.Updates {
+	if cmdCfg.Updates {
 		return reportOnBus(renderListUpdatesTable(statuses), nil)
 	}
 
@@ -194,7 +194,7 @@ func getAllStatuses(ctx context.Context, cmdCfg ListConfig, store *binny.Store) 
 
 	// we weren't able to get status for all tools, but we should still present these
 	for name, err := range failedTools {
-		opt := cmdCfg.Core.Tools.GetOption(name)
+		opt := cmdCfg.Tools.GetOption(name)
 		var wantVersion string
 		if opt != nil {
 			wantVersion = opt.Version.Want
@@ -536,7 +536,9 @@ func summarizeGitVersion(v string) string {
 
 func onlyAlphaNumeric(v string) bool {
 	for _, c := range v {
-		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+		isLowercase := c >= 'a' && c <= 'z'
+		isDigit := c >= '0' && c <= '9'
+		if !isLowercase && !isDigit {
 			return false
 		}
 	}
