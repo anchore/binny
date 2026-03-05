@@ -3,6 +3,8 @@ package gobuild
 import (
 	"context"
 	"errors"
+	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -357,15 +359,23 @@ func TestInstaller_InstallTo(t *testing.T) {
 				sourceGetter:  mockSourceGetter,
 			}
 
-			binPath, err := installer.InstallTo(context.Background(), tt.version, "/dest")
+			destDir := "/dest"
+			binPath, err := installer.InstallTo(context.Background(), tt.version, destDir)
 			tt.wantErr(t, err)
 
 			if err != nil {
 				return
 			}
 
-			require.Equal(t, "/dest/"+tt.wantBinName, binPath)
-			require.Equal(t, "/dest/"+tt.wantBinName, capturedOutputPath)
+			// construct expected path the same way the code does
+			expectedBinName := tt.wantBinName
+			if runtime.GOOS == "windows" {
+				expectedBinName += ".exe"
+			}
+			expectedPath := filepath.Join(destDir, expectedBinName)
+
+			require.Equal(t, expectedPath, binPath)
+			require.Equal(t, expectedPath, capturedOutputPath)
 			require.Equal(t, tt.wantEntrypoint, capturedEntrypoint)
 			require.Equal(t, tt.wantLdflags, capturedLdflags)
 

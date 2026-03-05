@@ -71,6 +71,10 @@ func TestNormalizeSourceMode(t *testing.T) {
 }
 
 func TestCopyDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission tests not supported on Windows")
+	}
+
 	// create a temporary source directory
 	srcDir := t.TempDir()
 	dstDir := t.TempDir()
