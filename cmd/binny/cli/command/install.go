@@ -60,7 +60,7 @@ func runInstall(ctx context.Context, cmdCfg InstallConfig, names []string) error
 	}
 
 	// get the current store state
-	store, err := binny.NewStore(cmdCfg.Store.Root)
+	store, err := binny.NewStore(cmdCfg.Root)
 	if err != nil {
 		return err
 	}
