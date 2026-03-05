@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/anchore/binny/internal"
 )
 
 func Test_templateFlags(t *testing.T) {
@@ -55,11 +57,11 @@ func Test_templateFlags(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := templateFlags(tt.args.ldFlags, tt.args.version)
-			if !tt.wantErr(t, err, fmt.Sprintf("templateFlags(%v, %v)", tt.args.ldFlags, tt.args.version)) {
+			got, err := internal.TemplateFlags(tt.args.ldFlags, tt.args.version)
+			if !tt.wantErr(t, err, fmt.Sprintf("TemplateFlags(%v, %v)", tt.args.ldFlags, tt.args.version)) {
 				return
 			}
-			assert.Equalf(t, tt.want, got, "templateFlags(%v, %v)", tt.args.ldFlags, tt.args.version)
+			assert.Equalf(t, tt.want, got, "TemplateFlags(%v, %v)", tt.args.ldFlags, tt.args.version)
 		})
 	}
 }

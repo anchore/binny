@@ -1,18 +1,15 @@
 package goinstall
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"text/template"
-
-	"github.com/Masterminds/sprig/v3"
 
 	"github.com/anchore/binny"
+	"github.com/anchore/binny/internal"
 	"github.com/anchore/binny/internal/log"
 )
 
@@ -39,7 +36,8 @@ func NewInstaller(cfg InstallerParameters) Installer {
 }
 
 func (i Installer) InstallTo(ctx context.Context, version, destDir string) (string, error) {
-	lgr := log.FromContext(ctx)
+	ctx, lgr := log.WithNested(ctx, "tool", fmt.Sprintf("%s@%s", i.config.Module, version)) //nolint: ineffassign,staticcheck // we want any future calls we add to always have the right context
+
 	path := i.config.Module
 	if i.config.Entrypoint != "" {
 		path += "/" + i.config.Entrypoint
@@ -57,21 +55,21 @@ func (i Installer) InstallTo(ctx context.Context, version, destDir string) (stri
 		lgr.WithFields("module", i.config.Module, "version", version).Debug("installing go module (remote)")
 	}
 
-	ldflags, err := templateFlags(i.config.LDFlags, version)
+	ldflags, err := internal.TemplateFlags(i.config.LDFlags, version)
 	if err != nil {
 		return "", fmt.Errorf("failed to template ldflags: %v", err)
 	}
 
-	args, err := templateSlice(i.config.Args, version)
+	args, err := internal.TemplateSlice(i.config.Args, version)
 	if err != nil {
 		return "", fmt.Errorf("failed to template args: %v", err)
 	}
 
-	if err := validateEnvSlice(i.config.Env); err != nil {
+	if err := internal.ValidateEnvSlice(i.config.Env); err != nil {
 		return "", err
 	}
 
-	env, err := templateSlice(i.config.Env, version)
+	env, err := internal.TemplateSlice(i.config.Env, version)
 	if err != nil {
 		return "", fmt.Errorf("failed to template env: %v", err)
 	}
@@ -81,52 +79,6 @@ func (i Installer) InstallTo(ctx context.Context, version, destDir string) (stri
 	}
 
 	return binPath, nil
-}
-
-func validateEnvSlice(env []string) error {
-	for _, e := range env {
-		if !strings.Contains(e, "=") {
-			return fmt.Errorf("invalid env format: %q", e)
-		}
-	}
-	return nil
-}
-
-func templateSlice(in []string, version string) ([]string, error) {
-	ret := make([]string, len(in))
-	for i, arg := range in {
-		rendered, err := templateString(arg, version)
-		if err != nil {
-			return nil, err
-		}
-
-		ret[i] = rendered
-	}
-	return ret, nil
-}
-
-func templateFlags(ldFlags []string, version string) (string, error) {
-	flags := strings.Join(ldFlags, " ")
-
-	return templateString(flags, version)
-}
-
-func templateString(in string, version string) (string, error) {
-	tmpl, err := template.New("ldflags").Funcs(sprig.FuncMap()).Parse(in)
-	if err != nil {
-		return "", err
-	}
-
-	buf := bytes.Buffer{}
-	err = tmpl.Execute(&buf, map[string]string{
-		"Version": version,
-	})
-
-	if err != nil {
-		return "", err
-	}
-
-	return buf.String(), nil
 }
 
 func runGoInstall(spec, ldflags string, userArgs, userEnv []string, destDir string, isLocal bool, binName string) error {

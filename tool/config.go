@@ -6,8 +6,10 @@ import (
 	"github.com/mitchellh/hashstructure/v2"
 
 	"github.com/anchore/binny"
+	"github.com/anchore/binny/internal/log"
 	"github.com/anchore/binny/tool/git"
 	"github.com/anchore/binny/tool/githubrelease"
+	"github.com/anchore/binny/tool/gobuild"
 	"github.com/anchore/binny/tool/goinstall"
 	"github.com/anchore/binny/tool/goproxy"
 	"github.com/anchore/binny/tool/hostedshell"
@@ -50,6 +52,9 @@ func New(t Config) (binny.Tool, error) {
 		return nil, fmt.Errorf("failed to normalize tool config: %w", err)
 	}
 
+	log.WithFields("tool", t.Name, "install-method", t.InstallerConfig.Method, "version-resolver", t.VersionResolverConfig.Method).
+		Trace("configuring tool")
+
 	installer, err := getInstaller(t.InstallerConfig.Method, t.InstallerConfig.Parameters)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get installer for tool %q: %w", t.Name, err)
@@ -76,6 +81,13 @@ func getInstaller(method string, installParams any) (installer binny.Installer, 
 		}
 
 		installer = goinstall.NewInstaller(params)
+	case gobuild.IsInstallMethod(method):
+		params, ok := installParams.(gobuild.InstallerParameters)
+		if !ok {
+			return nil, fmt.Errorf("invalid go-build parameters")
+		}
+
+		installer = gobuild.NewInstaller(params)
 	case hostedshell.IsInstallMethod(method):
 		params, ok := installParams.(hostedshell.InstallerParameters)
 		if !ok {
@@ -148,6 +160,8 @@ func defaultVersionResolverConfig(installMethod string, installParams any) (meth
 	switch {
 	case goinstall.IsInstallMethod(installMethod):
 		return goinstall.DefaultVersionResolverConfig(installParams)
+	case gobuild.IsInstallMethod(installMethod):
+		return gobuild.DefaultVersionResolverConfig(installParams)
 	case hostedshell.IsInstallMethod(installMethod):
 		return hostedshell.DefaultVersionResolverConfig(installParams)
 	case githubrelease.IsInstallMethod(installMethod):

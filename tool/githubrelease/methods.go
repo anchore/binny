@@ -25,7 +25,7 @@ func IsInstallMethod(method string) bool {
 func DefaultVersionResolverConfig(installParams any) (string, any, error) {
 	params, ok := installParams.(InstallerParameters)
 	if !ok {
-		return "", nil, fmt.Errorf("invalid go install parameters")
+		return "", nil, fmt.Errorf("invalid github release parameters")
 	}
 
 	return ResolveMethod, VersionResolutionParameters{
