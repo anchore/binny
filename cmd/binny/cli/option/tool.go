@@ -10,6 +10,7 @@ import (
 	"github.com/anchore/binny"
 	"github.com/anchore/binny/tool"
 	"github.com/anchore/binny/tool/githubrelease"
+	"github.com/anchore/binny/tool/gobuild"
 	"github.com/anchore/binny/tool/goinstall"
 	"github.com/anchore/binny/tool/goproxy"
 	"github.com/anchore/binny/tool/hostedshell"
@@ -79,6 +80,13 @@ func deriveInstallParameters(name string, installMethod string, installParams ma
 	switch {
 	case goinstall.IsInstallMethod(installMethod):
 		var params goinstall.InstallerParameters
+		if err := mapstructure.Decode(installParams, &params); err != nil {
+			return nil, err
+		}
+		return params, nil
+
+	case gobuild.IsInstallMethod(installMethod):
+		var params gobuild.InstallerParameters
 		if err := mapstructure.Decode(installParams, &params); err != nil {
 			return nil, err
 		}

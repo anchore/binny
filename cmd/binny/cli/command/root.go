@@ -15,22 +15,27 @@ func Root(app clio.Application) *cobra.Command {
 	// wrap any existing PersistentPreRunE to inject dependencies into context
 	existingPreRunE := cmd.PersistentPreRunE
 	cmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
-		ctx := cmd.Context()
+		// FIRST: run clio's initialization (which sets up the logger via PreRunE)
+		if existingPreRunE != nil {
+			if err := existingPreRunE(cmd, args); err != nil {
+				return err
+			}
+		}
 
-		// inject the global logger into the context
-		lgr := log.Get()
-		ctx = log.WithLogger(ctx, lgr)
+		// Note: we intentionally do NOT store the base logger in context here.
+		// The logger may not be fully initialized yet (clio initializes it in PreRunE, not PersistentPreRunE).
+		// Instead, FromContext() will fall back to log.Get() which returns the current global logger.
+		// When installers call WithNested(), they'll get the properly initialized logger at that point.
 
 		// inject a configured HTTP client into the context
+		ctx := cmd.Context()
+		lgr := log.Get()
 		httpClient := retryablehttp.NewClient()
 		httpClient.Logger = internalhttp.NewLeveledLogger(lgr.Nested("component", "http-client"))
 		ctx = internalhttp.WithHTTPClient(ctx, httpClient)
 
 		cmd.SetContext(ctx)
 
-		if existingPreRunE != nil {
-			return existingPreRunE(cmd, args)
-		}
 		return nil
 	}
 

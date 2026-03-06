@@ -2,11 +2,11 @@ package goproxy
 
 import "strings"
 
-const ResolveMethod = "goproxy"
+const ResolveMethod = "go-proxy"
 
 func IsResolveMethod(method string) bool {
 	switch strings.ToLower(method) {
-	case "go-proxy", "go proxy", ResolveMethod:
+	case "goproxy", "go proxy", ResolveMethod:
 		return true
 	}
 	return false

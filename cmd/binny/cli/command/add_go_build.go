@@ -11,44 +11,58 @@ import (
 	"github.com/anchore/binny/cmd/binny/cli/option"
 	"github.com/anchore/binny/internal"
 	"github.com/anchore/binny/internal/log"
-	"github.com/anchore/binny/tool/goinstall"
+	"github.com/anchore/binny/tool/gobuild"
 	"github.com/anchore/clio"
 )
 
-type AddGoInstallConfig struct {
+type AddGoBuildConfig struct {
 	Config      string `json:"config" yaml:"config" mapstructure:"config"`
 	option.Core `json:"" yaml:",inline" mapstructure:",squash"`
 
 	// CLI options
 	Install struct {
-		GoInstall option.GoInstall `json:"go-install" yaml:"go-install" mapstructure:"go-install"`
+		GoBuild option.GoBuild `json:"go-build" yaml:"go-build" mapstructure:"go-build"`
 	} `json:"install" yaml:"install" mapstructure:"install"`
 
 	VersionResolution option.VersionResolution `json:"version-resolver" yaml:"version-resolver" mapstructure:"version-resolver"`
 }
 
-func AddGoInstall(app clio.Application) *cobra.Command {
-	cfg := &AddGoInstallConfig{
+func AddGoBuild(app clio.Application) *cobra.Command {
+	cfg := &AddGoBuildConfig{
 		Core: option.DefaultCore(),
 	}
 
 	return app.SetupCommand(&cobra.Command{
-		Use:   "go-install NAME@VERSION --module GOMODULE [--entrypoint PATH] [--ldflags FLAGS]",
-		Short: "Add a new tool configuration from 'go install ...' invocations",
-		Args:  cobra.ExactArgs(1),
+		Use:   "go-build NAME@VERSION --module GOMODULE [--entrypoint PATH] [--ldflags FLAGS]",
+		Short: "Add a new tool configuration that builds from source using 'go build'",
+		Long: `Add a new tool configuration that builds from source using 'go build'.
+
+Unlike 'go-install', this method clones the source repository and builds
+within that context, ensuring that replace directives in go.mod are honored.
+
+Examples:
+  # Add a tool that builds from GitHub source
+  binny add go-build mytool@v1.0.0 --module github.com/owner/repo --entrypoint cmd/mytool
+
+  # Add a tool with custom ldflags
+  binny add go-build mytool@v1.0.0 --module github.com/owner/repo -l "-X main.version={{ .Version }}"
+
+  # Add a tool using go proxy to download source
+  binny add go-build mytool@v1.0.0 --module github.com/owner/repo --source goproxy`,
+		Args: cobra.ExactArgs(1),
 		PreRunE: func(_ *cobra.Command, _ []string) error {
-			if cfg.Install.GoInstall.Module == "" {
-				return fmt.Errorf("go-install configuration requires '--module' option")
+			if cfg.Install.GoBuild.Module == "" {
+				return fmt.Errorf("go-build configuration requires '--module' option")
 			}
 			return nil
 		},
 		RunE: func(_ *cobra.Command, args []string) error {
-			return runAddGoInstallConfig(*cfg, args[0])
+			return runAddGoBuildConfig(*cfg, args[0])
 		},
 	}, cfg)
 }
 
-func runAddGoInstallConfig(cmdCfg AddGoInstallConfig, nameVersion string) error {
+func runAddGoBuildConfig(cmdCfg AddGoBuildConfig, nameVersion string) error {
 	fields := strings.Split(nameVersion, "@")
 	var name, version string
 
@@ -68,7 +82,7 @@ func runAddGoInstallConfig(cmdCfg AddGoInstallConfig, nameVersion string) error 
 		return nil
 	}
 
-	iCfg := cmdCfg.Install.GoInstall
+	iCfg := cmdCfg.Install.GoBuild
 	vCfg := cmdCfg.VersionResolution
 
 	ldFlagsList, err := shlex.Split(iCfg.LDFlags)
@@ -80,12 +94,22 @@ func runAddGoInstallConfig(cmdCfg AddGoInstallConfig, nameVersion string) error 
 		return err
 	}
 
-	coreInstallParams := goinstall.InstallerParameters{
+	var sourceMode gobuild.SourceMode
+	if iCfg.Source != "" {
+		sourceMode = gobuild.SourceMode(iCfg.Source)
+		if sourceMode != gobuild.SourceModeGit && sourceMode != gobuild.SourceModeGoProxy {
+			return fmt.Errorf("invalid source mode %q: must be 'git' or 'go-proxy'", iCfg.Source)
+		}
+	}
+
+	coreInstallParams := gobuild.InstallerParameters{
 		Module:     iCfg.Module,
 		Entrypoint: iCfg.Entrypoint,
 		LDFlags:    ldFlagsList,
 		Args:       iCfg.Args,
 		Env:        iCfg.Env,
+		Source:     sourceMode,
+		RepoURL:    iCfg.RepoURL,
 	}
 
 	installParamMap, err := toMap(coreInstallParams)
@@ -93,7 +117,7 @@ func runAddGoInstallConfig(cmdCfg AddGoInstallConfig, nameVersion string) error 
 		return fmt.Errorf("unable to encode install params: %w", err)
 	}
 
-	installMethod := goinstall.InstallMethod
+	installMethod := gobuild.InstallMethod
 
 	log.WithFields("name", name, "version", version, "method", installMethod).Info("adding tool")
 
