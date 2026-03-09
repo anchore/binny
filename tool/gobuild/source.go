@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -177,42 +178,75 @@ func downloadFromProxy(ctx context.Context, module, version string) (string, fun
 // copyDir recursively copies a directory tree, handling symlinks.
 // Directories are created with write permissions to allow file creation inside them,
 // which is necessary when copying from read-only sources like the go module cache.
+// Uses os.Root for safe, race-free filesystem operations within the source and destination directories.
 func copyDir(src, dst string) error {
+	srcRoot, err := os.OpenRoot(src)
+	if err != nil {
+		return fmt.Errorf("failed to open source directory: %w", err)
+	}
+	defer srcRoot.Close()
+
+	dstRoot, err := os.OpenRoot(dst)
+	if err != nil {
+		return fmt.Errorf("failed to open destination directory: %w", err)
+	}
+	defer dstRoot.Close()
+
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 
-		// compute destination path
+		// compute relative path for root-scoped operations
 		relPath, err := filepath.Rel(src, path)
 		if err != nil {
 			return err
 		}
-		dstPath := filepath.Join(dst, relPath)
 
-		// handle symlinks
+		// skip the root directory itself
+		if relPath == "." {
+			return nil
+		}
+
+		// handle symlinks - read target and recreate in destination.
+		// Note: os.Root.Readlink/Symlink require Go 1.25+, so we use standard functions here.
+		// This is safe because we're copying from controlled sources (go module cache or our git clone)
+		// to a temp directory we created.
 		if info.Mode()&os.ModeSymlink != 0 {
 			target, err := os.Readlink(path)
 			if err != nil {
 				return err
 			}
-			return os.Symlink(target, dstPath)
+			dstPath := filepath.Join(dst, relPath)
+			return os.Symlink(target, dstPath) //nolint:gosec // G122: destination is our temp directory
 		}
 
 		if info.IsDir() {
 			// ensure directories are writable so we can create files inside them
 			// (go module cache directories are read-only)
 			perm := info.Mode().Perm() | 0200 // add user write permission
-			return os.MkdirAll(dstPath, perm)
+			return dstRoot.Mkdir(relPath, perm)
 		}
 
-		// copy file with write permission to allow go build to work
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		// ensure files are writable (go module cache files are read-only)
-		perm := info.Mode().Perm() | 0200 // add user write permission
-		return os.WriteFile(dstPath, data, perm)
+		// copy file using root-scoped operations
+		return copyFileWithRoot(srcRoot, dstRoot, relPath, info.Mode().Perm()|0200)
 	})
+}
+
+// copyFileWithRoot copies a single file using root-scoped file handles for safe operations.
+func copyFileWithRoot(srcRoot, dstRoot *os.Root, relPath string, perm os.FileMode) error {
+	srcFile, err := srcRoot.Open(relPath)
+	if err != nil {
+		return err
+	}
+	defer srcFile.Close()
+
+	dstFile, err := dstRoot.OpenFile(relPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	defer dstFile.Close()
+
+	_, err = io.Copy(dstFile, srcFile)
+	return err
 }
