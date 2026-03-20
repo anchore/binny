@@ -80,7 +80,7 @@ tools:
 
   - name: syft
     version:
-      want: v1.42.2
+      want: v1.42.3
     method: github-release
     with:
       repo: anchore/syft
