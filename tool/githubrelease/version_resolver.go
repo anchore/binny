@@ -9,6 +9,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/hashicorp/go-retryablehttp"
@@ -41,33 +42,33 @@ func NewVersionResolver(cfg VersionResolutionParameters) *VersionResolver {
 	}
 }
 
-func (v VersionResolver) UpdateVersion(ctx context.Context, want, constraint string) (string, error) {
-	if want == "latest" {
-		return want, nil
+func (v VersionResolver) UpdateVersion(ctx context.Context, intent binny.VersionIntent) (string, error) {
+	if intent.Want == "latest" {
+		return intent.Want, nil
 	}
 
-	if internal.IsSemver(want) {
-		return v.findLatestVersion(ctx, constraint)
+	if internal.IsSemver(intent.Want) {
+		return v.findLatestVersion(ctx, intent.Constraint, intent.Cooldown)
 	}
 
-	return want, nil
+	return intent.Want, nil
 }
 
-func (v VersionResolver) ResolveVersion(ctx context.Context, want, constraint string) (string, error) {
-	log.FromContext(ctx).WithFields("repo", v.config.Repo, "version", want).Trace("resolving version from github release")
+func (v VersionResolver) ResolveVersion(ctx context.Context, intent binny.VersionIntent) (string, error) {
+	log.FromContext(ctx).WithFields("repo", v.config.Repo, "version", intent.Want).Trace("resolving version from github release")
 
-	if internal.IsSemver(want) {
-		return want, nil
+	if internal.IsSemver(intent.Want) {
+		return intent.Want, nil
 	}
 
-	if want == "latest" {
-		return v.findLatestVersion(ctx, constraint)
+	if intent.Want == "latest" {
+		return v.findLatestVersion(ctx, intent.Constraint, intent.Cooldown)
 	}
 
-	return want, nil
+	return intent.Want, nil
 }
 
-func (v VersionResolver) findLatestVersion(ctx context.Context, versionConstraint string) (string, error) {
+func (v VersionResolver) findLatestVersion(ctx context.Context, versionConstraint string, cooldown time.Duration) (string, error) {
 	lgr := log.FromContext(ctx)
 	cfg := v.config
 	fields := strings.Split(cfg.Repo, "/")
@@ -76,33 +77,61 @@ func (v VersionResolver) findLatestVersion(ctx context.Context, versionConstrain
 	}
 	user, repo := fields[0], fields[1]
 
-	latestRelease, err := v.latestReleaseFetcher(ctx, user, repo)
-	if err != nil {
-		return "", fmt.Errorf("unable to fetch latest release: %v", err)
+	var cutoff *time.Time
+	if cooldown > 0 {
+		t := time.Now().Add(-cooldown)
+		cutoff = &t
 	}
 
-	// try the cheapest path forward first -- if this is compliant to the constraint, use it.
-	if latestRelease != nil {
-		latestVersion, err := filterToLatestVersion([]ghRelease{*latestRelease}, versionConstraint)
+	// when cooldown is active, skip the cheap facade path since it doesn't return publish dates
+	// (we need dates to enforce the cooldown). Fall through to the full API path instead.
+	if cutoff == nil {
+		latestRelease, err := v.latestReleaseFetcher(ctx, user, repo)
 		if err != nil {
-			return "", fmt.Errorf("unable to filter to latest version: %v", err)
+			return "", fmt.Errorf("unable to fetch latest release: %v", err)
 		}
-		if latestVersion != nil {
-			return latestVersion.Tag, nil
+
+		// try the cheapest path forward first -- if this is compliant to the constraint, use it.
+		if latestRelease != nil {
+			latestVersion, err := filterToLatestVersion([]ghRelease{*latestRelease}, versionConstraint, nil)
+			if err != nil {
+				return "", fmt.Errorf("unable to filter to latest version: %v", err)
+			}
+			if latestVersion != nil {
+				return latestVersion.Tag, nil
+			}
 		}
+	} else {
+		lgr.WithFields("repo", cfg.Repo, "cooldown", cooldown.String()).
+			Trace("skipping facade path for cooldown enforcement (requires release dates from API)")
 	}
 
-	// this path requires the most work, but is typically needed if there is a constraint
+	// this path requires the most work, but is typically needed if there is a constraint or cooldown
 	releases, err := v.releasesFetcher(ctx, user, repo)
 	if err != nil {
 		return "", fmt.Errorf("unable to fetch all releases: %v", err)
 	}
 
-	latestVersion, err := filterToLatestVersion(releases, versionConstraint)
+	latestVersion, err := filterToLatestVersion(releases, versionConstraint, cutoff)
 	if err != nil {
 		return "", fmt.Errorf("unable to filter to latest version: %v", err)
 	}
 	if latestVersion == nil {
+		if cutoff != nil {
+			// find the absolute latest (without cooldown) to produce a helpful error message
+			absoluteLatest, _ := filterToLatestVersion(releases, versionConstraint, nil)
+			var latestTag string
+			var latestDate *time.Time
+			if absoluteLatest != nil {
+				latestTag = absoluteLatest.Tag
+				latestDate = absoluteLatest.Date
+			}
+			return "", &binny.CooldownError{
+				Cooldown:      cooldown,
+				LatestVersion: latestTag,
+				LatestDate:    latestDate,
+			}
+		}
 		return "", fmt.Errorf("no latest version found")
 	}
 
@@ -112,8 +141,11 @@ func (v VersionResolver) findLatestVersion(ctx context.Context, versionConstrain
 	return latestVersion.Tag, nil
 }
 
+// filterToLatestVersion finds the latest release that satisfies the version constraint and cooldown cutoff.
+// If cutoff is non-nil, releases published after the cutoff time are skipped (too new).
+//
 //nolint:gocognit
-func filterToLatestVersion(releases []ghRelease, versionConstraint string) (*ghRelease, error) {
+func filterToLatestVersion(releases []ghRelease, versionConstraint string, cutoff *time.Time) (*ghRelease, error) {
 	var constraint *semver.Constraints
 	var err error
 
@@ -129,6 +161,13 @@ func filterToLatestVersion(releases []ghRelease, versionConstraint string) (*ghR
 		ty := releases[i]
 		if ty.IsDraft != nil && *ty.IsDraft {
 			continue
+		}
+
+		// cooldown check: skip releases that are too new
+		if cutoff != nil {
+			if ty.Date == nil || ty.Date.After(*cutoff) {
+				continue
+			}
 		}
 
 		ver, err := semver.NewVersion(ty.Tag)
@@ -152,8 +191,9 @@ func filterToLatestVersion(releases []ghRelease, versionConstraint string) (*ghR
 		if latest != nil {
 			latestVer, err := semver.NewVersion(latest.Tag)
 			if err != nil {
-				log.WithFields("tag", ty.Tag).Warn("unable to parse latest version as semver")
-				ver = nil
+				log.WithFields("tag", latest.Tag).Warn("unable to parse current latest version as semver")
+				// can't compare semver, so skip this candidate entirely since we already have a latest
+				continue
 			}
 
 			if ver != nil {

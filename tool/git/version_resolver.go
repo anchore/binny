@@ -28,16 +28,22 @@ func NewVersionResolver(cfg VersionResolutionParameters) *VersionResolver {
 	}
 }
 
-func (v VersionResolver) UpdateVersion(ctx context.Context, want, constraint string) (string, error) {
-	if want == "current" {
+func (v VersionResolver) UpdateVersion(ctx context.Context, intent binny.VersionIntent) (string, error) {
+	if intent.Want == "current" {
 		// always use the same reference
-		return want, nil
+		return intent.Want, nil
 	}
-	return v.ResolveVersion(ctx, want, constraint)
+	return v.ResolveVersion(ctx, intent)
 }
 
-func (v VersionResolver) ResolveVersion(ctx context.Context, want, _ string) (string, error) {
+func (v VersionResolver) ResolveVersion(ctx context.Context, intent binny.VersionIntent) (string, error) {
+	want := intent.Want
 	log.FromContext(ctx).WithFields("path", v.config.Path, "version", want).Trace("resolving version from git")
+
+	if intent.Cooldown > 0 {
+		log.FromContext(ctx).WithFields("path", v.config.Path).
+			Warn("cooldown is configured but not supported by the git version resolver (ignoring)")
+	}
 
 	if want == "current" {
 		commit, err := headCommit(v.config.Path)
