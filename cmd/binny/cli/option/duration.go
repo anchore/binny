@@ -1,0 +1,72 @@
+package option
+
+import (
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// JSONDuration is a time.Duration that supports YAML/JSON unmarshaling from human-friendly
+// duration strings like "7d" (days) in addition to standard Go durations like "168h".
+// The IsSet field tracks whether the value was explicitly configured (distinguishing
+// "not configured" from "explicitly set to zero").
+type JSONDuration struct {
+	Duration time.Duration
+	IsSet    bool
+}
+
+func (d *JSONDuration) UnmarshalText(text []byte) error {
+	s := strings.TrimSpace(string(text))
+	if s == "" || s == "0" {
+		d.Duration = 0
+		d.IsSet = true
+		return nil
+	}
+
+	// support "Nd" shorthand for days
+	if strings.HasSuffix(s, "d") {
+		prefix := strings.TrimSuffix(s, "d")
+		days, err := strconv.Atoi(prefix)
+		if err != nil {
+			return fmt.Errorf("invalid duration %q: %w", string(text), err)
+		}
+		if days < 0 {
+			return fmt.Errorf("invalid duration %q: must be non-negative", string(text))
+		}
+		d.Duration = time.Duration(days) * 24 * time.Hour
+		d.IsSet = true
+		return nil
+	}
+
+	parsed, err := time.ParseDuration(s)
+	if err != nil {
+		return fmt.Errorf("invalid duration %q: %w", string(text), err)
+	}
+	if parsed < 0 {
+		return fmt.Errorf("invalid duration %q: must be non-negative", string(text))
+	}
+	d.Duration = parsed
+	d.IsSet = true
+	return nil
+}
+
+func (d JSONDuration) MarshalText() ([]byte, error) {
+	if d.Duration == 0 {
+		return []byte("0"), nil
+	}
+	// prefer days representation when it's an exact multiple
+	if d.Duration%(24*time.Hour) == 0 {
+		days := int(d.Duration / (24 * time.Hour))
+		return []byte(fmt.Sprintf("%dd", days)), nil
+	}
+	return []byte(d.Duration.String()), nil
+}
+
+func (d *JSONDuration) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var s string
+	if err := unmarshal(&s); err != nil {
+		return err
+	}
+	return d.UnmarshalText([]byte(s))
+}

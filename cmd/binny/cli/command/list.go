@@ -29,6 +29,13 @@ type ListConfig struct {
 	option.Format `json:"" yaml:",inline" mapstructure:",squash"`
 }
 
+// toolOptions returns ToolOptions without an ignore-cooldown override. The list command intentionally
+// applies cooldown so that status reflects what install/update would produce.
+func (c ListConfig) toolOptions() option.ToolOptions {
+	return option.DefaultToolOptions().
+		WithGlobalCooldown(c.Cooldown)
+}
+
 func List(app clio.Application) *cobra.Command {
 	cfg := &ListConfig{
 		Core: option.DefaultCore(),
@@ -76,7 +83,7 @@ func runList(ctx context.Context, cmdCfg ListConfig) error {
 		return err
 	}
 
-	allStatuses := getAllStatuses(ctx, cmdCfg, store)
+	allStatuses := getAllStatuses(ctx, cmdCfg, store, cmdCfg.toolOptions())
 
 	// look for items in the store root that cannot be accounted for
 	// TODO
@@ -147,7 +154,7 @@ func filterToolsWithoutUpdates(statuses []toolStatus) []toolStatus {
 	return updates
 }
 
-func getAllStatuses(ctx context.Context, cmdCfg ListConfig, store *binny.Store) []toolStatus {
+func getAllStatuses(ctx context.Context, cmdCfg ListConfig, store *binny.Store, opts option.ToolOptions) []toolStatus {
 	var (
 		failedTools = make(map[string]error)
 		allStatus   []toolStatus
@@ -158,7 +165,7 @@ func getAllStatuses(ctx context.Context, cmdCfg ListConfig, store *binny.Store) 
 	storedEntries := store.Entries()
 
 	for _, opt := range toolOpts {
-		status, entry, err := getStatus(ctx, store, opt)
+		status, entry, err := getStatus(ctx, store, opt, opts)
 		if err != nil {
 			failedTools[opt.Name] = err
 			continue
@@ -209,8 +216,8 @@ func getAllStatuses(ctx context.Context, cmdCfg ListConfig, store *binny.Store) 
 	return allStatus
 }
 
-func getStatus(ctx context.Context, store *binny.Store, opt option.Tool) (*toolStatus, *binny.StoreEntry, error) {
-	t, intent, err := opt.ToTool()
+func getStatus(ctx context.Context, store *binny.Store, opt option.Tool, opts option.ToolOptions) (*toolStatus, *binny.StoreEntry, error) {
+	t, intent, err := opt.ToTool(opts)
 	if err != nil {
 		return nil, nil, err
 	}

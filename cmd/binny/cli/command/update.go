@@ -23,9 +23,16 @@ import (
 )
 
 type UpdateConfig struct {
-	Config      string `json:"config" yaml:"config" mapstructure:"config"`
-	StopOnError bool   `json:"stopOnError" yaml:"stopOnError" mapstructure:"stopOnError"`
-	option.Core `json:"" yaml:",inline" mapstructure:",squash"`
+	Config          string `json:"config" yaml:"config" mapstructure:"config"`
+	StopOnError     bool   `json:"stopOnError" yaml:"stopOnError" mapstructure:"stopOnError"`
+	option.Cooldown `json:"" yaml:",inline" mapstructure:",squash"`
+	option.Core     `json:"" yaml:",inline" mapstructure:",squash"`
+}
+
+func (c UpdateConfig) toolOptions() option.ToolOptions {
+	return option.DefaultToolOptions().
+		WithGlobalCooldown(c.Core.Cooldown).
+		WithIgnoreCooldown(c.IgnoreCooldown)
 }
 
 func Update(app clio.Application) *cobra.Command {
@@ -125,7 +132,7 @@ func getUpdatedConfig(ctx context.Context, cfg UpdateConfig, names []string) (*o
 			}()
 
 			tProg.Increment()
-			newVersion, err = getUpdatedToolVersion(ctx, toolCfg)
+			newVersion, err = getUpdatedToolVersion(ctx, toolCfg, cfg.toolOptions())
 
 			lock.Lock()
 
@@ -247,13 +254,13 @@ func (t *toolVersionUpdate) Updated() string {
 	return t.updated.Stage()
 }
 
-func getUpdatedToolVersion(ctx context.Context, toolCfg option.Tool) (*string, error) {
-	t, intent, err := toolCfg.ToTool()
+func getUpdatedToolVersion(ctx context.Context, toolCfg option.Tool, opts option.ToolOptions) (*string, error) {
+	t, intent, err := toolCfg.ToTool(opts)
 	if err != nil {
 		return nil, err
 	}
 
-	newVersion, err := t.UpdateVersion(ctx, intent.Want, intent.Constraint)
+	newVersion, err := t.UpdateVersion(ctx, *intent)
 	if err != nil {
 		return nil, fmt.Errorf("unable to update version for tool %q: %w", toolCfg.Name, err)
 	}

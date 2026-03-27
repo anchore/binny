@@ -23,6 +23,13 @@ type CheckConfig struct {
 	option.Core  `json:"" yaml:",inline" mapstructure:",squash"`
 }
 
+// toolOptions returns ToolOptions without an ignore-cooldown override. The check command intentionally
+// applies cooldown so that verification reflects what install/update would produce.
+func (c CheckConfig) toolOptions() option.ToolOptions {
+	return option.DefaultToolOptions().
+		WithGlobalCooldown(c.Cooldown)
+}
+
 func Check(app clio.Application) *cobra.Command {
 	cfg := &CheckConfig{
 		Core: option.DefaultCore(),
@@ -83,7 +90,7 @@ func runCheck(ctx context.Context, cmdCfg CheckConfig, names []string) (errs err
 		monitor.Increment()
 		monitor.AtomicStage.Set(opt.Name)
 
-		resolvedVersion, err := checkTool(ctx, store, opt, cmdCfg.VerifySHA256Digest)
+		resolvedVersion, err := checkTool(ctx, store, opt, cmdCfg.toolOptions(), cmdCfg.VerifySHA256Digest)
 		if err != nil {
 			failedTools = append(failedTools, opt.Name)
 			errs = multierror.Append(errs, fmt.Errorf("failed to check tool %q: %w", opt.Name, err))
@@ -105,8 +112,8 @@ func runCheck(ctx context.Context, cmdCfg CheckConfig, names []string) (errs err
 	return nil
 }
 
-func checkTool(ctx context.Context, store *binny.Store, opt option.Tool, verifySha256Digest bool) (string, error) {
-	t, intent, err := opt.ToTool()
+func checkTool(ctx context.Context, store *binny.Store, opt option.Tool, opts option.ToolOptions, verifySha256Digest bool) (string, error) {
+	t, intent, err := opt.ToTool(opts)
 	if err != nil {
 		return "", err
 	}

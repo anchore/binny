@@ -22,10 +22,11 @@ import (
 )
 
 type InstallConfig struct {
-	Config       string `json:"config" yaml:"config" mapstructure:"config"`
-	StopOnError  bool   `json:"stopOnError" yaml:"stopOnError" mapstructure:"stopOnError"`
-	option.Check `json:"" yaml:",inline" mapstructure:",squash"`
-	option.Core  `json:"" yaml:",inline" mapstructure:",squash"`
+	Config          string `json:"config" yaml:"config" mapstructure:"config"`
+	StopOnError     bool   `json:"stopOnError" yaml:"stopOnError" mapstructure:"stopOnError"`
+	option.Cooldown `json:"" yaml:",inline" mapstructure:",squash"`
+	option.Check    `json:"" yaml:",inline" mapstructure:",squash"`
+	option.Core     `json:"" yaml:",inline" mapstructure:",squash"`
 }
 
 func Install(app clio.Application) *cobra.Command {
@@ -133,6 +134,12 @@ func runInstall(ctx context.Context, cmdCfg InstallConfig, names []string) error
 	return nil
 }
 
+func (c InstallConfig) toolOptions() option.ToolOptions {
+	return option.DefaultToolOptions().
+		WithGlobalCooldown(c.Core.Cooldown).
+		WithIgnoreCooldown(c.IgnoreCooldown)
+}
+
 func trackInstallCmd(toolNames []string) (*progress.Manual, *progress.AtomicStage) {
 	prog := progress.NewManual(int64(len(toolNames)))
 	stage := progress.NewAtomicStage("Installing")
@@ -153,7 +160,7 @@ func trackInstallCmd(toolNames []string) (*progress.Manual, *progress.AtomicStag
 }
 
 func installTool(ctx context.Context, store *binny.Store, cfg InstallConfig, opt option.Tool) error {
-	t, intent, err := opt.ToTool()
+	t, intent, err := opt.ToTool(cfg.toolOptions())
 	if err != nil {
 		return fmt.Errorf("failed to resolve tool config %q: %w", opt.Name, err)
 	}

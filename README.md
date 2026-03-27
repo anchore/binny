@@ -55,6 +55,8 @@ Then you can run:
   - `binny update [name...]` to update any pinned versions in the configuration with the latest available versions (and within any given constraints)
   - `binny list` to list all tools in the configuration and the installed store
 
+Use `--ignore-cooldown` with `install` or `update` to bypass the release cooldown check.
+
 You can add tools to the configuration one of two ways:
     - manually, by adding a new entry to the configuration file (see the [Configuration](#configuration) section below)
     - with the `binny add <method>` commands, which will handle the configuration for you
@@ -62,10 +64,27 @@ You can add tools to the configuration one of two ways:
 
 ## Configuration
 
-The configuration file is a YAML file with a list of tools to manage. Each tool has a name, a version, and 
-a method for installing it. You can optionally specify a specific method for checking the latest version of 
+The configuration file is a YAML file with a list of tools to manage. Each tool has a name, a version, and
+a method for installing it. You can optionally specify a specific method for checking the latest version of
 the tool, however, this is not necessary as all install methods have a default version resolver.
 
+
+### Global Configuration
+
+Top-level options that apply to all tools:
+
+| Option     | Description                                                                                                                                                                     |
+|------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `cooldown` | A duration to wait after a version is published before it can be installed (e.g. `7d`, `168h`). This is a supply chain security measure that gives time for malicious versions to be detected and pulled. Individual tools can override this value. Only applies to `install` and `update` commands, and only with `github-release` and `go-proxy` version resolvers (the `git` resolver does not support cooldown). |
+
+
+```yaml
+# .binny.yaml
+cooldown: 7d
+tools:
+    - name: gh
+      # ...
+```
 
 ### Tool Configuration
 
@@ -76,6 +95,7 @@ name: chronicle
 version:
   want: v0.7.0
   constraint: <= v0.9.0
+  cooldown: 3d  # optional: override the global cooldown for this tool
   method: github-release
   with:
     # arbitrary key-value pairs for the version resolver method
@@ -89,6 +109,7 @@ with:
 | `name`         | The name of the tool to install. This is used to determine the installation directory and the name of the binary.                                         |
 | `version.want` | The version of the tool to install. This can be a specific version, or a version range.                                                                   |
 | `version.constraint` | A constraint on the version of the tool to install. This is used to determine the latest version of the tool to update to.                          |
+| `version.cooldown` (optional) | A per-tool cooldown duration that overrides the global `cooldown` value (e.g. `3d`, `0` to disable). Only applies when resolving the latest version during `install` or `update`. Not supported by the `git` version resolver. |
 | `version.method` | The method to use to determine the latest version of the tool. See the [Version Resolver Methods](#version-resolver-methods) section for more details.  |
 | `version.with` | The configuration options for the version method. See the [Version Resolver Methods](#version-resolver-methods) section for more details.                                       |
 | `method`       | The method to use to install the tool. See the [Install Methods](#install-methods) section for more details.                                                           |
@@ -314,8 +335,8 @@ The `github-release` version method uses the GitHub Releases API to determine th
 The `version.want` option allows a special entry:
 - `latest`: don't pin to a version, use the latest available
 
-Note: this approach will might require a GitHub API token to be set in the `GITHUB_TOKEN` environment variable if there
-is a version constraint used.
+Note: this approach will require a GitHub API token to be set in the `GITHUB_TOKEN` environment variable if there
+is a version constraint or release cooldown used.
 
 #### `go-proxy`
 

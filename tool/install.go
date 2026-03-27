@@ -39,7 +39,7 @@ func Install(ctx context.Context, tool binny.Tool, intent binny.VersionIntent, s
 
 	stage.Set("resolving version")
 
-	resolvedVersion, err := tool.ResolveVersion(ctx, intent.Want, intent.Constraint)
+	resolvedVersion, err := tool.ResolveVersion(ctx, intent)
 	if err != nil {
 		return fmt.Errorf("failed to resolve version for tool %q: %w", tool.Name(), err)
 	}

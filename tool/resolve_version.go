@@ -21,12 +21,11 @@ func VersionResolverMethods() []string {
 }
 
 func ResolveVersion(ctx context.Context, tool binny.VersionResolver, intent binny.VersionIntent) (string, error) {
-	want := intent.Want
 	constraint := intent.Constraint
 
 	var resolvedVersion string
 
-	resolvedVersion, err := tool.ResolveVersion(ctx, want, constraint)
+	resolvedVersion, err := tool.ResolveVersion(ctx, intent)
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve version: %w", err)
 	}

@@ -25,15 +25,39 @@ type Tool struct {
 }
 
 type ToolVersionConfig struct {
-	Want          string `json:"want" yaml:"want" mapstructure:"want"`
-	Constraint    string `json:"constraint" yaml:"constraint,omitempty" mapstructure:"constraint"`
-	ResolveMethod string `json:"method" yaml:"method,omitempty" mapstructure:"method"`
+	Want          string       `json:"want" yaml:"want" mapstructure:"want"`
+	Constraint    string       `json:"constraint" yaml:"constraint,omitempty" mapstructure:"constraint"`
+	Cooldown      JSONDuration `json:"cooldown" yaml:"cooldown,omitempty" mapstructure:"cooldown"`
+	ResolveMethod string       `json:"method" yaml:"method,omitempty" mapstructure:"method"`
 
 	Parameters map[string]any `json:"with" yaml:"with,omitempty" mapstructure:"with"`
 }
 
-func (t Tool) ToTool() (binny.Tool, *binny.VersionIntent, error) {
-	cfg, intent, err := t.ToConfig()
+// ToolOptions holds configuration for tool construction behavior.
+type ToolOptions struct {
+	globalCooldown JSONDuration
+	ignoreCooldown bool
+}
+
+// DefaultToolOptions returns a ToolOptions with default values.
+func DefaultToolOptions() ToolOptions {
+	return ToolOptions{}
+}
+
+// WithGlobalCooldown sets the global cooldown that applies to all tools (unless overridden per-tool).
+func (o ToolOptions) WithGlobalCooldown(d JSONDuration) ToolOptions {
+	o.globalCooldown = d
+	return o
+}
+
+// WithIgnoreCooldown sets whether all cooldowns should be bypassed.
+func (o ToolOptions) WithIgnoreCooldown(ignore bool) ToolOptions {
+	o.ignoreCooldown = ignore
+	return o
+}
+
+func (t Tool) ToTool(opts ToolOptions) (binny.Tool, *binny.VersionIntent, error) {
+	cfg, intent, err := t.ToConfig(opts)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to read tool %q config: %w", t.Name, err)
 	}
@@ -45,7 +69,9 @@ func (t Tool) ToTool() (binny.Tool, *binny.VersionIntent, error) {
 	return toolObj, intent, nil
 }
 
-func (t Tool) ToConfig() (*tool.Config, *binny.VersionIntent, error) {
+func (t Tool) ToConfig(opts ToolOptions) (*tool.Config, *binny.VersionIntent, error) {
+	o := opts
+
 	installParams, err := deriveInstallParameters(t.Name, t.InstallMethod, t.Parameters, runtime.GOOS)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to derive install parameters for tool %q: %w", t.Name, err)
@@ -71,6 +97,7 @@ func (t Tool) ToConfig() (*tool.Config, *binny.VersionIntent, error) {
 	intent := &binny.VersionIntent{
 		Want:       t.Version.Want,
 		Constraint: t.Version.Constraint,
+		Cooldown:   resolveEffectiveCooldown(o.ignoreCooldown, o.globalCooldown, t.Version.Cooldown),
 	}
 
 	return cfg, intent, nil

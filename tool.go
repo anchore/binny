@@ -1,6 +1,9 @@
 package binny
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 type Tool interface {
 	Name() string
@@ -13,11 +16,12 @@ type Installer interface {
 }
 
 type VersionResolver interface {
-	ResolveVersion(ctx context.Context, want, constraint string) (string, error)
-	UpdateVersion(ctx context.Context, want, constraint string) (string, error)
+	ResolveVersion(ctx context.Context, intent VersionIntent) (string, error)
+	UpdateVersion(ctx context.Context, intent VersionIntent) (string, error)
 }
 
 type VersionIntent struct {
 	Want       string
 	Constraint string
+	Cooldown   time.Duration
 }
