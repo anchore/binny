@@ -99,15 +99,19 @@ func TestCooldownError_Error(t *testing.T) {
 			},
 		},
 		{
-			name: "remaining time is zero when cooldown has already passed",
+			name: "cooldown already passed shows informative message",
 			err: CooldownError{
 				Cooldown:      1 * time.Hour,
 				LatestVersion: "v1.0.0",
 				LatestDate:    timePtr(now.Add(-2 * time.Hour)),
 			},
-			// the remaining time should show "0s" since cooldown has technically passed
 			wantContains: []string{
-				"try again in 0s",
+				"cooldown period has passed",
+				"no matching version found",
+				"--ignore-cooldown",
+			},
+			wantNotContains: []string{
+				"try again in",
 			},
 		},
 		{

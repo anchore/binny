@@ -26,9 +26,16 @@ func (e *CooldownError) Error() string {
 	if e.LatestVersion != "" && e.LatestDate != nil {
 		age := time.Since(*e.LatestDate).Truncate(time.Minute)
 		remaining := e.Cooldown - age
-		if remaining < 0 {
-			remaining = 0
+
+		// if the cooldown has technically passed but we still got an error, it means
+		// no version matched the constraints that also passed cooldown
+		if remaining <= 0 {
+			return fmt.Sprintf(
+				"version %q was published %s ago (cooldown period has passed); no matching version found (use --ignore-cooldown to bypass)%s",
+				e.LatestVersion, formatDuration(age), suffix,
+			)
 		}
+
 		return fmt.Sprintf(
 			"version %q was published %s ago, but the release cooldown requires %s (try again in %s, or use --ignore-cooldown to bypass)%s",
 			e.LatestVersion, formatDuration(age), formatDuration(e.Cooldown), formatDuration(remaining), suffix,
