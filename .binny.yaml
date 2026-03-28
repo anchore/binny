@@ -1,4 +1,10 @@
+# only pull in version updates that were released more than a week ago (low-pass filter for quickly-retracted releases)
+cooldown: 7d
+
 tools:
+  ## internal tools ############################################################################
+
+  # the tool being built from this repo, used to manage all other tool installations
   - name: binny
     version:
       # since the module is . then "current" means whatever is checked out
@@ -15,6 +21,36 @@ tools:
         # note: sprig functions are available: http://masterminds.github.io/sprig/
         - -X main.buildDate={{ now | date "2006-01-02T15:04:05Z07:00" }}
 
+  # used for macOS code signing and notarization in the release workflow
+  - name: quill
+    version:
+      want: v0.7.1
+      cooldown: 0  # no cooldown period for internal tools
+    method: github-release
+    with:
+      repo: anchore/quill
+
+  # used for generating changelogs from git history
+  - name: chronicle
+    version:
+      want: v0.8.0
+      cooldown: 0  # no cooldown period for internal tools
+    method: github-release
+    with:
+      repo: anchore/chronicle
+
+  # used by goreleaser to generate SBOMs for release artifacts
+  - name: syft
+    version:
+      want: v1.42.2
+      cooldown: 0  # no cooldown period for internal tools
+    method: github-release
+    with:
+      repo: anchore/syft
+
+  ## external tools ############################################################################
+
+  # used for release automation and GitHub API interactions
   - name: gh
     version:
       want: v2.88.1
@@ -22,20 +58,7 @@ tools:
     with:
       repo: cli/cli
 
-  - name: quill
-    version:
-      want: v0.7.1
-    method: github-release
-    with:
-      repo: anchore/quill
-
-  - name: chronicle
-    version:
-      want: v0.8.0
-    method: github-release
-    with:
-      repo: anchore/chronicle
-
+  # used for organizing and formatting Go imports during code formatting
   - name: gosimports
     version:
       want: v0.3.8
@@ -43,6 +66,7 @@ tools:
     with:
       repo: rinchsan/gosimports
 
+  # used for rendering changelogs and markdown in the terminal
   - name: glow
     version:
       want: v2.1.1
@@ -50,6 +74,7 @@ tools:
     with:
       repo: charmbracelet/glow
 
+  # used for building snapshot and release artifacts
   - name: goreleaser
     version:
       want: v2.14.3
@@ -57,6 +82,7 @@ tools:
     with:
       repo: goreleaser/goreleaser
 
+  # used for linting Go code during static analysis
   - name: golangci-lint
     version:
       want: v2.11.3
@@ -64,6 +90,7 @@ tools:
     with:
       repo: golangci/golangci-lint
 
+  # used for checking that dependency licenses are compliant
   - name: bouncer
     version:
       want: v0.4.0
@@ -71,16 +98,10 @@ tools:
     with:
       repo: wagoodman/go-bouncer
 
+  # the task runner used to orchestrate all development and CI commands
   - name: task
     version:
       want: v3.49.1
     method: github-release
     with:
       repo: go-task/task
-
-  - name: syft
-    version:
-      want: v1.42.2
-    method: github-release
-    with:
-      repo: anchore/syft
