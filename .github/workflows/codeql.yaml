@@ -1,0 +1,93 @@
+# CodeQL scans for security vulnerabilities and coding errors across all
+# languages in this repo. Results appear in the "Security" tab under
+# "Code scanning alerts" and are enforced by branch protection rules.
+name: "CodeQL"
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  # Weekly scheduled scan catches newly disclosed vulnerabilities in
+  # existing code, not just changes introduced by PRs.
+  schedule:
+    - cron: '38 11 * * 3'
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      # Required to upload SARIF results to the "Security" tab.
+      security-events: write
+      # Required to fetch internal or private CodeQL packs.
+      packages: read
+      # Only required for workflows in private repositories.
+      actions: read
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # GitHub Actions workflow linting — no build needed.
+          - language: actions
+            build-mode: none
+
+          # Go uses "manual" build mode so we control exactly what gets
+          # compiled. The default "autobuild" finds the Makefile and runs
+          # the full CI pipeline (lint, test, snapshot release, etc.),
+          # which is far more work than CodeQL needs. All it requires is
+          # compiled Go source so it can build a type-resolved code graph
+          # for analysis.
+          - language: go
+            build-mode: manual
+
+          # Python is interpreted — CodeQL extracts directly from source.
+          - language: python
+            build-mode: none
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+        with:
+          persist-credentials: false
+
+      # Pin the Go toolchain to whatever go.mod declares so CodeQL
+      # analyzes with the same version the project actually uses.
+      # Only runs for the Go matrix entry.
+      - name: Setup Go
+        if: matrix.language == 'go'
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@c10b8064de6f491fea524254123dbe5e09572f13 # v4.35.1
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      # Minimal build for Go:
+      #   - "go generate" produces any generated code (protobuf, stringer,
+      #     etc.) so CodeQL can analyze it too.
+      #   - "go build" compiles everything so CodeQL gets a full
+      #     type-resolved code graph for its analysis.
+      #
+      # This replaces autobuild, which would have run the entire Makefile
+      # (installing tools, linting, testing, goreleaser snapshot, etc.).
+      - name: Build (Go)
+        if: matrix.build-mode == 'manual'
+        shell: bash
+        run: |
+          go generate ./...
+          go build ./...
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@c10b8064de6f491fea524254123dbe5e09572f13 # v4.35.1
+        with:
+          # The category tag lets GitHub associate SARIF results with the
+          # correct language when branch protection checks for required
+          # code scanning results.
+          category: "/language:${{matrix.language}}"
