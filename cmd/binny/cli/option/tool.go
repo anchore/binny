@@ -25,12 +25,23 @@ type Tool struct {
 }
 
 type ToolVersionConfig struct {
-	Want          string       `json:"want" yaml:"want" mapstructure:"want"`
-	Constraint    string       `json:"constraint" yaml:"constraint,omitempty" mapstructure:"constraint"`
-	Cooldown      JSONDuration `json:"cooldown" yaml:"cooldown,omitempty" mapstructure:"cooldown"`
+	Want       string `json:"want" yaml:"want" mapstructure:"want"`
+	Constraint string `json:"constraint" yaml:"constraint,omitempty" mapstructure:"constraint"`
+	// CooldownRaw is the raw config value for the per-tool cooldown duration.
+	// Use Cooldown field after PostLoad has been called.
+	CooldownRaw   any          `json:"cooldown" yaml:"cooldown,omitempty" mapstructure:"cooldown"`
+	Cooldown      JSONDuration `json:"-" yaml:"-" mapstructure:"-"`
 	ResolveMethod string       `json:"method" yaml:"method,omitempty" mapstructure:"method"`
 
 	Parameters map[string]any `json:"with" yaml:"with,omitempty" mapstructure:"with"`
+}
+
+// PostLoad is called by fangs after config loading to parse raw config values.
+func (t *ToolVersionConfig) PostLoad() error {
+	if err := t.Cooldown.ParseFrom(t.CooldownRaw); err != nil {
+		return fmt.Errorf("invalid cooldown value: %w", err)
+	}
+	return nil
 }
 
 // ToolOptions holds configuration for tool construction behavior.
