@@ -163,6 +163,120 @@ func TestJSONDuration_UnmarshalYAML(t *testing.T) {
 	}
 }
 
+func TestJSONDuration_ParseFrom(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     any
+		want      time.Duration
+		wantIsSet bool
+		wantErr   require.ErrorAssertionFunc
+	}{
+		{
+			name:      "nil value",
+			input:     nil,
+			want:      0,
+			wantIsSet: false,
+		},
+		{
+			name:      "string duration",
+			input:     "7d",
+			want:      7 * 24 * time.Hour,
+			wantIsSet: true,
+		},
+		{
+			name:      "string zero",
+			input:     "0",
+			want:      0,
+			wantIsSet: true,
+		},
+		{
+			name:      "int zero",
+			input:     0,
+			want:      0,
+			wantIsSet: true,
+		},
+		{
+			name:      "int positive",
+			input:     100,
+			want:      100,
+			wantIsSet: true,
+		},
+		{
+			name:      "int64 value",
+			input:     int64(1000),
+			want:      1000,
+			wantIsSet: true,
+		},
+		{
+			name:      "float64 value",
+			input:     float64(500),
+			want:      500,
+			wantIsSet: true,
+		},
+		{
+			name:    "negative int",
+			input:   -1,
+			wantErr: require.Error,
+		},
+		{
+			name:    "negative int64",
+			input:   int64(-1),
+			wantErr: require.Error,
+		},
+		{
+			name:    "negative float64",
+			input:   float64(-1),
+			wantErr: require.Error,
+		},
+		{
+			name:    "invalid string",
+			input:   "bogus",
+			wantErr: require.Error,
+		},
+		{
+			name:    "unsupported type",
+			input:   []string{"invalid"},
+			wantErr: require.Error,
+		},
+		{
+			name:      "JSONDuration value",
+			input:     JSONDuration{Duration: 24 * time.Hour, IsSet: true},
+			want:      24 * time.Hour,
+			wantIsSet: true,
+		},
+		{
+			name:      "JSONDuration pointer",
+			input:     &JSONDuration{Duration: 48 * time.Hour, IsSet: true},
+			want:      48 * time.Hour,
+			wantIsSet: true,
+		},
+		{
+			name:      "nil JSONDuration pointer",
+			input:     (*JSONDuration)(nil),
+			want:      0,
+			wantIsSet: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.wantErr == nil {
+				tt.wantErr = require.NoError
+			}
+
+			var d JSONDuration
+			err := d.ParseFrom(tt.input)
+			tt.wantErr(t, err)
+
+			if err != nil {
+				return
+			}
+			require.Equal(t, tt.want, d.Duration)
+			require.Equal(t, tt.wantIsSet, d.IsSet)
+		})
+	}
+}
+
 func TestJSONDuration_MarshalText(t *testing.T) {
 	tests := []struct {
 		name     string

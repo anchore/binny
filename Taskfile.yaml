@@ -13,6 +13,9 @@ vars:
   NEXT_VERSION: VERSION
   MAKEDIR_P: 'python -c "import sys; import os; os.makedirs(sys.argv[1], exist_ok=True)"'
 
+  GORELEASER_CMD: "{{ .TOOL_DIR }}/goreleaser release --clean --skip=publish --skip=sign --snapshot --config {{ .TMP_DIR }}/goreleaser.yaml"
+  BUILD_CMD: "{{ .TOOL_DIR }}/goreleaser build --clean --single-target --snapshot --config {{ .TMP_DIR }}/goreleaser.yaml"
+
 tasks:
 
   ## High-level tasks #################################
@@ -169,6 +172,23 @@ tasks:
 
   ## Build-related targets #################################
 
+  build:
+    desc: Build binny for the current OS/architecture
+    deps: [tools]
+    sources:
+      - ./**/*.go
+    generates:
+      - "{{ .SNAPSHOT_BIN }}"
+    cmds:
+      - &setup-snapshot-goreleaser-config
+        silent: true
+        cmd: |
+          mkdir -p {{ .TMP_DIR }}
+          echo "dist: {{ .SNAPSHOT_DIR }}" > {{ .TMP_DIR }}/goreleaser.yaml
+          cat .goreleaser.yaml >> {{ .TMP_DIR }}/goreleaser.yaml
+
+      - "{{ .BUILD_CMD }}"
+
   changelog:
     desc: Generate a changelog
     deps: [tools]
@@ -181,21 +201,14 @@ tasks:
 
   snapshot:
     desc: Create a snapshot release
-    aliases:
-      - build
     deps: [tools]
     sources:
       - "{{ .SNAPSHOT_BIN }}"
       - ./test/cli/**
       - ./**/*.go
     cmds:
-      - silent: true
-        cmd: |        
-          mkdir -p {{ .TMP_DIR }}
-          echo "dist: {{ .SNAPSHOT_DIR }}" > {{ .TMP_DIR }}/goreleaser.yaml
-          cat .goreleaser.yaml >> {{ .TMP_DIR }}/goreleaser.yaml
-
-      - "{{ .TOOL_DIR }}/goreleaser release --clean --skip=publish --skip=sign --snapshot --config {{ .TMP_DIR }}/goreleaser.yaml"
+      - *setup-snapshot-goreleaser-config
+      - "{{ .GORELEASER_CMD }}"
 
   assert-windows-build:
     desc: Assert that binny compiles on Windows

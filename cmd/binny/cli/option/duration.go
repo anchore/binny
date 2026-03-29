@@ -70,3 +70,49 @@ func (d *JSONDuration) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	}
 	return d.UnmarshalText([]byte(s))
 }
+
+// ParseFrom parses a JSONDuration from various input types that may come from
+// config loading (string, int, float64, etc). This is needed because mapstructure
+// doesn't support TextUnmarshaler interface, so we need to handle the raw config
+// value in PostLoad.
+func (d *JSONDuration) ParseFrom(v any) error {
+	if v == nil {
+		return nil
+	}
+
+	switch val := v.(type) {
+	case string:
+		return d.UnmarshalText([]byte(val))
+	case int:
+		if val < 0 {
+			return fmt.Errorf("invalid duration %d: must be non-negative", val)
+		}
+		d.Duration = time.Duration(val)
+		d.IsSet = true
+		return nil
+	case int64:
+		if val < 0 {
+			return fmt.Errorf("invalid duration %d: must be non-negative", val)
+		}
+		d.Duration = time.Duration(val)
+		d.IsSet = true
+		return nil
+	case float64:
+		if val < 0 {
+			return fmt.Errorf("invalid duration %v: must be non-negative", val)
+		}
+		d.Duration = time.Duration(val)
+		d.IsSet = true
+		return nil
+	case JSONDuration:
+		*d = val
+		return nil
+	case *JSONDuration:
+		if val != nil {
+			*d = *val
+		}
+		return nil
+	default:
+		return fmt.Errorf("cannot parse duration from type %T", v)
+	}
+}
