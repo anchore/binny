@@ -53,7 +53,7 @@ tools:
   # used for release automation and GitHub API interactions
   - name: gh
     version:
-      want: v2.88.1
+      want: v2.89.0
     method: github-release
     with:
       repo: cli/cli
