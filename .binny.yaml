@@ -2,7 +2,6 @@
 cooldown: 7d
 
 tools:
-  ## internal tools ############################################################################
 
   # the tool being built from this repo, used to manage all other tool installations
   - name: binny
@@ -25,7 +24,6 @@ tools:
   - name: quill
     version:
       want: v0.7.1
-      cooldown: 0  # no cooldown period for internal tools
     method: github-release
     with:
       repo: anchore/quill
@@ -34,7 +32,6 @@ tools:
   - name: chronicle
     version:
       want: v0.8.0
-      cooldown: 0  # no cooldown period for internal tools
     method: github-release
     with:
       repo: anchore/chronicle
@@ -42,13 +39,10 @@ tools:
   # used by goreleaser to generate SBOMs for release artifacts
   - name: syft
     version:
-      want: v1.42.2
-      cooldown: 0  # no cooldown period for internal tools
+      want: v1.42.3
     method: github-release
     with:
       repo: anchore/syft
-
-  ## external tools ############################################################################
 
   # used for release automation and GitHub API interactions
   - name: gh
