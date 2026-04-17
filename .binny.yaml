@@ -1,8 +1,6 @@
 # only pull in version updates that were released more than a week ago (low-pass filter for quickly-retracted releases)
 cooldown: 7d
-
 tools:
-
   # the tool being built from this repo, used to manage all other tool installations
   - name: binny
     version:
@@ -31,7 +29,7 @@ tools:
   # used for generating changelogs from git history
   - name: chronicle
     version:
-      want: v0.8.0
+      want: v0.8.3
     method: github-release
     with:
       repo: anchore/chronicle
@@ -39,7 +37,7 @@ tools:
   # used by goreleaser to generate SBOMs for release artifacts
   - name: syft
     version:
-      want: v1.42.3
+      want: v1.42.4
     method: github-release
     with:
       repo: anchore/syft
@@ -47,7 +45,7 @@ tools:
   # used for release automation and GitHub API interactions
   - name: gh
     version:
-      want: v2.88.1
+      want: v2.89.0
     method: github-release
     with:
       repo: cli/cli
@@ -63,7 +61,7 @@ tools:
   # used for rendering changelogs and markdown in the terminal
   - name: glow
     version:
-      want: v2.1.1
+      want: v2.1.2
     method: github-release
     with:
       repo: charmbracelet/glow
@@ -71,7 +69,7 @@ tools:
   # used for building snapshot and release artifacts
   - name: goreleaser
     version:
-      want: v2.14.3
+      want: v2.15.2
     method: github-release
     with:
       repo: goreleaser/goreleaser
@@ -79,7 +77,7 @@ tools:
   # used for linting Go code during static analysis
   - name: golangci-lint
     version:
-      want: v2.11.3
+      want: v2.11.4
     method: github-release
     with:
       repo: golangci/golangci-lint
