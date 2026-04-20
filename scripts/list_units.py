@@ -4,9 +4,16 @@ import sys
 def go_list_exclude_pattern(owner, project):
     exclude_pattern = f"{owner}/{project}/test"
 
-    result = subprocess.run(["go", "list", "./..."], stdout=subprocess.PIPE, text=True, check=True)
+    # restrict to packages that contain test files so `go test -coverprofile`
+    # does not drag test-less packages through the covdata toolchain
+    result = subprocess.run(
+        ["go", "list", "-f", "{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}", "./..."],
+        stdout=subprocess.PIPE,
+        text=True,
+        check=True,
+    )
 
-    filtered_lines = [line for line in result.stdout.splitlines() if exclude_pattern not in line]
+    filtered_lines = [line for line in result.stdout.splitlines() if line and exclude_pattern not in line]
 
     joined_output = ' '.join(filtered_lines)
 
