@@ -177,7 +177,7 @@ func TestVersionResolver_ResolveVersion_withCooldown(t *testing.T) {
 			name:     "cooldown error when all versions are too new",
 			cooldown: 7 * 24 * time.Hour,
 			version:  "latest",
-			wantErr: func(t require.TestingT, err error, _ ...interface{}) {
+			wantErr: func(t require.TestingT, err error, _ ...any) {
 				require.Error(t, err)
 				var cooldownErr *binny.CooldownError
 				require.ErrorAs(t, err, &cooldownErr)
@@ -230,7 +230,7 @@ func TestVersionResolver_ResolveVersion_withCooldown(t *testing.T) {
 			availableVersionsFetcher: func(_ context.Context, _ string) ([]string, error) {
 				// generate more candidates than maxCooldownCandidates
 				var versions []string
-				for i := 0; i < maxCooldownCandidates+5; i++ {
+				for i := range maxCooldownCandidates + 5 {
 					versions = append(versions, fmt.Sprintf("1.0.%d", i))
 				}
 				return versions, nil
@@ -239,7 +239,7 @@ func TestVersionResolver_ResolveVersion_withCooldown(t *testing.T) {
 				// all checked versions are too new
 				return &versionInfo{Version: "1.0.0", Time: newDate}, nil
 			},
-			wantErr: func(t require.TestingT, err error, _ ...interface{}) {
+			wantErr: func(t require.TestingT, err error, _ ...any) {
 				require.Error(t, err)
 				var cooldownErr *binny.CooldownError
 				require.ErrorAs(t, err, &cooldownErr)
@@ -309,7 +309,7 @@ func TestVersionResolver_UpdateVersion_withCooldown(t *testing.T) {
 			name:     "update with cooldown error when all too new",
 			cooldown: 7 * 24 * time.Hour,
 			version:  "1.0.0",
-			wantErr: func(t require.TestingT, err error, _ ...interface{}) {
+			wantErr: func(t require.TestingT, err error, _ ...any) {
 				require.Error(t, err)
 				var cooldownErr *binny.CooldownError
 				require.ErrorAs(t, err, &cooldownErr)

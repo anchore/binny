@@ -336,7 +336,7 @@ func fetchAllReleasesFromGithubV4API(ctx context.Context, user, repo string) ([]
 
 			RateLimit rateLimit
 		}
-		variables := map[string]interface{}{
+		variables := map[string]any{
 			"repositoryOwner": githubv4.String(user),
 			"repositoryName":  githubv4.String(repo),
 			"releasesCursor":  (*githubv4.String)(nil), // Null after argument to get first page.

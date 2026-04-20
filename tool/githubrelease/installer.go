@@ -191,7 +191,7 @@ func downloadAndExtractAsset(ctx context.Context, asset ghAsset, checksumAsset *
 		}
 	}
 
-	logFields := map[string]interface{}{
+	logFields := map[string]any{
 		"destination": assetPath,
 	}
 
@@ -868,7 +868,7 @@ func fetchReleaseGithubV4API(ctx context.Context, user, repo, tag string) (*ghRe
 
 		RateLimit rateLimit
 	}
-	variables := map[string]interface{}{
+	variables := map[string]any{
 		"repositoryOwner": githubv4.String(user),
 		"repositoryName":  githubv4.String(repo),
 		"tagName":         githubv4.String(tag),    // Null after argument to get first page.

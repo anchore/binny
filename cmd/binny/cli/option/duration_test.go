@@ -144,7 +144,7 @@ func TestJSONDuration_UnmarshalYAML(t *testing.T) {
 			}
 
 			var d JSONDuration
-			err := d.UnmarshalYAML(func(v interface{}) error {
+			err := d.UnmarshalYAML(func(v any) error {
 				ptr, ok := v.(*string)
 				if !ok {
 					t.Fatal("expected *string")

@@ -221,10 +221,7 @@ func (v VersionResolver) checkCandidatesForCooldown(ctx context.Context, candida
 		result.absoluteLatest = candidates[0].original
 	}
 
-	limit := maxCooldownCandidates
-	if limit > len(candidates) {
-		limit = len(candidates)
-	}
+	limit := min(maxCooldownCandidates, len(candidates))
 	result.checkedCount = limit
 
 	for i := 0; i < limit; i++ {

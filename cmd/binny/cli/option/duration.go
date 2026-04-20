@@ -25,8 +25,8 @@ func (d *JSONDuration) UnmarshalText(text []byte) error {
 	}
 
 	// support "Nd" shorthand for days
-	if strings.HasSuffix(s, "d") {
-		prefix := strings.TrimSuffix(s, "d")
+	if before, ok := strings.CutSuffix(s, "d"); ok {
+		prefix := before
 		days, err := strconv.Atoi(prefix)
 		if err != nil {
 			return fmt.Errorf("invalid duration %q: %w", string(text), err)
@@ -63,7 +63,7 @@ func (d JSONDuration) MarshalText() ([]byte, error) {
 	return []byte(d.Duration.String()), nil
 }
 
-func (d *JSONDuration) UnmarshalYAML(unmarshal func(interface{}) error) error {
+func (d *JSONDuration) UnmarshalYAML(unmarshal func(any) error) error {
 	var s string
 	if err := unmarshal(&s); err != nil {
 		return err

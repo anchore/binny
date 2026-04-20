@@ -18,18 +18,18 @@ func NewLeveledLogger(lgr logger.Logger) retryablehttp.LeveledLogger {
 	return &leveledLoggerAdapter{lgr: lgr}
 }
 
-func (l *leveledLoggerAdapter) Error(msg string, keysAndValues ...interface{}) {
+func (l *leveledLoggerAdapter) Error(msg string, keysAndValues ...any) {
 	l.lgr.WithFields(keysAndValues...).Error(msg)
 }
 
-func (l *leveledLoggerAdapter) Warn(msg string, keysAndValues ...interface{}) {
+func (l *leveledLoggerAdapter) Warn(msg string, keysAndValues ...any) {
 	l.lgr.WithFields(keysAndValues...).Warn(msg)
 }
 
-func (l *leveledLoggerAdapter) Info(msg string, keysAndValues ...interface{}) {
+func (l *leveledLoggerAdapter) Info(msg string, keysAndValues ...any) {
 	l.lgr.WithFields(keysAndValues...).Info(msg)
 }
 
-func (l *leveledLoggerAdapter) Debug(msg string, keysAndValues ...interface{}) {
+func (l *leveledLoggerAdapter) Debug(msg string, keysAndValues ...any) {
 	l.lgr.WithFields(keysAndValues...).Debug(msg)
 }
