@@ -55,6 +55,8 @@ Then you can run:
   - `binny update [name...]` to update any pinned versions in the configuration with the latest available versions (and within any given constraints)
   - `binny list` to list all tools in the configuration and the installed store
 
+By default, tools are installed in a `.tool` directory in the current working directory. This can be configured via the `store.root` option (e.g., to use `~/.tool` for a user-wide install).
+
 Use `--ignore-cooldown` with `install` or `update` to bypass the release cooldown check.
 
 You can add tools to the configuration one of two ways:
