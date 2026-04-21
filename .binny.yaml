@@ -93,7 +93,7 @@ tools:
   # the task runner used to orchestrate all development and CI commands
   - name: task
     version:
-      want: v3.49.1
+      want: v3.50.0
     method: github-release
     with:
       repo: go-task/task
