@@ -177,7 +177,7 @@ func TestHandler_install(t *testing.T) {
 					}
 				}
 
-				models := handler.Handle(start)
+				models, _ := handler.Handle(start)
 
 				require.Len(t, models, 1)
 				model := models[0]
