@@ -11,7 +11,7 @@ vars:
   SNAPSHOT_BIN: "{{ .ROOT_DIR }}/{{ .SNAPSHOT_DIR }}/{{ OS }}-build_{{ OS }}_{{ ARCH }}/{{ .PROJECT }}"
   CHANGELOG: CHANGELOG.md
   NEXT_VERSION: VERSION
-  MAKEDIR_P: 'python -c "import sys; import os; os.makedirs(sys.argv[1], exist_ok=True)"'
+  MAKEDIR_P: 'python3 -c "import sys; import os; os.makedirs(sys.argv[1], exist_ok=True)"'
 
   GORELEASER_CMD: "{{ .TOOL_DIR }}/goreleaser release --clean --skip=publish --skip=sign --snapshot --config {{ .TMP_DIR }}/goreleaser.yaml"
   BUILD_CMD: "{{ .TOOL_DIR }}/goreleaser build --clean --single-target --snapshot --config {{ .TMP_DIR }}/goreleaser.yaml"
@@ -146,7 +146,7 @@ tasks:
     desc: Run all unit tests
     vars:
       TEST_PKGS:
-          sh: "python ./scripts/list_units.py anchore binny"
+          sh: "python3 ./scripts/list_units.py anchore binny"
 
       # unit test coverage threshold (in % coverage)
       COVERAGE_THRESHOLD: 35
@@ -154,7 +154,7 @@ tasks:
       - cmd: "{{ .MAKEDIR_P }} {{ .TMP_DIR }}"
         silent: true
       - "go test -coverprofile {{ .TMP_DIR }}/unit-coverage-details.txt {{ .TEST_PKGS }}"
-      - cmd: '{{if eq OS "windows"}}python {{end}}.github/scripts/coverage.py {{ .COVERAGE_THRESHOLD }} {{ .TMP_DIR }}/unit-coverage-details.txt'
+      - cmd: '{{if eq OS "windows"}}python3 {{end}}.github/scripts/coverage.py {{ .COVERAGE_THRESHOLD }} {{ .TMP_DIR }}/unit-coverage-details.txt'
         silent: true
 
   cli:
