@@ -69,7 +69,7 @@ tools:
   # used for building snapshot and release artifacts
   - name: goreleaser
     version:
-      want: v2.15.2
+      want: v2.15.3
     method: github-release
     with:
       repo: goreleaser/goreleaser
