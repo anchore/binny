@@ -37,7 +37,7 @@ tools:
   # used by goreleaser to generate SBOMs for release artifacts
   - name: syft
     version:
-      want: v1.42.4
+      want: v1.43.0
     method: github-release
     with:
       repo: anchore/syft
@@ -45,7 +45,7 @@ tools:
   # used for release automation and GitHub API interactions
   - name: gh
     version:
-      want: v2.89.0
+      want: v2.91.0
     method: github-release
     with:
       repo: cli/cli
@@ -69,7 +69,7 @@ tools:
   # used for building snapshot and release artifacts
   - name: goreleaser
     version:
-      want: v2.15.3
+      want: v2.15.4
     method: github-release
     with:
       repo: goreleaser/goreleaser
