@@ -3,7 +3,7 @@ module github.com/anchore/binny
 go 1.25.0
 
 require (
-	github.com/Masterminds/semver/v3 v3.4.0
+	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/Masterminds/sprig/v3 v3.3.0
 	github.com/OneOfOne/xxhash v1.2.8
 	github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d
@@ -11,7 +11,7 @@ require (
 	github.com/anchore/clio v0.1.1-0.20260421190722-794b9b055b72
 	github.com/anchore/fangs v0.1.1-0.20260421185343-df607d667563
 	github.com/anchore/go-logger v0.1.1-0.20260421185257-01c4e7fbebe1
-	github.com/chainguard-dev/yam v0.2.56
+	github.com/chainguard-dev/yam v0.2.58
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
