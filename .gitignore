@@ -9,6 +9,9 @@
 .claude
 CLAUDE.md
 /specs
+.env
+.tool-versions
+.mise.toml
 
 # release locations
 /snapshot
