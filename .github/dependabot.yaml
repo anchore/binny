@@ -14,7 +14,9 @@ version: 2
 updates:
 
   - package-ecosystem: gomod
-    directory: "/"
+    directories:
+      - "/"
+      - "/.make"
     cooldown:
       default-days: 7
     schedule:
@@ -40,7 +42,6 @@ updates:
   - package-ecosystem: "github-actions"
     directories:
       - "/"
-      - "/.github/actions/*"
     cooldown:
       default-days: 7
     schedule:
