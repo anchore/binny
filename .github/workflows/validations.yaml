@@ -22,7 +22,7 @@ jobs:
           persist-credentials: false
 
       - name: Bootstrap environment
-        uses: anchore/go-make/.github/actions/setup@d56109120dc6db734cf4c0964946a248cc646311 # v0.3.2
+        uses: anchore/go-make/.github/actions/setup@88c36505984649108439f13fb35dcaea4ce61d94 # v0.4.0
 
       - name: Run static analysis
         run: make static-analysis
@@ -49,7 +49,7 @@ jobs:
       contents: read
     steps:
       - name: Bootstrap environment
-        uses: anchore/go-make/.github/actions/setup@d56109120dc6db734cf4c0964946a248cc646311 # v0.3.2
+        uses: anchore/go-make/.github/actions/setup@88c36505984649108439f13fb35dcaea4ce61d94 # v0.4.0
 
       - name: Run unit tests
         run: make unit
@@ -62,7 +62,7 @@ jobs:
       contents: read
     steps:
       - name: Bootstrap environment
-        uses: anchore/go-make/.github/actions/setup@d56109120dc6db734cf4c0964946a248cc646311 # v0.3.2
+        uses: anchore/go-make/.github/actions/setup@88c36505984649108439f13fb35dcaea4ce61d94 # v0.4.0
         with:
           # why have another build cache key? We don't want unit/integration/etc test build caches to replace
           # the snapshot build cache, which includes builds for all OSs and architectures. As long as this key is
@@ -86,7 +86,7 @@ jobs:
           persist-credentials: false
 
       - name: Bootstrap environment
-        uses: anchore/go-make/.github/actions/setup@d56109120dc6db734cf4c0964946a248cc646311 # v0.3.2
+        uses: anchore/go-make/.github/actions/setup@88c36505984649108439f13fb35dcaea4ce61d94 # v0.4.0
 
       - name: Run CLI tests
         run: make cli

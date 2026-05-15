@@ -12,6 +12,7 @@ CLAUDE.md
 .env
 .tool-versions
 .mise.toml
+.conductor
 
 # release locations
 /snapshot
