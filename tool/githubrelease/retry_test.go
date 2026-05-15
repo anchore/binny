@@ -39,3 +39,24 @@ func TestNewRetryableGitHubClient_RetriesWithAuthHeader(t *testing.T) {
 		assert.Equal(t, expectedAuth, auth, "request %d missing auth header", i+1)
 	}
 }
+
+func TestNewRetryableGitHubClient_DoesNotRetry403(t *testing.T) {
+	// 403 from GitHub is either auth failure or a secondary rate limit; neither
+	// resolves by retrying. Failing fast avoids the ~30s of backoff we used to
+	// burn on doomed requests for high-volume repos like cosign and golangci-lint.
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	client := newRetryableGitHubClient(context.Background(), "test-token")
+
+	resp, err := client.Get(server.URL)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, 1, requests, "expected exactly 1 request (no retries on 403)")
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+}

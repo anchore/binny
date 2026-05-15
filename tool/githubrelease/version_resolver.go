@@ -280,10 +280,38 @@ func newRetryableGitHubClient(ctx context.Context, token string) *http.Client {
 	retryClient.HTTPClient.Transport = oauth2Client.Transport
 	retryClient.Logger = nil
 
+	// keep retries short-lived: the original 1->30s backoff over 5 attempts could waste
+	// 30+ seconds on a request that's never going to succeed (e.g. GitHub secondary rate
+	// limits return 403, which are not retried, but transport-level errors during such
+	// rate-limit windows still trigger retries with the default policy).
+	retryClient.RetryMax = 3
+	retryClient.RetryWaitMax = 4 * time.Second
+	retryClient.CheckRetry = githubRetryPolicy
+
 	return retryClient.StandardClient()
 }
 
-//nolint:funlen
+// githubRetryPolicy wraps the default policy but explicitly never retries 403.
+// GitHub returns 403 for both authentication failures and secondary rate limits;
+// neither resolves by retrying the same request in a tight loop. Failing fast
+// surfaces the actual error to the user instead of burning ~30 seconds of backoff.
+func githubRetryPolicy(ctx context.Context, resp *http.Response, err error) (bool, error) {
+	if resp != nil && resp.StatusCode == http.StatusForbidden {
+		return false, nil
+	}
+	return retryablehttp.DefaultRetryPolicy(ctx, resp, err)
+}
+
+// graphql node budget per request. Larger pages bunch up against GitHub's secondary
+// rate limit (point-cost / node-limit) for high-volume repos. Multiple smaller pages
+// stay safely under the per-query threshold.
+const releasesPerPage = 25
+
+// total ceiling on releases fetched. Matches the original (un-paginated) behavior of
+// `first:100`, but spread across cheaper pages. Plenty to find the latest version
+// satisfying a constraint or cooldown.
+const maxReleasesFetched = 100
+
 func fetchAllReleasesFromGithubV4API(ctx context.Context, user, repo string) ([]ghRelease, error) {
 	token := os.Getenv("GITHUB_TOKEN")
 	if token == "" {
@@ -291,106 +319,57 @@ func fetchAllReleasesFromGithubV4API(ctx context.Context, user, repo string) ([]
 	}
 
 	client := githubv4.NewClient(newRetryableGitHubClient(ctx, token))
+
+	// release assets are intentionally omitted from this query — they're not used for
+	// version resolution and pulling them inflates the GraphQL node count by ~100x per
+	// release, which trips GitHub's secondary rate limit (403) for high-volume repos.
+	// The installer fetches assets separately for the chosen release.
+	var query struct {
+		Repository struct {
+			Releases struct {
+				PageInfo struct {
+					EndCursor   githubv4.String
+					HasNextPage bool
+				}
+				Nodes []struct {
+					TagName     githubv4.String
+					IsLatest    githubv4.Boolean
+					IsDraft     githubv4.Boolean
+					PublishedAt githubv4.DateTime
+				}
+			} `graphql:"releases(first:$releasesPerPage, after:$releasesCursor)"` // newest first
+		} `graphql:"repository(owner:$repositoryOwner, name:$repositoryName)"`
+	}
+	variables := map[string]any{
+		"repositoryOwner": githubv4.String(user),
+		"repositoryName":  githubv4.String(repo),
+		"releasesPerPage": githubv4.Int(releasesPerPage),
+		"releasesCursor":  (*githubv4.String)(nil), // null = first page
+	}
+
 	var allReleases []ghRelease
-
-	// Query some details about a repository, an ghIssue in it, and its comments.
-	{
-		// TODO: act on hitting a rate limit
-		type rateLimit struct {
-			Cost      githubv4.Int
-			Limit     githubv4.Int
-			Remaining githubv4.Int
-			ResetAt   githubv4.DateTime
-		}
-
-		var query struct {
-			Repository struct {
-				DatabaseID githubv4.Int
-				URL        githubv4.URI
-				Releases   struct {
-					PageInfo struct {
-						EndCursor   githubv4.String
-						HasNextPage bool
-					}
-					Edges []struct {
-						Node struct {
-							TagName       githubv4.String
-							IsLatest      githubv4.Boolean
-							IsDraft       githubv4.Boolean
-							PublishedAt   githubv4.DateTime
-							ReleaseAssets struct {
-								PageInfo struct {
-									EndCursor   githubv4.String
-									HasNextPage bool
-								}
-								Nodes []struct {
-									Name        githubv4.String
-									ContentType githubv4.String
-									DownloadURL githubv4.URI
-								}
-							} `graphql:"releaseAssets(first:100, after:$assetsCursor)"`
-						}
-					}
-				} `graphql:"releases(first:100, after:$releasesCursor)"` // note: first 100 releases, where newest releases are first
-			} `graphql:"repository(owner:$repositoryOwner, name:$repositoryName)"`
-
-			RateLimit rateLimit
-		}
-		variables := map[string]any{
-			"repositoryOwner": githubv4.String(user),
-			"repositoryName":  githubv4.String(repo),
-			"releasesCursor":  (*githubv4.String)(nil), // Null after argument to get first page.
-			"assetsCursor":    (*githubv4.String)(nil), // Null after argument to get first page.
-		}
-
-		// TODO: go to the next page :) (cosign was taking a while here so this needs investigation)
-		// var limit rateLimit
-		// for {
-		err := client.Query(ctx, &query, variables)
-		if err != nil {
+	for {
+		if err := client.Query(ctx, &query, variables); err != nil {
 			return nil, err
 		}
-		//  limit = query.RateLimit
 
-		for iE := range query.Repository.Releases.Edges {
-			var assets []ghAsset
-
-			iEdge := query.Repository.Releases.Edges[iE]
-
-			// for {
-			for _, a := range iEdge.Node.ReleaseAssets.Nodes {
-				//  support charset spec, e.g. "text/plain; charset=utf-8""
-				contentType := strings.Split(string(a.ContentType), ";")[0]
-
-				assets = append(assets, ghAsset{
-					Name:        string(a.Name),
-					ContentType: contentType,
-					URL:         a.DownloadURL.String(),
-				})
-			}
-
-			// 	if !iEdge.Node.ReleaseAssets.PageInfo.HasNextPage {
-			// 		break
-			// 	}
-			// 	variables["assetsCursor"] = githubv4.NewString(iEdge.Node.ReleaseAssets.PageInfo.EndCursor)
-			// }
-
+		for _, node := range query.Repository.Releases.Nodes {
+			publishedAt := node.PublishedAt.Time
 			allReleases = append(allReleases, ghRelease{
-				Tag:      string(iEdge.Node.TagName),
-				IsLatest: boolRef(bool(iEdge.Node.IsLatest)),
-				IsDraft:  boolRef(bool(iEdge.Node.IsDraft)),
-				Date:     &iEdge.Node.PublishedAt.Time,
-				Assets:   assets,
+				Tag:      string(node.TagName),
+				IsLatest: boolRef(bool(node.IsLatest)),
+				IsDraft:  boolRef(bool(node.IsDraft)),
+				Date:     &publishedAt,
 			})
 		}
 
-		//	if !query.Repository.Releases.PageInfo.HasNextPage {
-		//		break
-		//	}
-		//	variables["releasesCursor"] = githubv4.NewString(query.Repository.Releases.PageInfo.EndCursor)
-		//}
-
-		// printJSON(allReleases)
+		if !query.Repository.Releases.PageInfo.HasNextPage {
+			break
+		}
+		if len(allReleases) >= maxReleasesFetched {
+			break
+		}
+		variables["releasesCursor"] = githubv4.NewString(query.Repository.Releases.PageInfo.EndCursor)
 	}
 
 	sort.Slice(allReleases, func(i, j int) bool {
