@@ -12,7 +12,6 @@
 version: 2
 
 updates:
-
   - package-ecosystem: gomod
     directories:
       - "/"
@@ -32,16 +31,17 @@ updates:
       - dependency-name: "github.com/knqyf263/go-deb-version"
     groups:
       go-minor-patch:
-        applies-to: version-updates  # security updates get individual PRs
+        applies-to: version-updates # security updates get individual PRs
         patterns:
           - "*"
-        update-types:  # major omitted, gets individual PRs
+        update-types: # major omitted, gets individual PRs
           - "minor"
           - "patch"
 
   - package-ecosystem: "github-actions"
     directories:
       - "/"
+      - ".github/actions/*"
     cooldown:
       default-days: 7
     schedule:
@@ -52,9 +52,9 @@ updates:
       - "dependencies"
     groups:
       actions-minor-patch:
-        applies-to: version-updates  # security updates get individual PRs
+        applies-to: version-updates # security updates get individual PRs
         patterns:
           - "*"
-        update-types:  # major omitted, gets individual PRs
+        update-types: # major omitted, gets individual PRs
           - "minor"
           - "patch"
