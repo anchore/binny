@@ -280,10 +280,10 @@ func newRetryableGitHubClient(ctx context.Context, token string) *http.Client {
 	retryClient.HTTPClient.Transport = oauth2Client.Transport
 	retryClient.Logger = nil
 
-	// keep retries short-lived: the original 1->30s backoff over 5 attempts could waste
-	// 30+ seconds on a request that's never going to succeed (e.g. GitHub secondary rate
-	// limits return 403, which are not retried, but transport-level errors during such
-	// rate-limit windows still trigger retries with the default policy).
+	// keep retries short-lived: the default 1->30s backoff over 5 attempts could waste
+	// 30+ seconds on a request that's never going to succeed (e.g. transport-level errors
+	// during a GitHub secondary rate-limit window). Capping at 3 retries with a 4s ceiling
+	// bounds the worst case to roughly 8s before surfacing the failure to the user.
 	retryClient.RetryMax = 3
 	retryClient.RetryWaitMax = 4 * time.Second
 	retryClient.CheckRetry = githubRetryPolicy
@@ -291,10 +291,11 @@ func newRetryableGitHubClient(ctx context.Context, token string) *http.Client {
 	return retryClient.StandardClient()
 }
 
-// githubRetryPolicy wraps the default policy but explicitly never retries 403.
-// GitHub returns 403 for both authentication failures and secondary rate limits;
-// neither resolves by retrying the same request in a tight loop. Failing fast
-// surfaces the actual error to the user instead of burning ~30 seconds of backoff.
+// githubRetryPolicy wraps the default policy and pins "never retry 403" explicitly.
+// GitHub returns 403 for both auth failures and secondary rate limits; neither resolves
+// by retrying. The current default policy already declines 403 (it only retries 429 and
+// 5xx), so this is forward-compat insurance: an upstream change can't reintroduce the
+// wasted backoff window.
 func githubRetryPolicy(ctx context.Context, resp *http.Response, err error) (bool, error) {
 	if resp != nil && resp.StatusCode == http.StatusForbidden {
 		return false, nil
@@ -307,9 +308,13 @@ func githubRetryPolicy(ctx context.Context, resp *http.Response, err error) (boo
 // stay safely under the per-query threshold.
 const releasesPerPage = 25
 
-// total ceiling on releases fetched. Matches the original (un-paginated) behavior of
+// soft ceiling on releases fetched. Matches the original (un-paginated) behavior of
 // `first:100`, but spread across cheaper pages. Plenty to find the latest version
-// satisfying a constraint or cooldown.
+// satisfying a constraint or cooldown for any reasonable repo. Note: this cap is
+// approximate — the loop checks after appending a full page, so the realized cap is
+// up to maxReleasesFetched + releasesPerPage - 1. Also note: a constraint that only
+// matches releases beyond this cap will silently fail to find a match (caller will
+// see "no latest version found"). Same trade-off as the original `first:100`.
 const maxReleasesFetched = 100
 
 func fetchAllReleasesFromGithubV4API(ctx context.Context, user, repo string) ([]ghRelease, error) {
