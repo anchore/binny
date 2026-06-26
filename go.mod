@@ -11,7 +11,7 @@ require (
 	github.com/anchore/clio v0.1.1
 	github.com/anchore/fangs v0.1.1
 	github.com/anchore/go-logger v0.1.1
-	github.com/chainguard-dev/yam v0.2.63
+	github.com/chainguard-dev/yam v0.2.64
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
