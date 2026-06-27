@@ -7,10 +7,10 @@ require (
 	github.com/Masterminds/sprig/v3 v3.3.0
 	github.com/OneOfOne/xxhash v1.2.8
 	github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d
-	github.com/anchore/bubbly v0.2.1
-	github.com/anchore/clio v0.1.1
-	github.com/anchore/fangs v0.1.1
-	github.com/anchore/go-logger v0.1.1
+	github.com/anchore/bubbly v0.2.2-0.20260626055403-87427b4c13dd
+	github.com/anchore/clio v0.1.2-0.20260626204415-b4631dcf03e0
+	github.com/anchore/fangs v0.1.2-0.20260626223405-da95d6e54e5e
+	github.com/anchore/go-logger v0.1.2-0.20260626155404-c949a9cea0ec
 	github.com/chainguard-dev/yam v0.2.64
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
