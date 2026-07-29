@@ -1,6 +1,7 @@
 package goinstall
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"runtime"
@@ -8,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/anchore/binny/internal"
 )
 
 func Test_templateFlags(t *testing.T) {
@@ -55,11 +58,11 @@ func Test_templateFlags(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := templateFlags(tt.args.ldFlags, tt.args.version)
-			if !tt.wantErr(t, err, fmt.Sprintf("templateFlags(%v, %v)", tt.args.ldFlags, tt.args.version)) {
+			got, err := internal.TemplateFlags(tt.args.ldFlags, tt.args.version)
+			if !tt.wantErr(t, err, fmt.Sprintf("TemplateFlags(%v, %v)", tt.args.ldFlags, tt.args.version)) {
 				return
 			}
-			assert.Equalf(t, tt.want, got, "templateFlags(%v, %v)", tt.args.ldFlags, tt.args.version)
+			assert.Equalf(t, tt.want, got, "TemplateFlags(%v, %v)", tt.args.ldFlags, tt.args.version)
 		})
 	}
 }
@@ -67,7 +70,7 @@ func Test_templateFlags(t *testing.T) {
 func TestInstaller_InstallTo(t *testing.T) {
 	type fields struct {
 		config          InstallerParameters
-		goInstallRunner func(spec, ldflags, destDir string) error
+		goInstallRunner func(spec, ldflags string, args, env []string, destDir string, isLocal bool, binName string) error
 	}
 	type args struct {
 		version string
@@ -89,11 +92,23 @@ func TestInstaller_InstallTo(t *testing.T) {
 					LDFlags: []string{
 						"-X github.com/anchore/binny/internal/version.Version={{.Version}}",
 					},
+					Args: []string{
+						"-tags",
+						"containers_image_openpgp",
+					},
+					Env: []string{
+						"FOO=BAR",
+						"BAZ=0",
+					},
 				},
-				goInstallRunner: func(spec, ldflags, destDir string) error {
+				goInstallRunner: func(spec, ldflags string, userArgs, userEnv []string, destDir string, isLocal bool, binName string) error {
 					assert.Equal(t, "github.com/anchore/binny/cmd/binny@1.2.3", spec)
 					assert.Equal(t, "-X github.com/anchore/binny/internal/version.Version=1.2.3", ldflags)
 					assert.Equal(t, "/tmp/to/place", destDir)
+					assert.Equal(t, []string{"-tags", "containers_image_openpgp"}, userArgs)
+					assert.Equal(t, []string{"FOO=BAR", "BAZ=0"}, userEnv)
+					assert.Equal(t, false, isLocal)
+					assert.Equal(t, "binny", binName)
 					return nil
 				},
 			},
@@ -104,13 +119,138 @@ func TestInstaller_InstallTo(t *testing.T) {
 			want:    "/tmp/to/place/binny",
 			wantErr: assert.NoError,
 		},
+		{
+			name: "local module with relative path",
+			fields: fields{
+				config: InstallerParameters{
+					Module:     "./cmd/mytool",
+					Entrypoint: "",
+				},
+				goInstallRunner: func(spec, ldflags string, userArgs, userEnv []string, destDir string, isLocal bool, binName string) error {
+					assert.Equal(t, "./cmd/mytool", spec)
+					assert.Equal(t, "", ldflags)
+					assert.Equal(t, "/tmp/to/place", destDir)
+					assert.Equal(t, []string{}, userArgs)
+					assert.Equal(t, []string{}, userEnv)
+					assert.Equal(t, true, isLocal)
+					assert.Equal(t, "mytool", binName)
+					return nil
+				},
+			},
+			args: args{
+				version: "1.2.3",
+				destDir: "/tmp/to/place",
+			},
+			want:    "/tmp/to/place/mytool",
+			wantErr: assert.NoError,
+		},
+		{
+			name: "local module with absolute path",
+			fields: fields{
+				config: InstallerParameters{
+					Module:     "/home/user/project",
+					Entrypoint: "cmd/toolname",
+				},
+				goInstallRunner: func(spec, ldflags string, userArgs, userEnv []string, destDir string, isLocal bool, binName string) error {
+					assert.Equal(t, "/home/user/project/cmd/toolname", spec)
+					assert.Equal(t, "", ldflags)
+					assert.Equal(t, "/tmp/to/place", destDir)
+					assert.Equal(t, []string{}, userArgs)
+					assert.Equal(t, []string{}, userEnv)
+					assert.Equal(t, true, isLocal)
+					assert.Equal(t, "toolname", binName)
+					return nil
+				},
+			},
+			args: args{
+				version: "1.2.3",
+				destDir: "/tmp/to/place",
+			},
+			want:    "/tmp/to/place/toolname",
+			wantErr: assert.NoError,
+		},
+		{
+			name: "remote module without entrypoint",
+			fields: fields{
+				config: InstallerParameters{
+					Module:     "github.com/some/repo",
+					Entrypoint: "",
+				},
+				goInstallRunner: func(spec, ldflags string, userArgs, userEnv []string, destDir string, isLocal bool, binName string) error {
+					assert.Equal(t, "github.com/some/repo@1.2.3", spec)
+					assert.Equal(t, "", ldflags)
+					assert.Equal(t, "/tmp/to/place", destDir)
+					assert.Equal(t, []string{}, userArgs)
+					assert.Equal(t, []string{}, userEnv)
+					assert.Equal(t, false, isLocal)
+					assert.Equal(t, "repo", binName)
+					return nil
+				},
+			},
+			args: args{
+				version: "1.2.3",
+				destDir: "/tmp/to/place",
+			},
+			want:    "/tmp/to/place/repo",
+			wantErr: assert.NoError,
+		},
+		{
+			name: "local module without entrypoint",
+			fields: fields{
+				config: InstallerParameters{
+					Module:     "./myapp",
+					Entrypoint: "",
+				},
+				goInstallRunner: func(spec, ldflags string, userArgs, userEnv []string, destDir string, isLocal bool, binName string) error {
+					assert.Equal(t, "./myapp", spec)
+					assert.Equal(t, "", ldflags)
+					assert.Equal(t, "/tmp/to/place", destDir)
+					assert.Equal(t, []string{}, userArgs)
+					assert.Equal(t, []string{}, userEnv)
+					assert.Equal(t, true, isLocal)
+					assert.Equal(t, "myapp", binName)
+					return nil
+				},
+			},
+			args: args{
+				version: "1.2.3",
+				destDir: "/tmp/to/place",
+			},
+			want:    "/tmp/to/place/myapp",
+			wantErr: assert.NoError,
+		},
+		{
+			name: "module with complex/nested entrypoint path",
+			fields: fields{
+				config: InstallerParameters{
+					Module:     "github.com/example/project",
+					Entrypoint: "cmd/tools/deployment/deployer",
+				},
+				goInstallRunner: func(spec, ldflags string, userArgs, userEnv []string, destDir string, isLocal bool, binName string) error {
+					assert.Equal(t, "github.com/example/project/cmd/tools/deployment/deployer@1.2.3", spec)
+					assert.Equal(t, "", ldflags)
+					assert.Equal(t, "/tmp/to/place", destDir)
+					assert.Equal(t, []string{}, userArgs)
+					assert.Equal(t, []string{}, userEnv)
+					assert.Equal(t, false, isLocal)
+					assert.Equal(t, "deployer", binName)
+					return nil
+				},
+			},
+			args: args{
+				version: "1.2.3",
+				destDir: "/tmp/to/place",
+			},
+			want:    "/tmp/to/place/deployer",
+			wantErr: assert.NoError,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			i := NewInstaller(tt.fields.config)
 			i.goInstallRunner = tt.fields.goInstallRunner
 
-			got, err := i.InstallTo(tt.args.version, tt.args.destDir)
+			got, err := i.InstallTo(context.Background(), tt.args.version, tt.args.destDir)
 			got = strings.ReplaceAll(got, string(os.PathSeparator), "/")
 			if !tt.wantErr(t, err, fmt.Sprintf("InstallTo(%v, %v)", tt.args.version, tt.args.destDir)) {
 				return

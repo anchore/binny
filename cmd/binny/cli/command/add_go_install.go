@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/anchore/binny/cmd/binny/cli/option"
+	"github.com/anchore/binny/internal"
 	"github.com/anchore/binny/internal/log"
 	"github.com/anchore/binny/tool/goinstall"
 	"github.com/anchore/clio"
@@ -35,13 +36,13 @@ func AddGoInstall(app clio.Application) *cobra.Command {
 		Use:   "go-install NAME@VERSION --module GOMODULE [--entrypoint PATH] [--ldflags FLAGS]",
 		Short: "Add a new tool configuration from 'go install ...' invocations",
 		Args:  cobra.ExactArgs(1),
-		PreRunE: func(cmd *cobra.Command, args []string) error {
+		PreRunE: func(_ *cobra.Command, _ []string) error {
 			if cfg.Install.GoInstall.Module == "" {
 				return fmt.Errorf("go-install configuration requires '--module' option")
 			}
 			return nil
 		},
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
 			return runAddGoInstallConfig(*cfg, args[0])
 		},
 	}, cfg)
@@ -75,10 +76,16 @@ func runAddGoInstallConfig(cmdCfg AddGoInstallConfig, nameVersion string) error 
 		return fmt.Errorf("invalid ldflags: %w", err)
 	}
 
+	if err := internal.ValidateEnvSlice(iCfg.Env); err != nil {
+		return err
+	}
+
 	coreInstallParams := goinstall.InstallerParameters{
 		Module:     iCfg.Module,
 		Entrypoint: iCfg.Entrypoint,
 		LDFlags:    ldFlagsList,
+		Args:       iCfg.Args,
+		Env:        iCfg.Env,
 	}
 
 	installParamMap, err := toMap(coreInstallParams)

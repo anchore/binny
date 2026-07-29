@@ -14,6 +14,7 @@ builds:
     goarch:
       - amd64
       - arm64
+      - riscv64
     # set the modified timestamp on the output binary to the git timestamp to ensure a reproducible build
     mod_timestamp: &build-timestamp '{{ .CommitTimestamp }}'
     ldflags: &build-ldflags |

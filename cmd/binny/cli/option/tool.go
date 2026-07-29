@@ -2,6 +2,7 @@ package option
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 
 	"github.com/mitchellh/mapstructure"
@@ -9,6 +10,7 @@ import (
 	"github.com/anchore/binny"
 	"github.com/anchore/binny/tool"
 	"github.com/anchore/binny/tool/githubrelease"
+	"github.com/anchore/binny/tool/gobuild"
 	"github.com/anchore/binny/tool/goinstall"
 	"github.com/anchore/binny/tool/goproxy"
 	"github.com/anchore/binny/tool/hostedshell"
@@ -23,15 +25,50 @@ type Tool struct {
 }
 
 type ToolVersionConfig struct {
-	Want          string `json:"want" yaml:"want" mapstructure:"want"`
-	Constraint    string `json:"constraint" yaml:"constraint,omitempty" mapstructure:"constraint"`
-	ResolveMethod string `json:"method" yaml:"method,omitempty" mapstructure:"method"`
+	Want       string `json:"want" yaml:"want" mapstructure:"want"`
+	Constraint string `json:"constraint" yaml:"constraint,omitempty" mapstructure:"constraint"`
+	// CooldownRaw is the raw config value for the per-tool cooldown duration.
+	// Use Cooldown field after PostLoad has been called.
+	CooldownRaw   any          `json:"cooldown" yaml:"cooldown,omitempty" mapstructure:"cooldown"`
+	Cooldown      JSONDuration `json:"-" yaml:"-" mapstructure:"-"`
+	ResolveMethod string       `json:"method" yaml:"method,omitempty" mapstructure:"method"`
 
 	Parameters map[string]any `json:"with" yaml:"with,omitempty" mapstructure:"with"`
 }
 
-func (t Tool) ToTool() (binny.Tool, *binny.VersionIntent, error) {
-	cfg, intent, err := t.ToConfig()
+// PostLoad is called by fangs after config loading to parse raw config values.
+func (t *ToolVersionConfig) PostLoad() error {
+	if err := t.Cooldown.ParseFrom(t.CooldownRaw); err != nil {
+		return fmt.Errorf("invalid cooldown value: %w", err)
+	}
+	return nil
+}
+
+// ToolOptions holds configuration for tool construction behavior.
+type ToolOptions struct {
+	globalCooldown JSONDuration
+	ignoreCooldown bool
+}
+
+// DefaultToolOptions returns a ToolOptions with default values.
+func DefaultToolOptions() ToolOptions {
+	return ToolOptions{}
+}
+
+// WithGlobalCooldown sets the global cooldown that applies to all tools (unless overridden per-tool).
+func (o ToolOptions) WithGlobalCooldown(d JSONDuration) ToolOptions {
+	o.globalCooldown = d
+	return o
+}
+
+// WithIgnoreCooldown sets whether all cooldowns should be bypassed.
+func (o ToolOptions) WithIgnoreCooldown(ignore bool) ToolOptions {
+	o.ignoreCooldown = ignore
+	return o
+}
+
+func (t Tool) ToTool(opts ToolOptions) (binny.Tool, *binny.VersionIntent, error) {
+	cfg, intent, err := t.ToConfig(opts)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to read tool %q config: %w", t.Name, err)
 	}
@@ -43,8 +80,10 @@ func (t Tool) ToTool() (binny.Tool, *binny.VersionIntent, error) {
 	return toolObj, intent, nil
 }
 
-func (t Tool) ToConfig() (*tool.Config, *binny.VersionIntent, error) {
-	installParams, err := deriveInstallParameters(t.InstallMethod, t.Parameters)
+func (t Tool) ToConfig(opts ToolOptions) (*tool.Config, *binny.VersionIntent, error) {
+	o := opts
+
+	installParams, err := deriveInstallParameters(t.Name, t.InstallMethod, t.Parameters, runtime.GOOS)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to derive install parameters for tool %q: %w", t.Name, err)
 	}
@@ -69,15 +108,23 @@ func (t Tool) ToConfig() (*tool.Config, *binny.VersionIntent, error) {
 	intent := &binny.VersionIntent{
 		Want:       t.Version.Want,
 		Constraint: t.Version.Constraint,
+		Cooldown:   resolveEffectiveCooldown(o.ignoreCooldown, o.globalCooldown, t.Version.Cooldown),
 	}
 
 	return cfg, intent, nil
 }
 
-func deriveInstallParameters(installMethod string, installParams map[string]any) (any, error) {
+func deriveInstallParameters(name string, installMethod string, installParams map[string]any, goos string) (any, error) {
 	switch {
 	case goinstall.IsInstallMethod(installMethod):
 		var params goinstall.InstallerParameters
+		if err := mapstructure.Decode(installParams, &params); err != nil {
+			return nil, err
+		}
+		return params, nil
+
+	case gobuild.IsInstallMethod(installMethod):
+		var params gobuild.InstallerParameters
 		if err := mapstructure.Decode(installParams, &params); err != nil {
 			return nil, err
 		}
@@ -94,6 +141,13 @@ func deriveInstallParameters(installMethod string, installParams map[string]any)
 		var params githubrelease.InstallerParameters
 		if err := mapstructure.Decode(installParams, &params); err != nil {
 			return nil, err
+		}
+		if params.Binary == "" {
+			// if not provided, assume that the binary name is the same as the configured tool name
+			params.Binary = name
+			if goos == "windows" {
+				params.Binary += ".exe"
+			}
 		}
 		return params, nil
 	case installMethod == "":

@@ -1,73 +1,71 @@
 name: "Release"
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 on:
   workflow_dispatch:
     inputs:
       version:
         description: tag the latest commit on main with the given version (prefixed with v)
         required: true
-
-permissions:
-  contents: read
-
-env:
-  FORCE_COLOR: true
+      skip-checks:
+        description: skip the check-gate (release even if checks haven't passed on main)
+        type: boolean
+        default: false
+        required: false
 
 jobs:
-  quality-gate:
-    environment: release
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v3
+  version-available:
+    permissions:
+      contents: read # required for the reusable workflow to check out the repo and verify the version
+    uses: anchore/workflows/.github/workflows/check-version-available.yaml@b0c30a80409130d329aaa356fd64a34d8c0b3375 # v0.7.2
+    with:
+      version: ${{ github.event.inputs.version }}
 
-      - name: Check if tag already exists
-        # note: this will fail if the tag already exists
-        run: |
-          [[ "${{ github.event.inputs.version }}" == v* ]] || (echo "version '${{ github.event.inputs.version }}' does not have a 'v' prefix" && exit 1)
-          git tag ${{ github.event.inputs.version }}
-
-      - name: Check validations results
-        uses: fountainhead/action-wait-for-check@v1.1.0
-        id: validations
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          # This check name is defined as the github action job name (in .github/workflows/validations.yaml)
-          checkName: "Validations"
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-
-      - name: Quality gate
-        if: steps.validations.outputs.conclusion != 'success'
-        run: |
-          echo "Validations Status: ${{ steps.validations.conclusion }}"
-          false
+  check-gate:
+    if: ${{ !inputs.skip-checks }}
+    permissions:
+      contents: read # required for the reusable workflow to check out the repo
+      checks: read # required for getting the status of specific check names
+    uses: anchore/workflows/.github/workflows/check-gate.yaml@b0c30a80409130d329aaa356fd64a34d8c0b3375 # v0.7.2
+    with:
+      checks: '["Static analysis", "Unit tests", "Build snapshot artifacts", "CLI tests"]'
 
   release:
-    needs: [quality-gate]
-    runs-on: ubuntu-22.04
+    needs: [check-gate, version-available]
+    # run even when check-gate is skipped, but never when version-available
+    # failed/was skipped, nor when check-gate failed or was cancelled. note:
+    # always() disables the implicit success() gate on ALL needs, so the
+    # version-available requirement must be re-asserted explicitly here.
+    if: >-
+      ${{ always()
+          && needs.version-available.result == 'success'
+          && !contains(fromJSON('["failure", "cancelled"]'), needs.check-gate.result) }}
+    environment: release
+    runs-on: ubuntu-24.04
     permissions:
-      contents: write
-      packages: write
+      contents: write # required for creating the GitHub release and pushing the version tag
+      packages: write # required for publishing release artifacts to GitHub packages
+      id-token: write # required for keyless signing (cosign/sigstore OIDC)
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 #v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: true
 
       - name: Bootstrap environment
-        uses: ./.github/actions/bootstrap
-        env:
-          FORCE_COLOR: true
-
-      - name: Tag release
-        run: |
-          git config user.name "anchoreci"
-          git config user.email "anchoreci@users.noreply.github.com"
-          git tag -a ${{ github.event.inputs.version }} -m "Release ${{ github.event.inputs.version }}"
-          git push origin --tags
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: anchore/go-make/.github/actions/setup@430e2175bb166bfd138ef75466adbcc8ddab875f # v0.8.0
 
       - name: Build & publish release artifacts
         run: make ci-release
         env:
+          # for pushing tags (does not inherit workflow permissions)
+          TAG_TOKEN: ${{ secrets.TAG_TOKEN }}
+          RELEASE_VERSION: ${{ github.event.inputs.version }}
           # for mac signing and notarization...
           QUILL_SIGN_P12: ${{ secrets.ANCHORE_APPLE_DEVELOPER_ID_CERT_CHAIN }}
           QUILL_SIGN_PASSWORD: ${{ secrets.ANCHORE_APPLE_DEVELOPER_ID_CERT_PASS }}
@@ -76,3 +74,20 @@ jobs:
           QUILL_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
           # for creating the release (requires write access to packages and content)
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-install-script:
+    needs: [release]
+    if: ${{ needs.release.result == 'success' }}
+    permissions:
+      contents: read # required for the reusable workflow to check out the repo and publish the install script
+    uses: anchore/workflows/.github/workflows/release-install-script.yaml@b0c30a80409130d329aaa356fd64a34d8c0b3375 # v0.7.2
+    with:
+      tag: ${{ github.event.inputs.version }}
+    secrets:
+      # needed for r2...
+      R2_INSTALL_ACCESS_KEY_ID: ${{ secrets.OSS_R2_INSTALL_ACCESS_KEY_ID }}
+      R2_INSTALL_SECRET_ACCESS_KEY: ${{ secrets.OSS_R2_INSTALL_SECRET_ACCESS_KEY }}
+      R2_ENDPOINT: ${{ secrets.TOOLBOX_CLOUDFLARE_R2_ENDPOINT }}
+      # needed for s3...
+      S3_INSTALL_AWS_ACCESS_KEY_ID: ${{ secrets.TOOLBOX_AWS_ACCESS_KEY_ID }}
+      S3_INSTALL_AWS_SECRET_ACCESS_KEY: ${{ secrets.TOOLBOX_AWS_SECRET_ACCESS_KEY }}

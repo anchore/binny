@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -22,6 +23,13 @@ type CheckConfig struct {
 	option.Core  `json:"" yaml:",inline" mapstructure:",squash"`
 }
 
+// toolOptions returns ToolOptions without an ignore-cooldown override. The check command intentionally
+// applies cooldown so that verification reflects what install/update would produce.
+func (c CheckConfig) toolOptions() option.ToolOptions {
+	return option.DefaultToolOptions().
+		WithGlobalCooldown(c.Cooldown)
+}
+
 func Check(app clio.Application) *cobra.Command {
 	cfg := &CheckConfig{
 		Core: option.DefaultCore(),
@@ -33,17 +41,17 @@ func Check(app clio.Application) *cobra.Command {
 		Use:   "check",
 		Short: "Verify tool are installed at the configured version",
 		Args:  cobra.ArbitraryArgs,
-		PreRunE: func(cmd *cobra.Command, args []string) error {
+		PreRunE: func(_ *cobra.Command, args []string) error {
 			names = args
 			return nil
 		},
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCheck(*cfg, names)
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runCheck(cmd.Context(), *cfg, names)
 		},
 	}, cfg)
 }
 
-func runCheck(cmdCfg CheckConfig, names []string) (errs error) {
+func runCheck(ctx context.Context, cmdCfg CheckConfig, names []string) (errs error) {
 	names, toolOpts := selectNamesAndConfigs(cmdCfg.Core, names)
 
 	if len(toolOpts) == 0 {
@@ -53,7 +61,7 @@ func runCheck(cmdCfg CheckConfig, names []string) (errs error) {
 	}
 
 	// get the current store state
-	store, err := binny.NewStore(cmdCfg.Store.Root)
+	store, err := binny.NewStore(cmdCfg.Root)
 	if err != nil {
 		return err
 	}
@@ -82,7 +90,7 @@ func runCheck(cmdCfg CheckConfig, names []string) (errs error) {
 		monitor.Increment()
 		monitor.AtomicStage.Set(opt.Name)
 
-		resolvedVersion, err := checkTool(store, opt, cmdCfg.VerifySHA256Digest)
+		resolvedVersion, err := checkTool(ctx, store, opt, cmdCfg.toolOptions(), cmdCfg.VerifySHA256Digest)
 		if err != nil {
 			failedTools = append(failedTools, opt.Name)
 			errs = multierror.Append(errs, fmt.Errorf("failed to check tool %q: %w", opt.Name, err))
@@ -104,13 +112,13 @@ func runCheck(cmdCfg CheckConfig, names []string) (errs error) {
 	return nil
 }
 
-func checkTool(store *binny.Store, opt option.Tool, verifySha256Digest bool) (string, error) {
-	t, intent, err := opt.ToTool()
+func checkTool(ctx context.Context, store *binny.Store, opt option.Tool, opts option.ToolOptions, verifySha256Digest bool) (string, error) {
+	t, intent, err := opt.ToTool(opts)
 	if err != nil {
 		return "", err
 	}
 
-	resolvedVersion, err := tool.ResolveVersion(t, *intent)
+	resolvedVersion, err := tool.ResolveVersion(ctx, t, *intent)
 	if err != nil {
 		return "", err
 	}

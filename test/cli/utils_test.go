@@ -7,7 +7,6 @@ import (
 	"math"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -128,7 +127,7 @@ func getBinaryLocationByOS(t testing.TB, goOS string) string {
 	// note: there is a subtle - vs _ difference between these versions
 	switch goOS {
 	case "darwin", "linux":
-		return path.Join(repoRoot(t), fmt.Sprintf("snapshot/%s-build_%s_%s/binny", goOS, goOS, archPath))
+		return filepath.Join(repoRoot(t), "snapshot", fmt.Sprintf("%s-build_%s_%s", goOS, goOS, archPath), "binny")
 	default:
 		t.Fatalf("unsupported OS: %s", runtime.GOOS)
 	}

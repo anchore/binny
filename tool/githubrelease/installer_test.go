@@ -3,12 +3,14 @@ package githubrelease
 import (
 	"archive/tar"
 	"compress/gzip"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -17,9 +19,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/anchore/go-logger"
-	"github.com/anchore/go-logger/adapter/discard"
 )
 
 func TestInstaller_InstallTo(t *testing.T) {
@@ -28,7 +27,7 @@ func TestInstaller_InstallTo(t *testing.T) {
 	binaryAssetName := fmt.Sprintf("syft_%s_%s_%s", testTag, runtime.GOOS, runtime.GOARCH)
 	expectedChecksum := "688cf0875c5cc1c7d3a26249e48e8fa9f8cb61b79bdde593bfda6e4c367a692e"
 
-	setup := func(checksum string) func(lgr logger.Logger, user, repo, tag string) (*ghRelease, error) {
+	setup := func(checksum string) func(ctx context.Context, user, repo, tag string) (*ghRelease, error) {
 		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch {
 			case strings.Contains(r.URL.Path, "syft_"):
@@ -51,7 +50,7 @@ func TestInstaller_InstallTo(t *testing.T) {
 		}))
 		t.Cleanup(s.Close)
 
-		return func(_ logger.Logger, user, repo, tag string) (*ghRelease, error) {
+		return func(_ context.Context, user, repo, tag string) (*ghRelease, error) {
 			assets := []ghAsset{
 				{
 					Name:        binaryAssetName,
@@ -81,7 +80,7 @@ func TestInstaller_InstallTo(t *testing.T) {
 
 	tests := []struct {
 		name           string
-		releaseFetcher func(lgr logger.Logger, user, repo, tag string) (*ghRelease, error)
+		releaseFetcher func(ctx context.Context, user, repo, tag string) (*ghRelease, error)
 		wantErr        require.ErrorAssertionFunc
 	}{
 		{
@@ -115,7 +114,7 @@ func TestInstaller_InstallTo(t *testing.T) {
 
 			expectedDownloadPath := filepath.Join(destDir, binaryAssetName)
 
-			got, err := i.InstallTo(version, destDir)
+			got, err := i.InstallTo(context.Background(), version, destDir)
 			tt.wantErr(t, err)
 
 			if err != nil {
@@ -178,20 +177,27 @@ func Test_getChecksumForAsset(t *testing.T) {
 }
 
 func Test_extractArchive(t *testing.T) {
-	tarPath, expectedBinName := createTestArchive(t)
+	expectedBinName := "binary_file.bin"
 
 	tests := []struct {
-		name        string
-		archivePath string
-		destDir     string
-		wantName    string
-		wantErr     require.ErrorAssertionFunc
+		name     string
+		binary   string
+		wantName string
+		wantErr  require.ErrorAssertionFunc
 	}{
 		{
-			name:        "happy path",
-			archivePath: tarPath,
-			destDir:     t.TempDir(),
-			wantName:    expectedBinName,
+			name:     "happy path (no binary specified)",
+			wantName: expectedBinName,
+		},
+		{
+			name:     "happy path (binary specified)",
+			binary:   expectedBinName,
+			wantName: expectedBinName,
+		},
+		{
+			name:    "no matching asset found",
+			binary:  "not-thing",
+			wantErr: require.Error,
 		},
 	}
 	for _, tt := range tests {
@@ -200,18 +206,25 @@ func Test_extractArchive(t *testing.T) {
 				tt.wantErr = require.NoError
 			}
 
-			expectedBinPath := filepath.Join(tt.destDir, tt.wantName)
+			dir := t.TempDir()
 
-			got, err := extractArchive(tt.archivePath, tt.destDir)
+			tarPath := createTestArchive(t, dir, expectedBinName)
+
+			expectedBinPath := filepath.Join(dir, tt.wantName)
+
+			got, err := extractArchive(tarPath, dir, tt.binary)
 			tt.wantErr(t, err)
+			if err != nil {
+				return
+			}
 
 			assert.Equal(t, expectedBinPath, got)
 		})
 	}
 }
 
-func createTestArchive(t *testing.T) (string, string) {
-	archivePath := filepath.Join(t.TempDir(), "test_fixture.tar.gz")
+func createTestArchive(t *testing.T, dir, binaryFilename string) string {
+	archivePath := filepath.Join(dir, "test_fixture.tar.gz")
 	archiveFile, err := os.Create(archivePath)
 	require.NoError(t, err)
 
@@ -245,7 +258,6 @@ func createTestArchive(t *testing.T) (string, string) {
 	}
 
 	// create a binary file
-	binaryFilename := "binary_file.bin"
 	binaryContent := []byte{0x03, 0x4B, 0x04, 0x0A, 0x50, 0x4B, 0x03, 0x50, 0x04, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00}
 	binaryHeader := &tar.Header{
 		Name: binaryFilename,
@@ -256,30 +268,39 @@ func createTestArchive(t *testing.T) (string, string) {
 	_, err = tarWriter.Write(binaryContent)
 	require.NoError(t, err)
 
-	return archivePath, binaryFilename
+	return archivePath
 }
 
 func Test_findBinaryAssetInDir(t *testing.T) {
 	tests := []struct {
 		name    string
 		destDir string
+		binary  string
 		want    string
 		wantErr require.ErrorAssertionFunc
 	}{
 		{
 			name:    "flat assets",
+			binary:  "syft",
 			destDir: "testdata/archive-contents/flat",
 			want:    "testdata/archive-contents/flat/syft",
 		},
 		{
 			name:    "nested assets",
+			binary:  "syft",
 			destDir: "testdata/archive-contents/nested",
 			want:    "testdata/archive-contents/nested/syft/syft",
 		},
 		{
-			name:    "multiple binaries",
+			name:    "multiple binaries (no binary specified)",
 			destDir: "testdata/archive-contents/multiple-bins",
 			wantErr: require.Error,
+		},
+		{
+			name:    "multiple binaries (binary matches)",
+			binary:  "syft-2",
+			destDir: "testdata/archive-contents/multiple-bins",
+			want:    "testdata/archive-contents/multiple-bins/syft-2",
 		},
 	}
 	for _, tt := range tests {
@@ -287,7 +308,7 @@ func Test_findBinaryAssetInDir(t *testing.T) {
 			if tt.wantErr == nil {
 				tt.wantErr = require.NoError
 			}
-			got, err := findBinaryAssetInDir(tt.destDir)
+			got, err := findBinaryAssetInDir(tt.binary, tt.destDir)
 			tt.wantErr(t, err)
 
 			want := strings.ReplaceAll(tt.want, "/", string(os.PathSeparator))
@@ -349,7 +370,7 @@ func Test_selectChecksumAsset(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, selectChecksumAsset(discard.New(), tt.assets))
+			assert.Equal(t, tt.want, selectChecksumAsset(context.Background(), tt.assets))
 		})
 	}
 }
@@ -651,7 +672,7 @@ func Test_selectBinaryAsset(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equalf(t, tt.want, selectBinaryAsset(discard.New(), tt.args.assets, tt.args.goOS, tt.args.goArch), "selectBinaryAsset(%v, %v, %v)", tt.args.assets, tt.args.goOS, tt.args.goArch)
+			assert.Equalf(t, tt.want, selectBinaryAsset(context.Background(), tt.args.assets, tt.args.goOS, tt.args.goArch, nil), "selectBinaryAsset(%v, %v, %v)", tt.args.assets, tt.args.goOS, tt.args.goArch)
 		})
 	}
 }
@@ -751,11 +772,11 @@ func Test_handleChecksumsReader(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			d := cmp.Diff(tt.want, handleChecksumsReader(discard.New(), tt.user, tt.repo, tt.tag, tt.url, io.NopCloser(strings.NewReader(tt.contents))))
+			d := cmp.Diff(tt.want, handleChecksumsReader(context.Background(), tt.user, tt.repo, tt.tag, tt.url, io.NopCloser(strings.NewReader(tt.contents))))
 			if d != "" {
 				t.Log(d)
 			}
-			assert.Equal(t, tt.want, handleChecksumsReader(discard.New(), tt.user, tt.repo, tt.tag, tt.url, io.NopCloser(strings.NewReader(tt.contents))))
+			assert.Equal(t, tt.want, handleChecksumsReader(context.Background(), tt.user, tt.repo, tt.tag, tt.url, io.NopCloser(strings.NewReader(tt.contents))))
 		})
 	}
 }
@@ -841,7 +862,7 @@ func Test_processExpandedAssets(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			fh, err := os.Open(tt.fixture)
 			require.NoError(t, err)
-			assert.Equal(t, tt.want, processExpandedAssets(discard.New(), fh, "my-url"))
+			assert.Equal(t, tt.want, processExpandedAssets(context.Background(), fh, "my-url"))
 		})
 	}
 }
@@ -1068,6 +1089,130 @@ func Test_isArchiveAsset(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, isArchiveAsset(tt.asset))
+		})
+	}
+}
+
+func Test_compileAssetPatterns(t *testing.T) {
+	tests := []struct {
+		name             string
+		assets           any
+		expectedPatterns int
+		expectedFirst    string
+	}{
+		{
+			name:             "nil input",
+			assets:           nil,
+			expectedPatterns: 0,
+		},
+		{
+			name:             "empty string",
+			assets:           "",
+			expectedPatterns: 0,
+		},
+		{
+			name:             "single string pattern",
+			assets:           "^hugo_extended_[0-9]",
+			expectedPatterns: 1,
+			expectedFirst:    "^hugo_extended_[0-9]",
+		},
+		{
+			name:             "slice of strings",
+			assets:           []string{"^hugo_extended_[0-9]", "^hugo_[0-9]"},
+			expectedPatterns: 2,
+			expectedFirst:    "^hugo_extended_[0-9]",
+		},
+		{
+			name:             "slice of any",
+			assets:           []any{"^hugo_extended_[0-9]", "^hugo_[0-9]"},
+			expectedPatterns: 2,
+			expectedFirst:    "^hugo_extended_[0-9]",
+		},
+		{
+			name:             "invalid regex pattern",
+			assets:           "^hugo_extended_[",
+			expectedPatterns: 0, // invalid regex should be ignored
+		},
+		{
+			name:             "mixed valid and invalid patterns",
+			assets:           []string{"^hugo_extended_[0-9]", "^hugo_extended_["},
+			expectedPatterns: 1, // only valid regex should be compiled
+			expectedFirst:    "^hugo_extended_[0-9]",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			patterns := compileAssetPatterns(tt.assets)
+			assert.Equal(t, tt.expectedPatterns, len(patterns))
+			if tt.expectedPatterns > 0 {
+				assert.Equal(t, tt.expectedFirst, patterns[0].String())
+			}
+		})
+	}
+}
+
+func Test_selectBinaryAsset_withRegexPatterns(t *testing.T) {
+	assets := []ghAsset{
+		{Name: "hugo_0.150.0_darwin_arm64.tar.gz", ContentType: "application/gzip"},
+		{Name: "hugo_extended_0.150.0_darwin_arm64.tar.gz", ContentType: "application/gzip"},
+		{Name: "hugo_extended_with_deploy_0.150.0_darwin_arm64.tar.gz", ContentType: "application/gzip"},
+	}
+
+	tests := []struct {
+		name            string
+		assetPatterns   []string
+		expectedAsset   string
+		shouldFindAsset bool
+	}{
+		{
+			name:            "no patterns - returns first match",
+			assetPatterns:   nil,
+			expectedAsset:   "hugo_0.150.0_darwin_arm64.tar.gz",
+			shouldFindAsset: true,
+		},
+		{
+			name:            "pattern matches hugo_extended exactly",
+			assetPatterns:   []string{"^hugo_extended_[0-9]"},
+			expectedAsset:   "hugo_extended_0.150.0_darwin_arm64.tar.gz",
+			shouldFindAsset: true,
+		},
+		{
+			name:            "pattern matches hugo_extended_with_deploy",
+			assetPatterns:   []string{"^hugo_extended_with_deploy_[0-9]"},
+			expectedAsset:   "hugo_extended_with_deploy_0.150.0_darwin_arm64.tar.gz",
+			shouldFindAsset: true,
+		},
+		{
+			name:            "multiple patterns - first match wins",
+			assetPatterns:   []string{"^hugo_extended_with_deploy_[0-9]", "^hugo_extended_[0-9]"},
+			expectedAsset:   "hugo_extended_with_deploy_0.150.0_darwin_arm64.tar.gz",
+			shouldFindAsset: true,
+		},
+		{
+			name:            "pattern doesn't match any asset",
+			assetPatterns:   []string{"^chronicle_[0-9]"},
+			shouldFindAsset: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var patterns []*regexp.Regexp
+			for _, p := range tt.assetPatterns {
+				re, err := regexp.Compile(p)
+				require.NoError(t, err)
+				patterns = append(patterns, re)
+			}
+
+			result := selectBinaryAsset(context.Background(), assets, "darwin", "arm64", patterns)
+
+			if tt.shouldFindAsset {
+				require.NotNil(t, result)
+				assert.Equal(t, tt.expectedAsset, result.Name)
+			} else {
+				assert.Nil(t, result)
+			}
 		})
 	}
 }

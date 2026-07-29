@@ -12,11 +12,13 @@ import (
 	"time"
 
 	"github.com/Masterminds/semver/v3"
+	"github.com/hashicorp/go-retryablehttp"
 	"github.com/shurcooL/githubv4"
 	"golang.org/x/oauth2"
 
 	"github.com/anchore/binny"
 	"github.com/anchore/binny/internal"
+	internalhttp "github.com/anchore/binny/internal/http"
 	"github.com/anchore/binny/internal/log"
 )
 
@@ -24,8 +26,8 @@ var _ binny.VersionResolver = (*VersionResolver)(nil)
 
 type VersionResolver struct {
 	config               VersionResolutionParameters
-	latestReleaseFetcher func(user, repo string) (*ghRelease, error)
-	releasesFetcher      func(user, repo string) ([]ghRelease, error)
+	latestReleaseFetcher func(ctx context.Context, user, repo string) (*ghRelease, error)
+	releasesFetcher      func(ctx context.Context, user, repo string) ([]ghRelease, error)
 }
 
 type VersionResolutionParameters struct {
@@ -40,33 +42,34 @@ func NewVersionResolver(cfg VersionResolutionParameters) *VersionResolver {
 	}
 }
 
-func (v VersionResolver) UpdateVersion(want, constraint string) (string, error) {
-	if want == "latest" {
-		return want, nil
+func (v VersionResolver) UpdateVersion(ctx context.Context, intent binny.VersionIntent) (string, error) {
+	if intent.Want == "latest" {
+		return intent.Want, nil
 	}
 
-	if internal.IsSemver(want) {
-		return v.findLatestVersion(constraint)
+	if internal.IsSemver(intent.Want) {
+		return v.findLatestVersion(ctx, intent.Constraint, intent.Cooldown)
 	}
 
-	return want, nil
+	return intent.Want, nil
 }
 
-func (v VersionResolver) ResolveVersion(want, constraint string) (string, error) {
-	log.WithFields("repo", v.config.Repo, "version", want).Trace("resolving version from github release")
+func (v VersionResolver) ResolveVersion(ctx context.Context, intent binny.VersionIntent) (string, error) {
+	log.FromContext(ctx).WithFields("repo", v.config.Repo, "version", intent.Want).Trace("resolving version from github release")
 
-	if internal.IsSemver(want) {
-		return want, nil
+	if internal.IsSemver(intent.Want) {
+		return intent.Want, nil
 	}
 
-	if want == "latest" {
-		return v.findLatestVersion(constraint)
+	if intent.Want == "latest" {
+		return v.findLatestVersion(ctx, intent.Constraint, intent.Cooldown)
 	}
 
-	return want, nil
+	return intent.Want, nil
 }
 
-func (v VersionResolver) findLatestVersion(versionConstraint string) (string, error) {
+func (v VersionResolver) findLatestVersion(ctx context.Context, versionConstraint string, cooldown time.Duration) (string, error) {
+	lgr := log.FromContext(ctx)
 	cfg := v.config
 	fields := strings.Split(cfg.Repo, "/")
 	if len(fields) != 2 {
@@ -74,44 +77,75 @@ func (v VersionResolver) findLatestVersion(versionConstraint string) (string, er
 	}
 	user, repo := fields[0], fields[1]
 
-	latestRelease, err := v.latestReleaseFetcher(user, repo)
-	if err != nil {
-		return "", fmt.Errorf("unable to fetch latest release: %v", err)
+	var cutoff *time.Time
+	if cooldown > 0 {
+		t := time.Now().Add(-cooldown)
+		cutoff = &t
 	}
 
-	// try the cheapest path forward first -- if this is compliant to the constraint, use it.
-	if latestRelease != nil {
-		latestVersion, err := filterToLatestVersion([]ghRelease{*latestRelease}, versionConstraint)
+	// when cooldown is active, skip the cheap facade path since it doesn't return publish dates
+	// (we need dates to enforce the cooldown). Fall through to the full API path instead.
+	if cutoff == nil {
+		latestRelease, err := v.latestReleaseFetcher(ctx, user, repo)
 		if err != nil {
-			return "", fmt.Errorf("unable to filter to latest version: %v", err)
+			return "", fmt.Errorf("unable to fetch latest release: %v", err)
 		}
-		if latestVersion != nil {
-			return latestVersion.Tag, nil
+
+		// try the cheapest path forward first -- if this is compliant to the constraint, use it.
+		if latestRelease != nil {
+			latestVersion, err := filterToLatestVersion([]ghRelease{*latestRelease}, versionConstraint, nil)
+			if err != nil {
+				return "", fmt.Errorf("unable to filter to latest version: %v", err)
+			}
+			if latestVersion != nil {
+				return latestVersion.Tag, nil
+			}
 		}
+	} else {
+		lgr.WithFields("repo", cfg.Repo, "cooldown", cooldown.String()).
+			Trace("skipping facade path for cooldown enforcement (requires release dates from API)")
 	}
 
-	// this path requires the most work, but is typically needed if there is a constraint
-	releases, err := v.releasesFetcher(user, repo)
+	// this path requires the most work, but is typically needed if there is a constraint or cooldown
+	releases, err := v.releasesFetcher(ctx, user, repo)
 	if err != nil {
 		return "", fmt.Errorf("unable to fetch all releases: %v", err)
 	}
 
-	latestVersion, err := filterToLatestVersion(releases, versionConstraint)
+	latestVersion, err := filterToLatestVersion(releases, versionConstraint, cutoff)
 	if err != nil {
 		return "", fmt.Errorf("unable to filter to latest version: %v", err)
 	}
 	if latestVersion == nil {
+		if cutoff != nil {
+			// find the absolute latest (without cooldown) to produce a helpful error message
+			absoluteLatest, _ := filterToLatestVersion(releases, versionConstraint, nil)
+			var latestTag string
+			var latestDate *time.Time
+			if absoluteLatest != nil {
+				latestTag = absoluteLatest.Tag
+				latestDate = absoluteLatest.Date
+			}
+			return "", &binny.CooldownError{
+				Cooldown:      cooldown,
+				LatestVersion: latestTag,
+				LatestDate:    latestDate,
+			}
+		}
 		return "", fmt.Errorf("no latest version found")
 	}
 
-	log.WithFields("latest", latestVersion.Tag, "repo", cfg.Repo).
+	lgr.WithFields("latest", latestVersion.Tag, "repo", cfg.Repo).
 		Trace("found latest version from the github release")
 
 	return latestVersion.Tag, nil
 }
 
-// nolint:gocognit
-func filterToLatestVersion(releases []ghRelease, versionConstraint string) (*ghRelease, error) {
+// filterToLatestVersion finds the latest release that satisfies the version constraint and cooldown cutoff.
+// If cutoff is non-nil, releases published after the cutoff time are skipped (too new).
+//
+//nolint:gocognit
+func filterToLatestVersion(releases []ghRelease, versionConstraint string, cutoff *time.Time) (*ghRelease, error) {
 	var constraint *semver.Constraints
 	var err error
 
@@ -127,6 +161,13 @@ func filterToLatestVersion(releases []ghRelease, versionConstraint string) (*ghR
 		ty := releases[i]
 		if ty.IsDraft != nil && *ty.IsDraft {
 			continue
+		}
+
+		// cooldown check: skip releases that are too new
+		if cutoff != nil {
+			if ty.Date == nil || ty.Date.After(*cutoff) {
+				continue
+			}
 		}
 
 		ver, err := semver.NewVersion(ty.Tag)
@@ -150,8 +191,9 @@ func filterToLatestVersion(releases []ghRelease, versionConstraint string) (*ghR
 		if latest != nil {
 			latestVer, err := semver.NewVersion(latest.Tag)
 			if err != nil {
-				log.WithFields("tag", ty.Tag).Warn("unable to parse latest version as semver")
-				ver = nil
+				log.WithFields("tag", latest.Tag).Warn("unable to parse current latest version as semver")
+				// can't compare semver, so skip this candidate entirely since we already have a latest
+				continue
 			}
 
 			if ver != nil {
@@ -173,9 +215,9 @@ func filterToLatestVersion(releases []ghRelease, versionConstraint string) (*ghR
 	return latest, nil
 }
 
-func fetchLatestReleaseFromGithubFacade(user, repo string) (*ghRelease, error) {
+func fetchLatestReleaseFromGithubFacade(ctx context.Context, user, repo string) (*ghRelease, error) {
 	url := fmt.Sprintf("https://github.com/%s/%s/releases/latest", user, repo)
-	resp, err := downloadJSON(url)
+	resp, err := downloadJSON(ctx, url)
 	if err != nil {
 		return nil, err
 	}
@@ -208,143 +250,131 @@ func fetchLatestReleaseFromGithubFacade(user, repo string) (*ghRelease, error) {
 	}, nil
 }
 
-func downloadJSON(url string) (*http.Response, error) {
-	headers := map[string]string{"Accept": "application/json"}
+func downloadJSON(ctx context.Context, url string) (*http.Response, error) {
+	lgr := log.FromContext(ctx)
+	client := internalhttp.ClientFromContext(ctx)
 
-	client := &http.Client{
-		Timeout: time.Second * 10,
-	}
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
-
-	for key, value := range headers {
-		req.Header.Set(key, value)
-	}
+	req.Header.Set("Accept", "application/json")
 
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 
-	log.WithFields("http-status", resp.StatusCode).Tracef("http get [application/json] %q", url)
+	lgr.WithFields("http-status", resp.StatusCode).Tracef("http get [application/json] %q", url)
 
 	return resp, nil
 }
 
-//nolint:funlen
-func fetchAllReleasesFromGithubV4API(user, repo string) ([]ghRelease, error) {
+// newRetryableGitHubClient creates an HTTP client with OAuth2 authentication and retry logic.
+func newRetryableGitHubClient(ctx context.Context, token string) *http.Client {
+	src := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
+	oauth2Client := oauth2.NewClient(ctx, src)
+
+	// get base client from context and use oauth2 transport
+	retryClient := retryablehttp.NewClient()
+	retryClient.HTTPClient.Transport = oauth2Client.Transport
+	retryClient.Logger = nil
+
+	// keep retries short-lived: the default 1->30s backoff over 5 attempts could waste
+	// 30+ seconds on a request that's never going to succeed (e.g. transport-level errors
+	// during a GitHub secondary rate-limit window). Capping at 3 retries with a 4s ceiling
+	// bounds the worst case to roughly 8s before surfacing the failure to the user.
+	retryClient.RetryMax = 3
+	retryClient.RetryWaitMax = 4 * time.Second
+	retryClient.CheckRetry = githubRetryPolicy
+
+	return retryClient.StandardClient()
+}
+
+// githubRetryPolicy wraps the default policy and pins "never retry 403" explicitly.
+// GitHub returns 403 for both auth failures and secondary rate limits; neither resolves
+// by retrying. The current default policy already declines 403 (it only retries 429 and
+// 5xx), so this is forward-compat insurance: an upstream change can't reintroduce the
+// wasted backoff window.
+func githubRetryPolicy(ctx context.Context, resp *http.Response, err error) (bool, error) {
+	if resp != nil && resp.StatusCode == http.StatusForbidden {
+		return false, nil
+	}
+	return retryablehttp.DefaultRetryPolicy(ctx, resp, err)
+}
+
+// graphql node budget per request. Larger pages bunch up against GitHub's secondary
+// rate limit (point-cost / node-limit) for high-volume repos. Multiple smaller pages
+// stay safely under the per-query threshold.
+const releasesPerPage = 25
+
+// soft ceiling on releases fetched. Matches the original (un-paginated) behavior of
+// `first:100`, but spread across cheaper pages. Plenty to find the latest version
+// satisfying a constraint or cooldown for any reasonable repo. Note: this cap is
+// approximate — the loop checks after appending a full page, so the realized cap is
+// up to maxReleasesFetched + releasesPerPage - 1. Also note: a constraint that only
+// matches releases beyond this cap will silently fail to find a match (caller will
+// see "no latest version found"). Same trade-off as the original `first:100`.
+const maxReleasesFetched = 100
+
+func fetchAllReleasesFromGithubV4API(ctx context.Context, user, repo string) ([]ghRelease, error) {
 	token := os.Getenv("GITHUB_TOKEN")
 	if token == "" {
 		return nil, fmt.Errorf("GITHUB_TOKEN environment variable not set but is required to use the GitHub v4 API")
 	}
-	src := oauth2.StaticTokenSource(
-		// TODO: DI this
-		&oauth2.Token{AccessToken: token},
-	)
-	httpClient := oauth2.NewClient(context.Background(), src)
-	client := githubv4.NewClient(httpClient)
+
+	client := githubv4.NewClient(newRetryableGitHubClient(ctx, token))
+
+	// release assets are intentionally omitted from this query — they're not used for
+	// version resolution and pulling them inflates the GraphQL node count by ~100x per
+	// release, which trips GitHub's secondary rate limit (403) for high-volume repos.
+	// The installer fetches assets separately for the chosen release.
+	var query struct {
+		Repository struct {
+			Releases struct {
+				PageInfo struct {
+					EndCursor   githubv4.String
+					HasNextPage bool
+				}
+				Nodes []struct {
+					TagName     githubv4.String
+					IsLatest    githubv4.Boolean
+					IsDraft     githubv4.Boolean
+					PublishedAt githubv4.DateTime
+				}
+			} `graphql:"releases(first:$releasesPerPage, after:$releasesCursor)"` // newest first
+		} `graphql:"repository(owner:$repositoryOwner, name:$repositoryName)"`
+	}
+	variables := map[string]any{
+		"repositoryOwner": githubv4.String(user),
+		"repositoryName":  githubv4.String(repo),
+		"releasesPerPage": githubv4.Int(releasesPerPage),
+		"releasesCursor":  (*githubv4.String)(nil), // null = first page
+	}
+
 	var allReleases []ghRelease
-
-	// Query some details about a repository, an ghIssue in it, and its comments.
-	{
-		// TODO: act on hitting a rate limit
-		type rateLimit struct {
-			Cost      githubv4.Int
-			Limit     githubv4.Int
-			Remaining githubv4.Int
-			ResetAt   githubv4.DateTime
-		}
-
-		var query struct {
-			Repository struct {
-				DatabaseID githubv4.Int
-				URL        githubv4.URI
-				Releases   struct {
-					PageInfo struct {
-						EndCursor   githubv4.String
-						HasNextPage bool
-					}
-					Edges []struct {
-						Node struct {
-							TagName       githubv4.String
-							IsLatest      githubv4.Boolean
-							IsDraft       githubv4.Boolean
-							PublishedAt   githubv4.DateTime
-							ReleaseAssets struct {
-								PageInfo struct {
-									EndCursor   githubv4.String
-									HasNextPage bool
-								}
-								Nodes []struct {
-									Name        githubv4.String
-									ContentType githubv4.String
-									DownloadURL githubv4.URI
-								}
-							} `graphql:"releaseAssets(first:100, after:$assetsCursor)"`
-						}
-					}
-				} `graphql:"releases(first:100, after:$releasesCursor)"` // note: first 100 releases, where newest releases are first
-			} `graphql:"repository(owner:$repositoryOwner, name:$repositoryName)"`
-
-			RateLimit rateLimit
-		}
-		variables := map[string]interface{}{
-			"repositoryOwner": githubv4.String(user),
-			"repositoryName":  githubv4.String(repo),
-			"releasesCursor":  (*githubv4.String)(nil), // Null after argument to get first page.
-			"assetsCursor":    (*githubv4.String)(nil), // Null after argument to get first page.
-		}
-
-		// TODO: go to the next page :) (cosign was taking a while here so this needs investigation)
-		// var limit rateLimit
-		// for {
-		err := client.Query(context.Background(), &query, variables)
-		if err != nil {
+	for {
+		if err := client.Query(ctx, &query, variables); err != nil {
 			return nil, err
 		}
-		//  limit = query.RateLimit
 
-		for iE := range query.Repository.Releases.Edges {
-			var assets []ghAsset
-
-			iEdge := query.Repository.Releases.Edges[iE]
-
-			// for {
-			for _, a := range iEdge.Node.ReleaseAssets.Nodes {
-				//  support charset spec, e.g. "text/plain; charset=utf-8""
-				contentType := strings.Split(string(a.ContentType), ";")[0]
-
-				assets = append(assets, ghAsset{
-					Name:        string(a.Name),
-					ContentType: contentType,
-					URL:         a.DownloadURL.String(),
-				})
-			}
-
-			// 	if !iEdge.Node.ReleaseAssets.PageInfo.HasNextPage {
-			// 		break
-			// 	}
-			// 	variables["assetsCursor"] = githubv4.NewString(iEdge.Node.ReleaseAssets.PageInfo.EndCursor)
-			// }
-
+		for _, node := range query.Repository.Releases.Nodes {
+			publishedAt := node.PublishedAt.Time
 			allReleases = append(allReleases, ghRelease{
-				Tag:      string(iEdge.Node.TagName),
-				IsLatest: boolRef(bool(iEdge.Node.IsLatest)),
-				IsDraft:  boolRef(bool(iEdge.Node.IsDraft)),
-				Date:     &iEdge.Node.PublishedAt.Time,
-				Assets:   assets,
+				Tag:      string(node.TagName),
+				IsLatest: boolRef(bool(node.IsLatest)),
+				IsDraft:  boolRef(bool(node.IsDraft)),
+				Date:     &publishedAt,
 			})
 		}
 
-		//	if !query.Repository.Releases.PageInfo.HasNextPage {
-		//		break
-		//	}
-		//	variables["releasesCursor"] = githubv4.NewString(query.Repository.Releases.PageInfo.EndCursor)
-		//}
-
-		// printJSON(allReleases)
+		if !query.Repository.Releases.PageInfo.HasNextPage {
+			break
+		}
+		if len(allReleases) >= maxReleasesFetched {
+			break
+		}
+		variables["releasesCursor"] = githubv4.NewString(query.Repository.Releases.PageInfo.EndCursor)
 	}
 
 	sort.Slice(allReleases, func(i, j int) bool {

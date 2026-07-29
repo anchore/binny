@@ -33,20 +33,20 @@ func FilterToLatestVersion(versions []string, versionConstraint string) (string,
 		}
 	}
 
-	var max *semver.Version
+	var maxVal *semver.Version
 	for _, v := range parsed {
 		if constraint != nil && !constraint.Check(v) {
 			continue
 		}
-		if max == nil || v.GreaterThan(max) {
-			max = v
+		if maxVal == nil || v.GreaterThan(maxVal) {
+			maxVal = v
 		}
 	}
 
-	if max == nil {
+	if maxVal == nil {
 		return "", nil
 	}
-	return max.Original(), nil
+	return maxVal.Original(), nil
 }
 
 func IsSemver(v string) bool {

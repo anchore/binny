@@ -1,59 +1,33 @@
-issues:
-  max-same-issues: 25
-
-  # TODO: enable this when we have coverage on docstring comments
-#  # The list of ids of default excludes to include or disable.
-#  include:
-#    - EXC0002 # disable excluding of issues about comments from golint
-
+version: "2"
+run:
+  tests: false
 linters:
-  # inverted configuration with `enable-all` and `disable` is not scalable during updates of golangci-lint
-  disable-all: true
+  default: none
   enable:
     - asciicheck
     - bodyclose
+    - copyloopvar
     - dogsled
     - dupl
     - errcheck
-    - exportloopref
     - funlen
     - gocognit
     - goconst
     - gocritic
     - gocyclo
-    - gofmt
-    - goimports
     - goprintffuncname
     - gosec
-    - gosimple
     - govet
     - ineffassign
     - misspell
     - nakedret
+    - nolintlint
     - revive
     - staticcheck
-    - stylecheck
-    - typecheck
     - unconvert
     - unparam
     - unused
     - whitespace
-
-linters-settings:
-  funlen:
-    # Checks the number of lines in a function.
-    # If lower than 0, disable the check.
-    # Default: 60
-    lines: 70
-    # Checks the number of statements in a function.
-    # If lower than 0, disable the check.
-    # Default: 40
-    statements: 50
-output:
-  uniq-by-line: false
-run:
-  timeout: 10m
-
 # do not enable...
 #    - deadcode          # The owner seems to have abandoned the linter. Replaced by "unused".
 #    - depguard          # We don't have a configuration for this yet
@@ -72,7 +46,6 @@ run:
 #    - lll         # without a way to specify per-line exception cases, this is not usable
 #    - maligned    # this is an excellent linter, but tricky to optimize and we are not sensitive to memory layout optimizations
 #    - nestif
-#    - nolintlint   # as of go1.19 this conflicts with the behavior of gofmt, which is a deal-breaker (lint-fix will still fail when running lint)
 #    - prealloc     # following this rule isn't consistently a good idea, as it sometimes forces unnecessary allocations that result in less idiomatic code
 #    - rowserrcheck # not in a repo with sql, so this is not useful
 #    - scopelint    # deprecated
@@ -80,3 +53,51 @@ run:
 #    - testpackage
 #    - varcheck     # The owner seems to have abandoned the linter. Replaced by "unused".
 #    - wsl          # this doens't have an auto-fixer yet and is pretty noisy (https://github.com/bombsimon/wsl/issues/90)
+  settings:
+    funlen:
+      lines: 70
+      statements: 50
+    gosec:
+      excludes:
+        - G115
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      # allow internal packages to shadow stdlib package names
+      - linters:
+          - revive
+        path: internal/http/
+        text: "var-naming: avoid package names"
+      - linters:
+          - revive
+        path: internal/log/
+        text: "var-naming: avoid package names"
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+issues:
+  max-same-issues: 25
+  uniq-by-line: false
+formatters:
+  enable:
+    - gci
+    - gofmt
+  settings:
+    gci:
+      # See https://golangci-lint.run/docs/formatters/configuration/#gci
+      sections:
+        - standard # Standard section: captures all standard packages.
+        - default  # Default section: contains all imports that could not be matched to another section type.
+        - prefix(github.com/anchore)
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

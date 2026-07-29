@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -22,9 +23,16 @@ import (
 )
 
 type UpdateConfig struct {
-	Config      string `json:"config" yaml:"config" mapstructure:"config"`
-	StopOnError bool   `json:"stopOnError" yaml:"stopOnError" mapstructure:"stopOnError"`
-	option.Core `json:"" yaml:",inline" mapstructure:",squash"`
+	Config          string `json:"config" yaml:"config" mapstructure:"config"`
+	StopOnError     bool   `json:"stopOnError" yaml:"stopOnError" mapstructure:"stopOnError"`
+	option.Cooldown `json:"" yaml:",inline" mapstructure:",squash"`
+	option.Core     `json:"" yaml:",inline" mapstructure:",squash"`
+}
+
+func (c UpdateConfig) toolOptions() option.ToolOptions {
+	return option.DefaultToolOptions().
+		WithGlobalCooldown(c.Core.Cooldown).
+		WithIgnoreCooldown(c.IgnoreCooldown)
 }
 
 func Update(app clio.Application) *cobra.Command {
@@ -39,18 +47,18 @@ func Update(app clio.Application) *cobra.Command {
 		Use:   "update",
 		Short: "Update pinned tool version configuration with latest available versions (that are still within any provided constraints)",
 		Args:  cobra.ArbitraryArgs,
-		PreRunE: func(cmd *cobra.Command, args []string) error {
+		PreRunE: func(_ *cobra.Command, args []string) error {
 			names = args
 			return nil
 		},
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runUpdate(*cfg, names)
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runUpdate(cmd.Context(), *cfg, names)
 		},
 	}, cfg)
 }
 
-func runUpdate(cfg UpdateConfig, names []string) error {
-	newCfg, err := getUpdatedConfig(cfg, names)
+func runUpdate(ctx context.Context, cfg UpdateConfig, names []string) error {
+	newCfg, err := getUpdatedConfig(ctx, cfg, names)
 	if err != nil {
 		return err
 	}
@@ -76,8 +84,7 @@ func (p updateLockYamlPatcher) PatchYaml(node *yaml.Node) error {
 	return nil
 }
 
-// nolint: funlen,gocognit
-func getUpdatedConfig(cfg UpdateConfig, names []string) (*option.Core, error) {
+func getUpdatedConfig(ctx context.Context, cfg UpdateConfig, names []string) (*option.Core, error) { //nolint: funlen,gocognit
 	var (
 		errs                 error
 		newCfgs              []option.Tool
@@ -125,7 +132,7 @@ func getUpdatedConfig(cfg UpdateConfig, names []string) (*option.Core, error) {
 			}()
 
 			tProg.Increment()
-			newVersion, err = getUpdatedToolVersion(toolCfg)
+			newVersion, err = getUpdatedToolVersion(ctx, toolCfg, cfg.toolOptions())
 
 			lock.Lock()
 
@@ -160,7 +167,7 @@ func getUpdatedConfig(cfg UpdateConfig, names []string) (*option.Core, error) {
 	}
 
 	// note: we can ignore the error here because we are tracking the error through the multierror object
-	g.Wait() // nolint: errcheck
+	g.Wait() //nolint: errcheck
 
 	newCfg := cfg
 	newCfg.Tools = newCfgs
@@ -247,13 +254,13 @@ func (t *toolVersionUpdate) Updated() string {
 	return t.updated.Stage()
 }
 
-func getUpdatedToolVersion(toolCfg option.Tool) (*string, error) {
-	t, intent, err := toolCfg.ToTool()
+func getUpdatedToolVersion(ctx context.Context, toolCfg option.Tool, opts option.ToolOptions) (*string, error) {
+	t, intent, err := toolCfg.ToTool(opts)
 	if err != nil {
 		return nil, err
 	}
 
-	newVersion, err := t.UpdateVersion(intent.Want, intent.Constraint)
+	newVersion, err := t.UpdateVersion(ctx, *intent)
 	if err != nil {
 		return nil, fmt.Errorf("unable to update version for tool %q: %w", toolCfg.Name, err)
 	}

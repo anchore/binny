@@ -6,23 +6,20 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
 
 	"github.com/gabriel-vasile/mimetype"
-	"github.com/mholt/archiver/v3"
 	"github.com/scylladb/go-set/strset"
 	"github.com/shurcooL/githubv4"
 	"golang.org/x/net/html"
-	"golang.org/x/oauth2"
 
 	"github.com/anchore/binny"
 	"github.com/anchore/binny/internal"
 	"github.com/anchore/binny/internal/log"
-	"github.com/anchore/go-logger"
 )
 
 const checksumsFilename = "checksums.txt"
@@ -86,23 +83,64 @@ var binaryMimeTypes = strset.New(
 var _ binny.Installer = (*Installer)(nil)
 
 type InstallerParameters struct {
-	Repo string `json:"repo" yaml:"repo" mapstructure:"repo"`
+	Binary string `json:"binary" yaml:"binary" mapstructure:"binary"`
+	Repo   string `json:"repo" yaml:"repo" mapstructure:"repo"`
+	Assets any    `json:"assets" yaml:"assets" mapstructure:"assets"`
 }
 
 type Installer struct {
 	config         InstallerParameters
-	releaseFetcher func(lgr logger.Logger, user, repo, tag string) (*ghRelease, error)
+	assetPatterns  []*regexp.Regexp
+	releaseFetcher func(ctx context.Context, user, repo, tag string) (*ghRelease, error)
 }
 
 func NewInstaller(cfg InstallerParameters) Installer {
+	patterns := compileAssetPatterns(cfg.Assets)
 	return Installer{
 		config:         cfg,
+		assetPatterns:  patterns,
 		releaseFetcher: fetchRelease,
 	}
 }
 
-func (i Installer) InstallTo(version, destDir string) (string, error) {
-	lgr := log.Nested("tool", fmt.Sprintf("%s@%s", i.config.Repo, version))
+// compileAssetPatterns converts the assets configuration into compiled regex patterns
+func compileAssetPatterns(assets any) []*regexp.Regexp {
+	if assets == nil {
+		return nil
+	}
+
+	var patterns []string
+	switch v := assets.(type) {
+	case string:
+		if v != "" {
+			patterns = append(patterns, v)
+		}
+	case []string:
+		patterns = v
+	case []any:
+		for _, item := range v {
+			if str, ok := item.(string); ok && str != "" {
+				patterns = append(patterns, str)
+			}
+		}
+	default:
+		// unsupported type, return nil to indicate no filtering
+		return nil
+	}
+
+	var compiled []*regexp.Regexp
+	for _, pattern := range patterns {
+		if re, err := regexp.Compile(pattern); err == nil {
+			compiled = append(compiled, re)
+		}
+		// note: silently ignore invalid regex patterns
+	}
+
+	return compiled
+}
+
+func (i Installer) InstallTo(ctx context.Context, version, destDir string) (string, error) {
+	ctx, lgr := log.WithNested(ctx, "tool", fmt.Sprintf("%s@%s", i.config.Repo, version))
 
 	lgr.Debug("installing from github release assets")
 
@@ -112,19 +150,19 @@ func (i Installer) InstallTo(version, destDir string) (string, error) {
 	}
 	user, repo := fields[0], fields[1]
 
-	release, err := i.releaseFetcher(lgr, user, repo, version)
+	release, err := i.releaseFetcher(ctx, user, repo, version)
 	if err != nil {
 		return "", fmt.Errorf("unable to fetch github release %s@%s: %w", i.config.Repo, version, err)
 	}
 
-	asset := selectBinaryAsset(lgr, release.Assets, runtime.GOOS, runtime.GOARCH)
+	asset := selectBinaryAsset(ctx, release.Assets, runtime.GOOS, runtime.GOARCH, i.assetPatterns)
 	if asset == nil {
 		return "", fmt.Errorf("unable to find matching asset for %s@%s", i.config.Repo, version)
 	}
 
-	checksumAsset := selectChecksumAsset(lgr, release.Assets)
+	checksumAsset := selectChecksumAsset(ctx, release.Assets)
 
-	binPath, err := downloadAndExtractAsset(lgr, *asset, checksumAsset, destDir)
+	binPath, err := downloadAndExtractAsset(ctx, *asset, checksumAsset, destDir, i.config.Binary)
 	if err != nil {
 		return "", fmt.Errorf("unable to download and extract asset %s@%s: %w", i.config.Repo, version, err)
 	}
@@ -132,7 +170,8 @@ func (i Installer) InstallTo(version, destDir string) (string, error) {
 	return binPath, nil
 }
 
-func downloadAndExtractAsset(lgr logger.Logger, asset ghAsset, checksumAsset *ghAsset, destDir string) (string, error) {
+func downloadAndExtractAsset(ctx context.Context, asset ghAsset, checksumAsset *ghAsset, destDir string, binary string) (string, error) {
+	lgr := log.FromContext(ctx)
 	assetPath := filepath.Join(destDir, asset.Name)
 
 	checksum := asset.Checksum
@@ -141,7 +180,7 @@ func downloadAndExtractAsset(lgr logger.Logger, asset ghAsset, checksumAsset *gh
 
 		checksumsPath := filepath.Join(destDir, checksumsFilename)
 
-		if err := internal.DownloadFile(lgr, checksumAsset.URL, checksumsPath, ""); err != nil {
+		if err := internal.DownloadFile(ctx, checksumAsset.URL, checksumsPath, ""); err != nil {
 			return "", fmt.Errorf("unable to download checksum asset %q: %w", checksumAsset.Name, err)
 		}
 
@@ -152,7 +191,7 @@ func downloadAndExtractAsset(lgr logger.Logger, asset ghAsset, checksumAsset *gh
 		}
 	}
 
-	logFields := logger.Fields{
+	logFields := map[string]any{
 		"destination": assetPath,
 	}
 
@@ -162,7 +201,7 @@ func downloadAndExtractAsset(lgr logger.Logger, asset ghAsset, checksumAsset *gh
 
 	lgr.WithFields(logFields).Trace("downloading asset")
 
-	if err := internal.DownloadFile(lgr, asset.URL, assetPath, checksum); err != nil {
+	if err := internal.DownloadFile(ctx, asset.URL, assetPath, checksum); err != nil {
 		return "", fmt.Errorf("unable to download asset %q: %w", asset.Name, err)
 	}
 
@@ -177,7 +216,7 @@ func downloadAndExtractAsset(lgr logger.Logger, asset ghAsset, checksumAsset *gh
 	switch {
 	case isArchiveAsset(asset):
 		lgr.WithFields("asset", asset.Name).Trace("asset is an archive")
-		return extractArchive(assetPath, destDir)
+		return extractArchive(assetPath, destDir, binary)
 	case isBinaryAsset(asset):
 		lgr.WithFields("asset", asset.Name).Trace("asset could be a binary")
 		return assetPath, nil
@@ -201,7 +240,7 @@ func isBinaryAsset(asset ghAsset) bool {
 }
 
 func hasArchiveExtension(name string) bool {
-	ext := path.Ext(name)
+	ext := filepath.Ext(name)
 	switch ext {
 	// note: we only need to check for the last part of any archive extension (that is, only ".gz" not ".tar.gz")
 	case ".tar", ".zip", ".gz", ".bz2", ".xz", ".rar", ".7z", ".tgz", ".bz", ".tbz", ".zst", ".zstd":
@@ -231,9 +270,10 @@ func getChecksumForAsset(assetName, checksumsPath string) (string, error) {
 	return "", nil
 }
 
-func extractArchive(archivePath, destDir string) (string, error) {
-	// extract tar.gz to destDir
-	if err := archiver.Unarchive(archivePath, destDir); err != nil {
+func extractArchive(archivePath, destDir, binary string) (string, error) {
+	// extract archive to destDir
+	ctx := context.Background()
+	if err := extractToDir(ctx, archivePath, destDir); err != nil {
 		return "", fmt.Errorf("unable to extract asset %q: %w", archivePath, err)
 	}
 
@@ -242,7 +282,7 @@ func extractArchive(archivePath, destDir string) (string, error) {
 	}
 
 	// look for the binary recursively in the destDir and return that
-	binPath, err := findBinaryAssetInDir(destDir)
+	binPath, err := findBinaryAssetInDir(binary, destDir)
 	if err != nil {
 		return "", fmt.Errorf("unable to find binary in %q: %w", destDir, err)
 	}
@@ -250,7 +290,7 @@ func extractArchive(archivePath, destDir string) (string, error) {
 	return binPath, nil
 }
 
-func findBinaryAssetInDir(destDir string) (string, error) {
+func findBinaryAssetInDir(binary, destDir string) (string, error) {
 	var paths []string
 	if err := filepath.Walk(destDir,
 		func(path string, info os.FileInfo, err error) error {
@@ -270,7 +310,7 @@ func findBinaryAssetInDir(destDir string) (string, error) {
 	ignore := strset.New("LICENSE", "README.md", checksumsFilename)
 	var filteredPaths []string
 	for _, p := range paths {
-		if ignore.Has(path.Base(p)) {
+		if ignore.Has(filepath.Base(p)) {
 			continue
 		}
 		filteredPaths = append(filteredPaths, p)
@@ -281,34 +321,60 @@ func findBinaryAssetInDir(destDir string) (string, error) {
 	case 0:
 		return "", fmt.Errorf("no files found in %q", destDir)
 	case 1:
+		if binary != "" && binary != filepath.Base(filteredPaths[0]) {
+			return "", fmt.Errorf("binary file %q not found in %q (found %q)", binary, destDir, filteredPaths[0])
+		}
+
 		binPath = filteredPaths[0]
 	default:
-		// do mime type detection to find only binaries
-		var candidates []string
-		for _, p := range filteredPaths {
-			tyName, err := mimeTypeOfFile(p)
-			if err != nil {
-				log.WithFields("file", p).Tracef("unable to detect mime type: %s", err)
-				continue
-			}
-
-			if binaryMimeTypes.Has(tyName) {
-				candidates = append(candidates, p)
-			}
+		bp, err := filterMultipleArchiveBinaries(binary, destDir, filteredPaths, binPath)
+		if err != nil {
+			return "", err
 		}
-
-		switch len(candidates) {
-		case 0:
-			return "", fmt.Errorf("no binary files found in %q", destDir)
-		case 1:
-			binPath = candidates[0]
-		default:
-			return "", fmt.Errorf("multiple files found in %q", destDir)
-		}
+		binPath = bp
 	}
 
 	log.WithFields("file", binPath).Trace("found binary asset")
 
+	return binPath, nil
+}
+
+func filterMultipleArchiveBinaries(binary string, destDir string, filteredPaths []string, binPath string) (string, error) {
+	// do mime type detection to find only binaries
+	var candidates []string
+	for _, p := range filteredPaths {
+		tyName, err := mimeTypeOfFile(p)
+		if err != nil {
+			log.WithFields("file", p).Tracef("unable to detect mime type: %s", err)
+			continue
+		}
+
+		if binaryMimeTypes.Has(tyName) {
+			candidates = append(candidates, p)
+		}
+	}
+
+	switch len(candidates) {
+	case 0:
+		return "", fmt.Errorf("no binary files found in %q", destDir)
+	case 1:
+		if binary != "" && binary != filepath.Base(candidates[0]) {
+			return "", fmt.Errorf("binary file %q not found in %q (found %q)", binary, destDir, candidates[0])
+		}
+
+		binPath = candidates[0]
+	default:
+		if binary != "" {
+			for _, p := range candidates {
+				if binary == filepath.Base(p) {
+					binPath = p
+				}
+			}
+		}
+		if binPath == "" {
+			return "", fmt.Errorf("multiple files found in %q", destDir)
+		}
+	}
 	return binPath, nil
 }
 
@@ -321,7 +387,8 @@ func mimeTypeOfFile(p string) (string, error) {
 	return strings.Split(mimeType.String(), ";")[0], nil
 }
 
-func selectChecksumAsset(lgr logger.Logger, assets []ghAsset) *ghAsset {
+func selectChecksumAsset(ctx context.Context, assets []ghAsset) *ghAsset {
+	lgr := log.FromContext(ctx)
 	// search for the asset by name with the OS and arch in the name
 	// e.g. chronicle_0.7.0_checksums.txt
 
@@ -412,7 +479,8 @@ func flattenAliases(aliases map[string][]string) []string {
 	return as
 }
 
-func selectBinaryAsset(lgr logger.Logger, assets []ghAsset, goOS, goArch string) *ghAsset {
+func selectBinaryAsset(ctx context.Context, assets []ghAsset, goOS, goArch string, assetPatterns []*regexp.Regexp) *ghAsset {
+	lgr := log.FromContext(ctx)
 	// search for the asset by name with the OS and arch in the name
 	// e.g. chronicle_0.7.0_linux_amd64.tar.gz
 
@@ -425,13 +493,14 @@ func selectBinaryAsset(lgr logger.Logger, assets []ghAsset, goOS, goArch string)
 
 	lgr.Trace("looking for binary artifact")
 
+	// first pass: filter by content type, OS, and architecture
+	var osArchCandidates []ghAsset
 	for _, asset := range assets {
 		switch {
 		case isBinaryAsset(asset) || isArchiveAsset(asset):
 			// pass
 		default:
 			lgr.WithFields("asset", asset.Name).Tracef("skipping asset (content type %q)", asset.ContentType)
-
 			continue
 		}
 
@@ -442,17 +511,39 @@ func selectBinaryAsset(lgr logger.Logger, assets []ghAsset, goOS, goArch string)
 			continue
 		}
 
-		if isHostDarwin && containsOneOf(cleanName, universalDarwinArchSuffix) {
-			lgr.WithFields("asset", asset.Name).Trace("found asset (universal binary)")
-			return &asset
-		} else if !containsOneOf(cleanName, goarchs) {
+		isUniversalDarwin := isHostDarwin && containsOneOf(cleanName, universalDarwinArchSuffix)
+		if !isUniversalDarwin && !containsOneOf(cleanName, goarchs) {
 			lgr.WithFields("asset", asset.Name).Tracef("skipping asset (missing arch %q)", goarchs)
 			continue
 		}
 
-		lgr.WithFields("asset", asset.Name).Trace("found asset")
-		return &asset
+		osArchCandidates = append(osArchCandidates, asset)
 	}
+
+	if len(osArchCandidates) == 0 {
+		return nil
+	}
+
+	// second pass: apply regex patterns if provided
+	if len(assetPatterns) == 0 {
+		// no asset patterns specified, return first matching asset
+		selectedAsset := &osArchCandidates[0]
+		lgr.WithFields("asset", selectedAsset.Name).Trace("found asset (no pattern filtering)")
+		return selectedAsset
+	}
+
+	// try each pattern in order until we find a match
+	for _, pattern := range assetPatterns {
+		for _, candidate := range osArchCandidates {
+			if pattern.MatchString(candidate.Name) {
+				lgr.WithFields("asset", candidate.Name, "pattern", pattern.String()).Trace("found asset (pattern matched)")
+				return &candidate
+			}
+		}
+	}
+
+	// no pattern matched
+	lgr.Trace("no asset matched any of the specified patterns")
 	return nil
 }
 
@@ -461,7 +552,7 @@ func normalizedAssetName(name string) string {
 }
 
 func hasBinaryExtension(name string) bool {
-	ext := path.Ext(name)
+	ext := filepath.Ext(name)
 	switch ext {
 	case ".exe", "":
 		return true
@@ -513,7 +604,8 @@ func containsOneOf(subject string, needles []string) bool {
 	return false
 }
 
-func fetchRelease(lgr logger.Logger, user, repo, tag string) (r *ghRelease, err error) {
+func fetchRelease(ctx context.Context, user, repo, tag string) (r *ghRelease, err error) {
+	lgr := log.FromContext(ctx)
 	summary := fmt.Sprintf("%s/%s@%s", user, repo, tag)
 
 	lgr.Trace("fetching release info")
@@ -527,7 +619,7 @@ func fetchRelease(lgr logger.Logger, user, repo, tag string) (r *ghRelease, err 
 		lgr.Tracef("release found with %d release assets", len(r.Assets))
 	}()
 
-	r, err = fetchReleaseByScrape(lgr, user, repo, tag)
+	r, err = fetchReleaseByScrape(ctx, user, repo, tag)
 	if err != nil {
 		return nil, fmt.Errorf("unable to fetch release %s via scrape: %w", summary, err)
 	}
@@ -541,7 +633,7 @@ func fetchRelease(lgr logger.Logger, user, repo, tag string) (r *ghRelease, err 
 	// why try this second instead of first? there are multiple reasons:
 	// - there are multiple places to look for checksums
 	// - there is no guarantee they even exist!
-	r, err = fetchReleaseByChecksums(lgr, user, repo, tag)
+	r, err = fetchReleaseByChecksums(ctx, user, repo, tag)
 	if err != nil {
 		return nil, fmt.Errorf("unable to fetch release %s via checksums: %w", summary, err)
 	}
@@ -554,7 +646,7 @@ func fetchRelease(lgr logger.Logger, user, repo, tag string) (r *ghRelease, err 
 
 	// note: I would remove this approach, however, it is the most kosher way to get this information so I'm leaving it in for now.
 	// It is quite unfortunate that either auth is required (v4) or there is extreme rate limiting (v3).
-	r, err = fetchReleaseGithubV4API(user, repo, tag)
+	r, err = fetchReleaseGithubV4API(ctx, user, repo, tag)
 	if err != nil {
 		return nil, fmt.Errorf("unable to fetch release %s via GitHub v4 API: %w", summary, err)
 	}
@@ -562,7 +654,8 @@ func fetchRelease(lgr logger.Logger, user, repo, tag string) (r *ghRelease, err 
 	return r, nil
 }
 
-func fetchReleaseByChecksums(lgr logger.Logger, user, repo, tag string) (*ghRelease, error) {
+func fetchReleaseByChecksums(ctx context.Context, user, repo, tag string) (*ghRelease, error) {
+	lgr := log.FromContext(ctx)
 	// look for a {checksums.txt, repo_tag_checksums.txt, repo_tag-without-v_checksums.txt} file in the release assets
 	// if found, download it and parse it to find the asset we want
 	// e.g.
@@ -572,12 +665,12 @@ func fetchReleaseByChecksums(lgr logger.Logger, user, repo, tag string) (*ghRele
 
 	for _, url := range checksumURLVariants(user, repo, tag) {
 		lgr.WithFields("url", url).Trace("trying checksums url")
-		reader, err := internal.DownloadURL(lgr, url)
+		reader, err := internal.DownloadURL(ctx, url)
 		if err != nil {
 			return nil, err
 		}
 
-		release := handleChecksumsReader(lgr, user, repo, tag, url, reader)
+		release := handleChecksumsReader(ctx, user, repo, tag, url, reader)
 		if release == nil {
 			continue
 		}
@@ -612,7 +705,8 @@ func checksumURLVariants(user, repo, tag string) []string {
 	return urls
 }
 
-func handleChecksumsReader(lgr logger.Logger, user, repo, tag, url string, reader io.ReadCloser) *ghRelease {
+func handleChecksumsReader(ctx context.Context, user, repo, tag, url string, reader io.ReadCloser) *ghRelease {
+	lgr := log.FromContext(ctx)
 	if reader == nil {
 		return nil
 	}
@@ -671,7 +765,7 @@ func handleChecksumsReader(lgr logger.Logger, user, repo, tag, url string, reade
 	return release
 }
 
-func fetchReleaseByScrape(lgr logger.Logger, user, repo, tag string) (*ghRelease, error) {
+func fetchReleaseByScrape(ctx context.Context, user, repo, tag string) (*ghRelease, error) {
 	// fetch assets list via the expanded assets view endpoint used by the GitHub UI
 	// note: this is quite brittle, super grain of salt here...
 	// e.g. https://github.com/anchore/syft/releases/expanded_assets/v0.93.0
@@ -679,7 +773,7 @@ func fetchReleaseByScrape(lgr logger.Logger, user, repo, tag string) (*ghRelease
 
 	url := fmt.Sprintf("https://github.com/%s/%s/releases/expanded_assets/%s", user, repo, tag)
 
-	reader, err := internal.DownloadURL(lgr, url)
+	reader, err := internal.DownloadURL(ctx, url)
 	if err != nil {
 		return nil, err
 	}
@@ -692,11 +786,12 @@ func fetchReleaseByScrape(lgr logger.Logger, user, repo, tag string) (*ghRelease
 
 	return &ghRelease{
 		Tag:    tag,
-		Assets: processExpandedAssets(lgr, reader, url),
+		Assets: processExpandedAssets(ctx, reader, url),
 	}, nil
 }
 
-func processExpandedAssets(lgr logger.Logger, reader io.Reader, from string) []ghAsset {
+func processExpandedAssets(ctx context.Context, reader io.Reader, from string) []ghAsset {
+	lgr := log.FromContext(ctx)
 	tokenizer := html.NewTokenizer(reader)
 
 	var assets []ghAsset
@@ -720,7 +815,7 @@ func processExpandedAssets(lgr logger.Logger, reader io.Reader, from string) []g
 				for _, attr := range token.Attr {
 					if attr.Key == "href" && strings.Contains(attr.Val, "/releases/download/") {
 						assets = append(assets, ghAsset{
-							Name:        path.Base(attr.Val),
+							Name:        filepath.Base(attr.Val),
 							ContentType: "",
 							URL:         fmt.Sprintf("https://github.com%s", attr.Val),
 						})
@@ -732,18 +827,13 @@ func processExpandedAssets(lgr logger.Logger, reader io.Reader, from string) []g
 	return assets
 }
 
-// nolint:funlen
-func fetchReleaseGithubV4API(user, repo, tag string) (*ghRelease, error) {
+func fetchReleaseGithubV4API(ctx context.Context, user, repo, tag string) (*ghRelease, error) {
 	token := os.Getenv("GITHUB_TOKEN")
 	if token == "" {
 		return nil, fmt.Errorf("GITHUB_TOKEN environment variable not set but is required to use the GitHub v4 API")
 	}
-	src := oauth2.StaticTokenSource(
-		// TODO: DI this
-		&oauth2.Token{AccessToken: token},
-	)
-	httpClient := oauth2.NewClient(context.Background(), src)
-	client := githubv4.NewClient(httpClient)
+
+	client := githubv4.NewClient(newRetryableGitHubClient(ctx, token))
 
 	// TODO: act on hitting a rate limit
 	type rateLimit struct {
@@ -778,14 +868,14 @@ func fetchReleaseGithubV4API(user, repo, tag string) (*ghRelease, error) {
 
 		RateLimit rateLimit
 	}
-	variables := map[string]interface{}{
+	variables := map[string]any{
 		"repositoryOwner": githubv4.String(user),
 		"repositoryName":  githubv4.String(repo),
 		"tagName":         githubv4.String(tag),    // Null after argument to get first page.
 		"assetsCursor":    (*githubv4.String)(nil), // Null after argument to get first page.
 	}
 
-	err := client.Query(context.Background(), &query, variables)
+	err := client.Query(ctx, &query, variables)
 	if err != nil {
 		return nil, err
 	}

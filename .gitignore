@@ -3,6 +3,16 @@
 /.tools
 /.tool
 /.task
+/bin
+
+# local development
+.claude
+CLAUDE.md
+/specs
+.env
+.tool-versions
+.mise.toml
+.conductor
 
 # release locations
 /snapshot

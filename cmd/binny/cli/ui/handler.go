@@ -47,12 +47,18 @@ func New(cfg HandlerConfig) *Handler {
 
 	// register all supported event types with the respective handler functions
 	d.AddHandlers(map[partybus.EventType]bubbly.EventHandlerFn{
-		event.CLIInstallCmdStarted: h.handleCLIInstallCmdStarted,
-		event.CLIUpdateCmdStarted:  h.handleCLIUpdateLockCmdStarted,
-		event.TaskStartedEvent:     h.handleTaskStarted,
+		event.CLIInstallCmdStarted: simpleHandler(h.handleCLIInstallCmdStarted),
+		event.CLIUpdateCmdStarted:  simpleHandler(h.handleCLIUpdateLockCmdStarted),
+		event.TaskStartedEvent:     simpleHandler(h.handleTaskStarted),
 	})
 
 	return h
+}
+
+func simpleHandler(fn func(partybus.Event) []tea.Model) bubbly.EventHandlerFn {
+	return func(e partybus.Event) ([]tea.Model, tea.Cmd) {
+		return fn(e), nil
+	}
 }
 
 func (m *Handler) OnMessage(msg tea.Msg) {

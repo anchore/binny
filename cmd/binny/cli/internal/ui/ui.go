@@ -150,12 +150,16 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		for _, newModel := range m.handler.Handle(msg) {
+		newModels, handlerCmd := m.handler.Handle(msg)
+		for _, newModel := range newModels {
 			if newModel == nil {
 				continue
 			}
 			cmds = append(cmds, newModel.Init())
 			m.frame.(*frame.Frame).AppendModel(newModel)
+		}
+		if handlerCmd != nil {
+			cmds = append(cmds, handlerCmd)
 		}
 		// intentionally fallthrough to update the frame model
 	}

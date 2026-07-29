@@ -1,18 +1,16 @@
 package goinstall
 
 import (
-	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"text/template"
-
-	"github.com/Masterminds/sprig/v3"
 
 	"github.com/anchore/binny"
+	"github.com/anchore/binny/internal"
 	"github.com/anchore/binny/internal/log"
 )
 
@@ -22,11 +20,13 @@ type InstallerParameters struct {
 	Module     string   `json:"module" yaml:"module" mapstructure:"module"`
 	Entrypoint string   `json:"entrypoint" yaml:"entrypoint" mapstructure:"entrypoint"`
 	LDFlags    []string `json:"ldflags" yaml:"ldflags" mapstructure:"ldflags"`
+	Args       []string `json:"args" yaml:"args" mapstructure:"args"`
+	Env        []string `json:"env" yaml:"env" mapstructure:"env"`
 }
 
 type Installer struct {
 	config          InstallerParameters
-	goInstallRunner func(spec, ldflags, destDir string) error
+	goInstallRunner func(spec, ldflags string, args []string, env []string, destDir string, isLocal bool, binName string) error
 }
 
 func NewInstaller(cfg InstallerParameters) Installer {
@@ -36,7 +36,9 @@ func NewInstaller(cfg InstallerParameters) Installer {
 	}
 }
 
-func (i Installer) InstallTo(version, destDir string) (string, error) {
+func (i Installer) InstallTo(ctx context.Context, version, destDir string) (string, error) {
+	ctx, lgr := log.WithNested(ctx, "tool", fmt.Sprintf("%s@%s", i.config.Module, version)) //nolint: ineffassign,staticcheck // we want any future calls we add to always have the right context
+
 	path := i.config.Module
 	if i.config.Entrypoint != "" {
 		path += "/" + i.config.Entrypoint
@@ -50,56 +52,67 @@ func (i Installer) InstallTo(version, destDir string) (string, error) {
 	}
 
 	spec := fmt.Sprintf("%s@%s", path, version)
-	if strings.HasPrefix(i.config.Module, ".") || strings.HasPrefix(i.config.Module, "/") {
+	isLocal := strings.HasPrefix(i.config.Module, ".") || strings.HasPrefix(i.config.Module, "/")
+	if isLocal {
 		spec = path
-		log.WithFields("module", i.config.Module, "version", version).Debug("installing go module (local)")
+		lgr.WithFields("module", i.config.Module, "version", version).Debug("installing go module (local)")
 	} else {
-		log.WithFields("module", i.config.Module, "version", version).Debug("installing go module (remote)")
+		lgr.WithFields("module", i.config.Module, "version", version).Debug("installing go module (remote)")
 	}
 
-	ldflags, err := templateFlags(i.config.LDFlags, version)
+	ldflags, err := internal.TemplateFlags(i.config.LDFlags, version)
 	if err != nil {
 		return "", fmt.Errorf("failed to template ldflags: %v", err)
 	}
 
-	if err := i.goInstallRunner(spec, ldflags, destDir); err != nil {
+	args, err := internal.TemplateSlice(i.config.Args, version)
+	if err != nil {
+		return "", fmt.Errorf("failed to template args: %v", err)
+	}
+
+	if err := internal.ValidateEnvSlice(i.config.Env); err != nil {
+		return "", err
+	}
+
+	env, err := internal.TemplateSlice(i.config.Env, version)
+	if err != nil {
+		return "", fmt.Errorf("failed to template env: %v", err)
+	}
+
+	if err := i.goInstallRunner(spec, ldflags, args, env, destDir, isLocal, binName); err != nil {
 		return "", fmt.Errorf("failed to install: %v", err)
 	}
 
 	return binPath, nil
 }
 
-func templateFlags(ldFlags []string, version string) (string, error) {
-	flags := strings.Join(ldFlags, " ")
-
-	tmpl, err := template.New("ldflags").Funcs(sprig.FuncMap()).Parse(flags)
-	if err != nil {
-		return "", err
+func runGoInstall(spec, ldflags string, userArgs, userEnv []string, destDir string, isLocal bool, binName string) error {
+	var args []string
+	if isLocal {
+		// go install in module mode for a local module is not a good idea, so use go build in this case since the source is already local
+		args = append(args, "build", "-o", filepath.Join(destDir, binName))
+	} else {
+		args = append(args, "install")
 	}
+	args = append(args, userArgs...)
 
-	buf := bytes.Buffer{}
-	err = tmpl.Execute(&buf, map[string]string{
-		"Version": version,
-	})
-
-	if err != nil {
-		return "", err
-	}
-
-	return buf.String(), nil
-}
-
-func runGoInstall(spec, ldflags, destDir string) error {
-	args := []string{"install"}
 	if ldflags != "" {
 		args = append(args, fmt.Sprintf("-ldflags=%s", ldflags))
 	}
 	args = append(args, spec)
 
-	log.Trace("running: go " + strings.Join(args, " "))
+	log.WithFields("env-vars", len(userEnv)).Trace("running: go " + strings.Join(args, " "))
 
 	cmd := exec.Command("go", args...)
-	cmd.Env = append(os.Environ(), "GOBIN="+destDir)
+
+	// set env vars...
+	env := os.Environ()
+	env = append(env, userEnv...)
+	// always override any conflicting env vars
+	if !isLocal {
+		env = append(env, "GOBIN="+destDir)
+	}
+	cmd.Env = env
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {

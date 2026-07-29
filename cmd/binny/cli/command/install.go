@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -21,10 +22,11 @@ import (
 )
 
 type InstallConfig struct {
-	Config       string `json:"config" yaml:"config" mapstructure:"config"`
-	StopOnError  bool   `json:"stopOnError" yaml:"stopOnError" mapstructure:"stopOnError"`
-	option.Check `json:"" yaml:",inline" mapstructure:",squash"`
-	option.Core  `json:"" yaml:",inline" mapstructure:",squash"`
+	Config          string `json:"config" yaml:"config" mapstructure:"config"`
+	StopOnError     bool   `json:"stopOnError" yaml:"stopOnError" mapstructure:"stopOnError"`
+	option.Cooldown `json:"" yaml:",inline" mapstructure:",squash"`
+	option.Check    `json:"" yaml:",inline" mapstructure:",squash"`
+	option.Core     `json:"" yaml:",inline" mapstructure:",squash"`
 }
 
 func Install(app clio.Application) *cobra.Command {
@@ -39,18 +41,17 @@ func Install(app clio.Application) *cobra.Command {
 		Use:   "install",
 		Short: "Install tools",
 		Args:  cobra.ArbitraryArgs,
-		PreRunE: func(cmd *cobra.Command, args []string) error {
+		PreRunE: func(_ *cobra.Command, args []string) error {
 			names = args
 			return nil
 		},
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runInstall(*cfg, names)
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runInstall(cmd.Context(), *cfg, names)
 		},
 	}, cfg)
 }
 
-// nolint: funlen
-func runInstall(cmdCfg InstallConfig, names []string) error {
+func runInstall(ctx context.Context, cmdCfg InstallConfig, names []string) error { //nolint: funlen
 	names, toolOpts := selectNamesAndConfigs(cmdCfg.Core, names)
 
 	if len(toolOpts) == 0 {
@@ -60,7 +61,7 @@ func runInstall(cmdCfg InstallConfig, names []string) error {
 	}
 
 	// get the current store state
-	store, err := binny.NewStore(cmdCfg.Store.Root)
+	store, err := binny.NewStore(cmdCfg.Root)
 	if err != nil {
 		return err
 	}
@@ -95,7 +96,7 @@ func runInstall(cmdCfg InstallConfig, names []string) error {
 		opt := toolOpts[i]
 
 		g.Go(func() error {
-			err := installTool(store, cmdCfg, opt)
+			err := installTool(ctx, store, cmdCfg, opt)
 			if err != nil {
 				lock.Lock()
 				if errors.Is(err, tool.ErrAlreadyInstalled) {
@@ -115,7 +116,7 @@ func runInstall(cmdCfg InstallConfig, names []string) error {
 	}
 
 	// note: we can ignore the error here because we are tracking the error through the multierror object
-	g.Wait() // nolint: errcheck
+	g.Wait() //nolint: errcheck
 
 	alreadyInstalled = len(alreadyInstalledTools) > 0 && len(alreadyInstalledTools) == len(toolOpts)
 
@@ -131,6 +132,12 @@ func runInstall(cmdCfg InstallConfig, names []string) error {
 	}
 
 	return nil
+}
+
+func (c InstallConfig) toolOptions() option.ToolOptions {
+	return option.DefaultToolOptions().
+		WithGlobalCooldown(c.Core.Cooldown).
+		WithIgnoreCooldown(c.IgnoreCooldown)
 }
 
 func trackInstallCmd(toolNames []string) (*progress.Manual, *progress.AtomicStage) {
@@ -152,14 +159,14 @@ func trackInstallCmd(toolNames []string) (*progress.Manual, *progress.AtomicStag
 	return prog, stage
 }
 
-func installTool(store *binny.Store, cfg InstallConfig, opt option.Tool) error {
-	t, intent, err := opt.ToTool()
+func installTool(ctx context.Context, store *binny.Store, cfg InstallConfig, opt option.Tool) error {
+	t, intent, err := opt.ToTool(cfg.toolOptions())
 	if err != nil {
 		return fmt.Errorf("failed to resolve tool config %q: %w", opt.Name, err)
 	}
 
 	// otherwise continue to install the tool
-	if err := tool.Install(t, *intent, store, tool.VerifyConfig{
+	if err := tool.Install(ctx, t, *intent, store, tool.VerifyConfig{
 		VerifyXXH64Digest:  true,
 		VerifySHA256Digest: cfg.VerifySHA256Digest,
 	}); err != nil {

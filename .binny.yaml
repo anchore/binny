@@ -1,4 +1,9 @@
+# only pull in version updates that were released more than a week ago (low-pass filter for quickly-retracted releases)
+cooldown: 7d
+# note: we are inheriting tool definitions from anchore/go-make .binny.yaml, so we only need to specify tools here that
+# are not already defined there (or that we want to override with different versions).
 tools:
+  # the tool being built from this repo, used to manage all other tool installations
   - name: binny
     version:
       # since the module is . then "current" means whatever is checked out
@@ -14,73 +19,3 @@ tools:
         - -X main.gitDescription={{ .Version }}
         # note: sprig functions are available: http://masterminds.github.io/sprig/
         - -X main.buildDate={{ now | date "2006-01-02T15:04:05Z07:00" }}
-
-  - name: gh
-    version:
-      want: v2.35.0
-    method: github-release
-    with:
-      repo: cli/cli
-
-  - name: quill
-    version:
-      want: v0.4.1
-    method: github-release
-    with:
-      repo: anchore/quill
-
-  - name: chronicle
-    version:
-      want: v0.8.0
-    method: github-release
-    with:
-      repo: anchore/chronicle
-
-  - name: gosimports
-    version:
-      want: v0.3.8
-    method: github-release
-    with:
-      repo: rinchsan/gosimports
-
-  - name: glow
-    version:
-      want: v1.5.1
-    method: github-release
-    with:
-      repo: charmbracelet/glow
-
-  - name: goreleaser
-    version:
-      want: v1.21.1
-    method: github-release
-    with:
-      repo: goreleaser/goreleaser
-
-  - name: golangci-lint
-    version:
-      want: v1.54.2
-    method: github-release
-    with:
-      repo: golangci/golangci-lint
-
-  - name: bouncer
-    version:
-      want: v0.4.0
-    method: github-release
-    with:
-      repo: wagoodman/go-bouncer
-
-  - name: task
-    version:
-      want: v3.30.1
-    method: github-release
-    with:
-      repo: go-task/task
-
-  - name: syft
-    version:
-      want: v0.91.0
-    method: github-release
-    with:
-      repo: anchore/syft

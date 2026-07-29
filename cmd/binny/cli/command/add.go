@@ -14,6 +14,7 @@ func Add(app clio.Application) *cobra.Command {
 
 	cmd.AddCommand(
 		AddGoInstall(app),
+		AddGoBuild(app),
 		AddGithubRelease(app),
 	)
 

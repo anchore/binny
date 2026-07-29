@@ -1,8 +1,9 @@
 package internal
 
 import (
-	"crypto/md5"  // nolint:gosec // MD5 is used for legacy compatibility
-	"crypto/sha1" // nolint:gosec // SHA1 is used for legacy compatibility
+	"context"
+	"crypto/md5"  //nolint:gosec // MD5 is used for legacy compatibility
+	"crypto/sha1" //nolint:gosec // SHA1 is used for legacy compatibility
 	"crypto/sha256"
 	"crypto/sha512"
 	"fmt"
@@ -12,12 +13,14 @@ import (
 	"strings"
 
 	"github.com/go-git/go-git/v5/plumbing/hash"
+	"github.com/hashicorp/go-retryablehttp"
 
-	"github.com/anchore/go-logger"
+	internalhttp "github.com/anchore/binny/internal/http"
+	"github.com/anchore/binny/internal/log"
 )
 
-func DownloadFile(lgr logger.Logger, url string, filepath string, checksum string) (err error) {
-	reader, err := DownloadURL(lgr, url)
+func DownloadFile(ctx context.Context, url string, filepath string, checksum string) (err error) {
+	reader, err := DownloadURL(ctx, url)
 	if err != nil {
 		return err
 	}
@@ -38,6 +41,7 @@ func DownloadFile(lgr logger.Logger, url string, filepath string, checksum strin
 	}
 
 	if checksum != "" {
+		lgr := log.FromContext(ctx)
 		expectedChecksum := cleanChecksum(checksum)
 		actualChecksum := fmt.Sprintf("%x", h.Sum(nil))
 
@@ -52,8 +56,16 @@ func DownloadFile(lgr logger.Logger, url string, filepath string, checksum strin
 	return nil
 }
 
-func DownloadURL(lgr logger.Logger, url string) (io.ReadCloser, error) {
-	resp, err := http.Get(url) // nolint: gosec  // we must be able to get arbitrary URLs
+func DownloadURL(ctx context.Context, url string) (io.ReadCloser, error) {
+	lgr := log.FromContext(ctx)
+	client := internalhttp.ClientFromContext(ctx)
+
+	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("unable to create request for %q: %w", url, err)
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("unable to download %q: %w", url, err)
 	}
@@ -61,7 +73,10 @@ func DownloadURL(lgr logger.Logger, url string) (io.ReadCloser, error) {
 	lgr.WithFields("http-status", resp.StatusCode).Tracef("http get %q", url)
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, nil
+		if resp.Body != nil {
+			resp.Body.Close()
+		}
+		return nil, fmt.Errorf("unexpected status code %d for %q", resp.StatusCode, url)
 	}
 	return resp.Body, nil
 }
@@ -90,11 +105,11 @@ func getHasher(checksum string) hash.Hash {
 	case "sha256":
 		return sha256.New()
 	case "sha1":
-		return sha1.New() // nolint:gosec // SHA1 is used for legacy compatibility
+		return sha1.New() //nolint:gosec // SHA1 is used for legacy compatibility
 	case "sha512":
 		return sha512.New()
 	case "md5":
-		return md5.New() // nolint:gosec // MD5 is used for legacy compatibility
+		return md5.New() //nolint:gosec // MD5 is used for legacy compatibility
 	default:
 		return defaultHash
 	}

@@ -161,7 +161,7 @@ func TestHandler_updateLock(t *testing.T) {
 				})
 			}
 
-			models := handler.Handle(events[0])
+			models, _ := handler.Handle(events[0])
 
 			require.Len(t, models, 1)
 			model := models[0]

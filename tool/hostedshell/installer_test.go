@@ -1,6 +1,7 @@
 package hostedshell
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -71,7 +72,7 @@ func TestInstaller_InstallTo(t *testing.T) {
 			i := NewInstaller(tt.fields.config)
 			i.scriptRunner = tt.fields.scriptRunner
 			want := filepath.Join(tt.args.destDir, "syft")
-			got, err := i.InstallTo(tt.args.version, tt.args.destDir)
+			got, err := i.InstallTo(context.Background(), tt.args.version, tt.args.destDir)
 			if !tt.wantErr(t, err, fmt.Sprintf("InstallTo(%v, %v)", tt.args.version, tt.args.destDir)) {
 				return
 			}

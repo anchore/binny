@@ -2,6 +2,7 @@ package command
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -28,6 +29,13 @@ type ListConfig struct {
 	option.Format `json:"" yaml:",inline" mapstructure:",squash"`
 }
 
+// toolOptions returns ToolOptions without an ignore-cooldown override. The list command intentionally
+// applies cooldown so that status reflects what install/update would produce.
+func (c ListConfig) toolOptions() option.ToolOptions {
+	return option.DefaultToolOptions().
+		WithGlobalCooldown(c.Cooldown)
+}
+
 func List(app clio.Application) *cobra.Command {
 	cfg := &ListConfig{
 		Core: option.DefaultCore(),
@@ -44,15 +52,15 @@ func List(app clio.Application) *cobra.Command {
 			"ls",
 		},
 		Args: cobra.ArbitraryArgs,
-		PreRunE: func(cmd *cobra.Command, args []string) error {
-			if cfg.Format.JQCommand != "" && cfg.Format.Output != "json" {
+		PreRunE: func(_ *cobra.Command, args []string) error {
+			if cfg.JQCommand != "" && cfg.Output != "json" {
 				return fmt.Errorf("--jq can only be used when --output format is 'json'")
 			}
 			cfg.IncludeFilter = args
 			return nil
 		},
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runList(*cfg)
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runList(cmd.Context(), *cfg)
 		},
 	}, cfg)
 }
@@ -68,25 +76,25 @@ type toolStatus struct {
 	Error            error  `json:"error,omitempty"`  // if there was an error getting the status for this tool, it will be here
 }
 
-func runList(cmdCfg ListConfig) error {
+func runList(ctx context.Context, cmdCfg ListConfig) error {
 	// get the current store state
-	store, err := binny.NewStore(cmdCfg.Store.Root)
+	store, err := binny.NewStore(cmdCfg.Root)
 	if err != nil {
 		return err
 	}
 
-	allStatuses := getAllStatuses(cmdCfg, store)
+	allStatuses := getAllStatuses(ctx, cmdCfg, store, cmdCfg.toolOptions())
 
 	// look for items in the store root that cannot be accounted for
 	// TODO
 
-	statuses := filterStatus(allStatuses, cmdCfg.List.IncludeFilter)
+	statuses := filterStatus(allStatuses, cmdCfg.IncludeFilter)
 
-	if cmdCfg.Format.Output == "json" {
-		return reportOnBus(renderListJSON(statuses, cmdCfg.List.Updates, cmdCfg.Format.JQCommand))
+	if cmdCfg.Output == "json" {
+		return reportOnBus(renderListJSON(statuses, cmdCfg.Updates, cmdCfg.JQCommand))
 	}
 
-	if cmdCfg.List.Updates {
+	if cmdCfg.Updates {
 		return reportOnBus(renderListUpdatesTable(statuses), nil)
 	}
 
@@ -146,7 +154,7 @@ func filterToolsWithoutUpdates(statuses []toolStatus) []toolStatus {
 	return updates
 }
 
-func getAllStatuses(cmdCfg ListConfig, store *binny.Store) []toolStatus {
+func getAllStatuses(ctx context.Context, cmdCfg ListConfig, store *binny.Store, opts option.ToolOptions) []toolStatus {
 	var (
 		failedTools = make(map[string]error)
 		allStatus   []toolStatus
@@ -157,7 +165,7 @@ func getAllStatuses(cmdCfg ListConfig, store *binny.Store) []toolStatus {
 	storedEntries := store.Entries()
 
 	for _, opt := range toolOpts {
-		status, entry, err := getStatus(store, opt)
+		status, entry, err := getStatus(ctx, store, opt, opts)
 		if err != nil {
 			failedTools[opt.Name] = err
 			continue
@@ -193,7 +201,7 @@ func getAllStatuses(cmdCfg ListConfig, store *binny.Store) []toolStatus {
 
 	// we weren't able to get status for all tools, but we should still present these
 	for name, err := range failedTools {
-		opt := cmdCfg.Core.Tools.GetOption(name)
+		opt := cmdCfg.Tools.GetOption(name)
 		var wantVersion string
 		if opt != nil {
 			wantVersion = opt.Version.Want
@@ -208,8 +216,8 @@ func getAllStatuses(cmdCfg ListConfig, store *binny.Store) []toolStatus {
 	return allStatus
 }
 
-func getStatus(store *binny.Store, opt option.Tool) (*toolStatus, *binny.StoreEntry, error) {
-	t, intent, err := opt.ToTool()
+func getStatus(ctx context.Context, store *binny.Store, opt option.Tool, opts option.ToolOptions) (*toolStatus, *binny.StoreEntry, error) {
+	t, intent, err := opt.ToTool(opts)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -235,7 +243,7 @@ func getStatus(store *binny.Store, opt option.Tool) (*toolStatus, *binny.StoreEn
 		}
 	}
 
-	resolvedVersion, err := tool.ResolveVersion(t, *intent)
+	resolvedVersion, err := tool.ResolveVersion(ctx, t, *intent)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -535,7 +543,9 @@ func summarizeGitVersion(v string) string {
 
 func onlyAlphaNumeric(v string) bool {
 	for _, c := range v {
-		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+		isLowercase := c >= 'a' && c <= 'z'
+		isDigit := c >= '0' && c <= '9'
+		if !isLowercase && !isDigit {
 			return false
 		}
 	}

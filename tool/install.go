@@ -1,6 +1,7 @@
 package tool
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -18,7 +19,7 @@ import (
 
 var ErrAlreadyInstalled = errors.New("already installed")
 
-func Install(tool binny.Tool, intent binny.VersionIntent, store *binny.Store, verifyConfig VerifyConfig) (err error) {
+func Install(ctx context.Context, tool binny.Tool, intent binny.VersionIntent, store *binny.Store, verifyConfig VerifyConfig) (err error) {
 	prog, stage := trackInstallation(tool.Name(), intent.Want)
 	defer func() {
 		if err != nil && !errors.Is(err, ErrAlreadyInstalled) {
@@ -38,7 +39,7 @@ func Install(tool binny.Tool, intent binny.VersionIntent, store *binny.Store, ve
 
 	stage.Set("resolving version")
 
-	resolvedVersion, err := tool.ResolveVersion(intent.Want, intent.Constraint)
+	resolvedVersion, err := tool.ResolveVersion(ctx, intent)
 	if err != nil {
 		return fmt.Errorf("failed to resolve version for tool %q: %w", tool.Name(), err)
 	}
@@ -60,7 +61,7 @@ func Install(tool binny.Tool, intent binny.VersionIntent, store *binny.Store, ve
 	stage.Set(fmt.Sprintf("installing %q", resolvedVersion))
 
 	// install the tool to a temp dir
-	binPath, err := tool.InstallTo(resolvedVersion, tmpdir)
+	binPath, err := tool.InstallTo(ctx, resolvedVersion, tmpdir)
 	if err != nil {
 		return err
 	}
@@ -91,6 +92,13 @@ func makeStagingArea(store *binny.Store, toolName string) (string, func(), error
 	if err != nil {
 		return "", cleanup, fmt.Errorf("failed to get absolute path for store root: %w", err)
 	}
+
+	if _, err := os.Stat(absRoot); os.IsNotExist(err) {
+		if err := os.MkdirAll(absRoot, 0755); err != nil {
+			return "", cleanup, fmt.Errorf("failed to create store root: %w", err)
+		}
+	}
+
 	tmpdir, err := os.MkdirTemp(absRoot, fmt.Sprintf("binny-install-%s-", toolName))
 	if err != nil {
 		return "", cleanup, fmt.Errorf("failed to create temp directory: %w", err)
