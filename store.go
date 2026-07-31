@@ -144,8 +144,8 @@ func (s *Store) AddTool(toolName string, resolvedVersion, pathOutsideRoot string
 	}
 
 	// move the file into the store at root/basename
-	targetName := toolName
-	targetPath := filepath.Join(s.root, toolName)
+	targetName := filepath.Base(pathOutsideRoot) // preserve the filename given to the tool, e.g. syft.exe
+	targetPath := filepath.Join(s.root, targetName)
 
 	if err := os.Rename(pathOutsideRoot, targetPath); err != nil {
 		return err
