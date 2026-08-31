@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/anchore/binny"
@@ -45,6 +46,10 @@ func (i Installer) InstallTo(ctx context.Context, version, destDir string) (stri
 	fields := strings.Split(path, "/")
 	binName := fields[len(fields)-1]
 	binPath := filepath.Join(destDir, binName)
+	// TODO: probably refactor this somewhere
+	if runtime.GOOS == "windows" {
+		binPath = fmt.Sprintf("%s.exe", binPath)
+	}
 
 	spec := fmt.Sprintf("%s@%s", path, version)
 	isLocal := strings.HasPrefix(i.config.Module, ".") || strings.HasPrefix(i.config.Module, "/")
