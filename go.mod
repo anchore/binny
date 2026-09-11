@@ -19,6 +19,7 @@ require (
 	github.com/cyphar/filepath-securejoin v0.7.0
 	github.com/gabriel-vasile/mimetype v1.4.15
 	github.com/gkampitakis/go-snaps v0.5.23
+	github.com/go-git/go-billy/v5 v5.9.0
 	github.com/go-git/go-git/v5 v5.19.2
 	github.com/google/go-cmp v0.7.0
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
@@ -74,7 +75,6 @@ require (
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/gkampitakis/ciinfo v0.3.4 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
-	github.com/go-git/go-billy/v5 v5.9.0 // indirect
 	github.com/go-openapi/errors v0.20.3 // indirect
 	github.com/go-openapi/strfmt v0.21.7 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect

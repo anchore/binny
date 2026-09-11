@@ -59,12 +59,9 @@ func TestResolveVersion_worktrees(t *testing.T) {
 func repoWithLinkedWorktree(t *testing.T) (mainPath, linkedPath, head string) {
 	t.Helper()
 
-	// note: not t.TempDir() -- go-git opens .git/worktrees/<name>/commondir and never closes it
-	// (dotGitCommonDirectory in go-git v5.19.2), and windows refuses to unlink an open file, so
-	// strict cleanup fails there. best-effort removal instead.
-	root, err := os.MkdirTemp("", "binny-worktree")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	// note: t.TempDir() cleanup is strict, which is the point -- windows cannot unlink a file that
+	// is still open, so a leaked handle in the repo open path fails this test there
+	root := t.TempDir()
 
 	mainPath = filepath.Join(root, "main")
 	linkedPath = filepath.Join(root, "linked")
