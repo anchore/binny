@@ -39,7 +39,7 @@ require (
 	github.com/wagoodman/go-progress v0.0.0-20230911172108-cf810b7e365c
 	golang.org/x/net v0.57.0
 	golang.org/x/oauth2 v0.37.0
-	golang.org/x/sync v0.22.0
+	golang.org/x/sync v0.23.0
 	golang.org/x/term v0.45.0
 	gopkg.in/yaml.v3 v3.0.1
 )
