@@ -67,10 +67,21 @@ func (v VersionResolver) ResolveVersion(ctx context.Context, intent binny.Versio
 	return want, nil
 }
 
-func headCommit(repoPath string) (string, error) {
-	r, err := git.PlainOpen(repoPath)
+// openRepo opens the repo with commondir support, otherwise refs (HEAD, tags) cannot be
+// resolved when the path is a linked worktree, where .git is a file pointing at
+// <main>/.git/worktrees/<name> and only that dir is searched for refs.
+func openRepo(repoPath string) (*git.Repository, error) {
+	r, err := git.PlainOpenWithOptions(repoPath, &git.PlainOpenOptions{EnableDotGitCommonDir: true})
 	if err != nil {
-		return "", fmt.Errorf("unable to open repo: %w", err)
+		return nil, fmt.Errorf("unable to open repo: %w", err)
+	}
+	return r, nil
+}
+
+func headCommit(repoPath string) (string, error) {
+	r, err := openRepo(repoPath)
+	if err != nil {
+		return "", err
 	}
 	ref, err := r.Head()
 	if err != nil {
@@ -80,9 +91,9 @@ func headCommit(repoPath string) (string, error) {
 }
 
 func byReference(repoPath, ref string) (string, error) {
-	r, err := git.PlainOpen(repoPath)
+	r, err := openRepo(repoPath)
 	if err != nil {
-		return "", fmt.Errorf("unable to open repo: %w", err)
+		return "", err
 	}
 
 	// try by tag first...

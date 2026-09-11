@@ -1,6 +1,7 @@
 package gobuild
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -11,6 +12,15 @@ import (
 	"github.com/anchore/binny/tool/goproxy"
 )
 
+// requireGitRoot asserts the path is a git root. note that .git is a directory in a normal
+// checkout but a file (pointing at the common dir) in a linked worktree, so only existence
+// can be asserted here.
+func requireGitRoot(t *testing.T, root string) {
+	t.Helper()
+	_, err := os.Stat(filepath.Join(root, ".git"))
+	require.NoError(t, err)
+}
+
 func TestFindGitRoot(t *testing.T) {
 	// this test runs from within the binny repo (tool/gobuild directory)
 	// so the git root is "../.." relative to the test working directory
@@ -18,15 +28,13 @@ func TestFindGitRoot(t *testing.T) {
 	t.Run("finds git root from current directory", func(t *testing.T) {
 		root, err := findGitRoot(".")
 		require.NoError(t, err)
-		// verify the returned path contains a .git directory
-		require.DirExists(t, filepath.Join(root, ".git"))
+		requireGitRoot(t, root)
 	})
 
 	t.Run("finds git root from subdirectory path", func(t *testing.T) {
 		root, err := findGitRoot("./some/fake/path")
 		require.NoError(t, err)
-		// verify the returned path contains a .git directory
-		require.DirExists(t, filepath.Join(root, ".git"))
+		requireGitRoot(t, root)
 	})
 
 	t.Run("returns relative path for relative input", func(t *testing.T) {
@@ -100,8 +108,7 @@ func TestDefaultVersionResolverConfig(t *testing.T) {
 			wantParamsFn: func(t *testing.T, params any) {
 				gitParams, ok := params.(git.VersionResolutionParameters)
 				require.True(t, ok)
-				// findGitRoot should find the git root containing .git directory
-				require.DirExists(t, filepath.Join(gitParams.Path, ".git"))
+				requireGitRoot(t, gitParams.Path)
 			},
 		},
 		{
@@ -113,8 +120,7 @@ func TestDefaultVersionResolverConfig(t *testing.T) {
 			wantParamsFn: func(t *testing.T, params any) {
 				gitParams, ok := params.(git.VersionResolutionParameters)
 				require.True(t, ok)
-				// findGitRoot traverses up and finds the git root containing .git directory
-				require.DirExists(t, filepath.Join(gitParams.Path, ".git"))
+				requireGitRoot(t, gitParams.Path)
 			},
 		},
 		{
