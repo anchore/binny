@@ -109,9 +109,11 @@ func byReference(repoPath, ref string) (string, error) {
 	}
 
 	// then by hash...
+	// note: a non-hash ref yields the zero hash here, which is simply not found (allowing the
+	// branch fallback below to take over)
 	commit, err := r.CommitObject(plumbing.NewHash(ref))
 	if err != nil {
-		if !errors.Is(err, plumbing.ErrReferenceNotFound) {
+		if !errors.Is(err, plumbing.ErrObjectNotFound) {
 			return "", fmt.Errorf("unable to fetch hash for %q: %w", ref, err)
 		}
 	}

@@ -33,6 +33,7 @@ func TestResolveVersion_worktrees(t *testing.T) {
 				{name: "current resolves to HEAD", want: "current", res: head},
 				{name: "tag", want: "v1.0.0", res: "refs/tags/v1.0.0"},
 				{name: "commit hash", want: head, res: head},
+				{name: "unknown is assumed to be a branch", want: "some-branch", res: "some-branch"},
 			} {
 				t.Run(tt.name, func(t *testing.T) {
 					got, err := resolver.ResolveVersion(context.Background(), binny.VersionIntent{Want: tt.want})
