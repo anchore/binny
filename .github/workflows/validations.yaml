@@ -31,10 +31,22 @@ jobs:
     # Note: changing this job name requires making the same update in the .github/workflows/release.yaml pipeline
     name: "Unit tests"
     needs: All-Unit-Tests
+    # run even when the matrix fails, otherwise this job is skipped and branch protection
+    # counts a skipped required check as a pass (which is how a windows-only unit test
+    # failure got merged to main)
+    if: always()
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
+      - name: Assert all unit tests passed
+        if: needs.All-Unit-Tests.result != 'success'
+        env:
+          RESULT: ${{ needs.All-Unit-Tests.result }}
+        run: |
+          echo "unit tests did not pass: $RESULT"
+          exit 1
+
       - run: echo All Unit Tests passed
 
   All-Unit-Tests:
