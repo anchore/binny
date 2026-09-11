@@ -21,6 +21,11 @@ import (
 	"github.com/anchore/clio"
 )
 
+const (
+	formatTable = "table"
+	formatJSON  = "json"
+)
+
 type ListConfig struct {
 	Config        string `json:"config" yaml:"config" mapstructure:"config"`
 	option.Check  `json:"" yaml:",inline" mapstructure:",squash"`
@@ -40,8 +45,8 @@ func List(app clio.Application) *cobra.Command {
 	cfg := &ListConfig{
 		Core: option.DefaultCore(),
 		Format: option.Format{
-			Output:           "table",
-			AllowableFormats: []string{"table", "json"},
+			Output:           formatTable,
+			AllowableFormats: []string{formatTable, formatJSON},
 		},
 	}
 
@@ -53,7 +58,7 @@ func List(app clio.Application) *cobra.Command {
 		},
 		Args: cobra.ArbitraryArgs,
 		PreRunE: func(_ *cobra.Command, args []string) error {
-			if cfg.JQCommand != "" && cfg.Output != "json" {
+			if cfg.JQCommand != "" && cfg.Output != formatJSON {
 				return fmt.Errorf("--jq can only be used when --output format is 'json'")
 			}
 			cfg.IncludeFilter = args
@@ -90,7 +95,7 @@ func runList(ctx context.Context, cmdCfg ListConfig) error {
 
 	statuses := filterStatus(allStatuses, cmdCfg.IncludeFilter)
 
-	if cmdCfg.Output == "json" {
+	if cmdCfg.Output == formatJSON {
 		return reportOnBus(renderListJSON(statuses, cmdCfg.Updates, cmdCfg.JQCommand))
 	}
 
