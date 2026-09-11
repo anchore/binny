@@ -67,11 +67,15 @@ func (v VersionResolver) ResolveVersion(ctx context.Context, intent binny.Versio
 	return want, nil
 }
 
-// openRepo opens the repo with commondir support, otherwise refs (HEAD, tags) cannot be
-// resolved when the path is a linked worktree, where .git is a file pointing at
-// <main>/.git/worktrees/<name> and only that dir is searched for refs.
+// openRepo opens the repo that the given path belongs to. Both options are needed for paths that
+// are not a plain repo root: DetectDotGit walks up so a module subdirectory (e.g. ./cmd/tool)
+// finds the root, and EnableDotGitCommonDir handles a linked worktree, where .git is a file
+// pointing at <main>/.git/worktrees/<name> and refs (HEAD, tags) live in the common dir.
 func openRepo(repoPath string) (*git.Repository, error) {
-	r, err := git.PlainOpenWithOptions(repoPath, &git.PlainOpenOptions{EnableDotGitCommonDir: true})
+	r, err := git.PlainOpenWithOptions(repoPath, &git.PlainOpenOptions{
+		DetectDotGit:          true,
+		EnableDotGitCommonDir: true,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("unable to open repo: %w", err)
 	}

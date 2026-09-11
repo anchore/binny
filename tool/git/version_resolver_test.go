@@ -2,6 +2,7 @@ package git
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -17,31 +18,40 @@ import (
 func TestResolveVersion_worktrees(t *testing.T) {
 	main, linked, head := repoWithLinkedWorktree(t)
 
-	for _, path := range []string{main, linked} {
+	for _, root := range []string{main, linked} {
 		name := "main-checkout"
-		if path == linked {
+		if root == linked {
 			name = "linked-worktree"
 		}
-		t.Run(name, func(t *testing.T) {
-			resolver := NewVersionResolver(VersionResolutionParameters{Path: path})
 
-			for _, tt := range []struct {
-				name string
-				want string
-				res  string
-			}{
-				{name: "current resolves to HEAD", want: "current", res: head},
-				{name: "tag", want: "v1.0.0", res: "refs/tags/v1.0.0"},
-				{name: "commit hash", want: head, res: head},
-				{name: "unknown is assumed to be a branch", want: "some-branch", res: "some-branch"},
-			} {
-				t.Run(tt.name, func(t *testing.T) {
-					got, err := resolver.ResolveVersion(context.Background(), binny.VersionIntent{Want: tt.want})
-					require.NoError(t, err)
-					require.Equal(t, tt.res, got)
-				})
+		// a module path may point below the repo root (e.g. go-install with module: ./cmd/tool),
+		// so resolution must walk up to find the repo
+		for _, path := range []string{root, filepath.Join(root, "cmd", "tool")} {
+			name := name
+			if path != root {
+				name += "/from-subdirectory"
 			}
-		})
+			t.Run(name, func(t *testing.T) {
+				resolver := NewVersionResolver(VersionResolutionParameters{Path: path})
+
+				for _, tt := range []struct {
+					name string
+					want string
+					res  string
+				}{
+					{name: "current resolves to HEAD", want: "current", res: head},
+					{name: "tag", want: "v1.0.0", res: "refs/tags/v1.0.0"},
+					{name: "commit hash", want: head, res: head},
+					{name: "unknown is assumed to be a branch", want: "some-branch", res: "some-branch"},
+				} {
+					t.Run(tt.name, func(t *testing.T) {
+						got, err := resolver.ResolveVersion(context.Background(), binny.VersionIntent{Want: tt.want})
+						require.NoError(t, err)
+						require.Equal(t, tt.res, got)
+					})
+				}
+			})
+		}
 	}
 }
 
@@ -70,6 +80,11 @@ func repoWithLinkedWorktree(t *testing.T) (mainPath, linkedPath, head string) {
 	run(mainPath, "commit", "--allow-empty", "-m", "initial")
 	run(mainPath, "tag", "-a", "-m", "release", "v1.0.0")
 	run(mainPath, "worktree", "add", "-b", "feature", linkedPath)
+
+	// git does not track empty dirs, so make the module subdir in both checkouts
+	for _, p := range []string{mainPath, linkedPath} {
+		require.NoError(t, os.MkdirAll(filepath.Join(p, "cmd", "tool"), 0700))
+	}
 
 	head = run(mainPath, "rev-parse", "HEAD")
 	require.Len(t, head, 40)
