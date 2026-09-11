@@ -4,18 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"os"
-	"path/filepath"
-	"strings"
 
-	"github.com/go-git/go-billy/v5"
-	"github.com/go-git/go-billy/v5/osfs"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/cache"
-	"github.com/go-git/go-git/v5/storage/filesystem"
-	"github.com/go-git/go-git/v5/storage/filesystem/dotgit"
 
 	"github.com/anchore/binny"
 	"github.com/anchore/binny/internal/log"
@@ -76,86 +67,19 @@ func (v VersionResolver) ResolveVersion(ctx context.Context, intent binny.Versio
 	return want, nil
 }
 
-// openRepo opens the repo that the given path belongs to. DetectDotGit walks up so a module
-// subdirectory (e.g. ./cmd/tool) finds the root, and the common dir is wired up by hand for linked
-// worktrees, where .git is a file pointing at <main>/.git/worktrees/<name> and refs (HEAD, tags)
-// live in the common dir.
-//
-// note: go-git has an EnableDotGitCommonDir option that does the same wiring, but it leaks the open
-// commondir file handle (dotGitCommonDirectory in v5.19.2 never closes it), and windows will not let
-// anything unlink a file that is still open. drop this in favor of the option once that is fixed.
+// openRepo opens the repo that the given path belongs to. Both options are needed for paths that
+// are not a plain repo root: DetectDotGit walks up so a module subdirectory (e.g. ./cmd/tool)
+// finds the root, and EnableDotGitCommonDir handles a linked worktree, where .git is a file
+// pointing at <main>/.git/worktrees/<name> and refs (HEAD, tags) live in the common dir.
 func openRepo(repoPath string) (*git.Repository, error) {
 	r, err := git.PlainOpenWithOptions(repoPath, &git.PlainOpenOptions{
-		DetectDotGit: true,
+		DetectDotGit:          true,
+		EnableDotGitCommonDir: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("unable to open repo: %w", err)
 	}
-
-	storer, ok := r.Storer.(*filesystem.Storage)
-	if !ok {
-		return r, nil
-	}
-
-	dot := storer.Filesystem()
-
-	common, err := commonDir(dot)
-	if err != nil {
-		return nil, err
-	}
-
-	if common == nil {
-		// not a linked worktree, everything already lives in the dir we opened
-		return r, nil
-	}
-
-	wt, err := r.Worktree()
-	if err != nil {
-		return nil, fmt.Errorf("unable to get worktree: %w", err)
-	}
-
-	s := filesystem.NewStorage(dotgit.NewRepositoryFilesystem(dot, common), cache.NewObjectLRUDefault())
-
-	r, err = git.Open(s, wt.Filesystem)
-	if err != nil {
-		return nil, fmt.Errorf("unable to open repo against common dir: %w", err)
-	}
-
 	return r, nil
-}
-
-// commonDir resolves the commondir file of a linked worktree admin dir, returning nil when the
-// given dir is not one (i.e. a plain .git directory).
-func commonDir(dot billy.Filesystem) (billy.Filesystem, error) {
-	f, err := dot.Open("commondir")
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("unable to read commondir: %w", err)
-	}
-	defer f.Close()
-
-	b, err := io.ReadAll(f)
-	if err != nil {
-		return nil, fmt.Errorf("unable to read commondir: %w", err)
-	}
-
-	path := strings.TrimSpace(string(b))
-	if path == "" {
-		return nil, nil
-	}
-
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(dot.Root(), path)
-	}
-
-	common := osfs.New(path)
-	if _, err := common.Stat(""); err != nil {
-		return nil, fmt.Errorf("commondir %q is not readable: %w", path, err)
-	}
-
-	return common, nil
 }
 
 func headCommit(repoPath string) (string, error) {
