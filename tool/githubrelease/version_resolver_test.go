@@ -268,6 +268,42 @@ func Test_filterToLatestVersion(t *testing.T) {
 				IsDraft:  boolRef(false),
 			},
 		},
+		{
+			name:              "non-semver rolling tag does not displace a semver release",
+			versionConstraint: "",
+			releases: []ghRelease{
+				{Tag: "v2.0.0"},
+				{Tag: "nightly"}, // rolling tag, not comparable
+				{Tag: "v1.0.0"},
+			},
+			want: &ghRelease{
+				Tag: "v2.0.0",
+			},
+		},
+		{
+			name:              "prereleases are not candidates",
+			versionConstraint: "",
+			releases: []ghRelease{
+				{Tag: "v2.1.0-abc1234-nightly"},
+				{Tag: "v2.0.0"},
+			},
+			want: &ghRelease{
+				Tag: "v2.0.0",
+			},
+		},
+		{
+			name:              "constraint naming a prerelease opts into prereleases",
+			versionConstraint: ">= 1.0.0-rc1",
+			releases: []ghRelease{
+				{Tag: "v1.0.0-rc2"},
+				{Tag: "nightly"},
+				{Tag: "v1.0.0-rc1"},
+				{Tag: "v0.9.0"},
+			},
+			want: &ghRelease{
+				Tag: "v1.0.0-rc2",
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -368,6 +404,18 @@ func Test_filterToLatestVersion_withCooldown(t *testing.T) {
 				{Tag: "1.0.0", Date: &oldDate},
 			},
 			want: &ghRelease{Tag: "2.0.0", Date: &oldDate, IsLatest: boolRef(true)},
+		},
+		{
+			// regression: when cooldown knocks out the IsLatest release the loop falls through to
+			// ranking candidates, where a rolling non-semver tag used to win outright
+			name:   "cooldown on IsLatest does not fall back to a rolling tag",
+			cutoff: &cutoff,
+			releases: []ghRelease{
+				{Tag: "2.1.0", Date: &newDate, IsLatest: boolRef(true)},
+				{Tag: "2.0.0", Date: &oldDate},
+				{Tag: "nightly", Date: &oldDate},
+			},
+			want: &ghRelease{Tag: "2.0.0", Date: &oldDate},
 		},
 	}
 

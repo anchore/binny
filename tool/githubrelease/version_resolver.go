@@ -157,6 +157,7 @@ func filterToLatestVersion(releases []ghRelease, versionConstraint string, cutof
 	}
 
 	var latest *ghRelease
+	var latestVer *semver.Version
 	for i := range releases {
 		ty := releases[i]
 		if ty.IsDraft != nil && *ty.IsDraft {
@@ -172,7 +173,7 @@ func filterToLatestVersion(releases []ghRelease, versionConstraint string, cutof
 
 		ver, err := semver.NewVersion(ty.Tag)
 		if err != nil {
-			log.WithFields("tag", ty.Tag).Warn("unable to parse version as semver")
+			log.WithFields("tag", ty.Tag).Debug("unable to parse version as semver")
 			ver = nil
 		}
 
@@ -188,27 +189,22 @@ func filterToLatestVersion(releases []ghRelease, versionConstraint string, cutof
 			}
 		}
 
-		if latest != nil {
-			latestVer, err := semver.NewVersion(latest.Tag)
-			if err != nil {
-				log.WithFields("tag", latest.Tag).Warn("unable to parse current latest version as semver")
-				// can't compare semver, so skip this candidate entirely since we already have a latest
-				continue
-			}
-
-			if ver != nil {
-				if ver.LessThan(latestVer) || ver.Equal(latestVer) {
-					continue
-				}
-			}
+		// beyond this point candidates are ranked against each other, which requires them to be
+		// comparable and stable. A tag that isn't semver (e.g. goreleaser's rolling "nightly")
+		// can't be ordered at all, and a prerelease is never something a pin should be moved to
+		// unless the constraint opts in (semver constraints only match prereleases when they name one).
+		// Releases that github itself flags as latest are handled above and still win.
+		if ver == nil || (constraint == nil && ver.Prerelease() != "") {
+			continue
 		}
 
-		if constraint != nil && ver != nil {
-			if constraint.Check(ver) {
-				latest = &ty
-			}
-		} else {
+		if latestVer != nil && !ver.GreaterThan(latestVer) {
+			continue
+		}
+
+		if constraint == nil || constraint.Check(ver) {
 			latest = &ty
+			latestVer = ver
 		}
 	}
 
