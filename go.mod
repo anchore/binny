@@ -8,8 +8,8 @@ require (
 	github.com/OneOfOne/xxhash v1.2.8
 	github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d
 	github.com/anchore/bubbly v0.2.2
-	github.com/anchore/clio v0.1.1
-	github.com/anchore/fangs v0.1.1
+	github.com/anchore/clio v0.1.2-0.20261002204411-24bafbd9b0ee
+	github.com/anchore/fangs v0.1.2-0.20261002223621-c66dbbee7f74
 	github.com/anchore/go-logger v0.2.0
 	github.com/chainguard-dev/yam v0.2.65
 	github.com/charmbracelet/bubbles v1.0.0
@@ -53,7 +53,7 @@ require (
 	github.com/ProtonMail/go-crypto v1.1.6 // indirect
 	github.com/STARRY-S/zip v0.2.3 // indirect
 	github.com/adrg/xdg v0.5.3 // indirect
-	github.com/anchore/go-homedir v0.1.1 // indirect
+	github.com/anchore/go-homedir v0.1.2-0.20261009171220-317f56795cce // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
