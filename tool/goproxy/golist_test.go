@@ -1,0 +1,94 @@
+package goproxy
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/anchore/binny"
+)
+
+// fileProxy writes a GOPROXY=file:// layout for example.com/tool and returns the env that points the go command at
+// it (and only it), so these tests run the real go command without touching the network or the user's module cache.
+func fileProxy(t *testing.T) []string {
+	t.Helper()
+	root := t.TempDir()
+	dir := filepath.Join(root, "example.com", "tool", "@v")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+
+	files := map[string]string{
+		"list":        "v1.0.0\nv1.1.0\n",
+		"v1.0.0.info": `{"Version":"v1.0.0","Time":"2026-01-01T00:00:00Z"}`,
+		"v1.1.0.info": `{"Version":"v1.1.0","Time":"2026-02-01T00:00:00Z"}`,
+		// a branch: the proxy answers the ref query with a pseudo-version
+		"main.info": `{"Version":"v1.1.1-0.20261015120000-abcdef123456","Time":"2026-10-15T12:00:00Z"}`,
+	}
+	for _, v := range []string{"v1.0.0", "v1.1.0", "v1.1.1-0.20261015120000-abcdef123456"} {
+		files[v+".mod"] = "module example.com/tool\n"
+	}
+	for name, content := range files {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600))
+	}
+
+	return []string{
+		"GOPROXY=file://" + filepath.ToSlash(root),
+		"GONOPROXY=",
+		"GOPRIVATE=",
+		"GOSUMDB=off",
+		"GOFLAGS=-modcacherw",
+		"GOMODCACHE=" + t.TempDir(),
+		"GOTOOLCHAIN=local",
+	}
+}
+
+func TestVersionResolver_goList(t *testing.T) {
+	ctx := context.Background()
+	v := NewVersionResolver(VersionResolutionParameters{Module: "example.com/tool", Env: fileProxy(t)})
+
+	got, err := v.ResolveVersion(ctx, binny.VersionIntent{Want: "main"})
+	require.NoError(t, err)
+	assert.Equal(t, "v1.1.1-0.20261015120000-abcdef123456", got)
+
+	got, err = v.ResolveVersion(ctx, binny.VersionIntent{Want: "latest"})
+	require.NoError(t, err)
+	assert.Equal(t, "v1.1.0", got)
+
+	// cooldown looks up each candidate's publish time through the go command too
+	got, err = v.UpdateVersion(ctx, binny.VersionIntent{Want: "v1.0.0", Cooldown: time.Since(time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC))})
+	require.NoError(t, err)
+	assert.Equal(t, "v1.0.0", got)
+
+	// the go command's reason is passed along
+	_, err = v.ResolveVersion(ctx, binny.VersionIntent{Want: "nope"})
+	require.ErrorContains(t, err, `"nope"`)
+	require.ErrorContains(t, err, "nope.info")
+}
+
+func TestVersionResolver_goList_honorsGOPROXYOff(t *testing.T) {
+	// the tool's env wins over the process env, and GOPROXY=off means no lookup at all (no fallback to a default proxy)
+	v := NewVersionResolver(VersionResolutionParameters{Module: "example.com/tool", Env: append(fileProxy(t), "GOPROXY=off")})
+	_, err := v.ResolveVersion(context.Background(), binny.VersionIntent{Want: "main"})
+	require.ErrorContains(t, err, "GOPROXY=off")
+}
+
+func Test_goList_rejectsBadModulePath(t *testing.T) {
+	_, err := goList(context.Background(), nil, "-x@main")
+	require.ErrorContains(t, err, "invalid module path")
+}
+
+func Test_quoteOutput(t *testing.T) {
+	got := quoteOutput([]byte("not found: \x1b[2J unknown revision\n"))
+	assert.NotContains(t, got, "\x1b")
+	assert.Contains(t, got, "unknown revision")
+
+	long := make([]byte, maxErrorSize*2)
+	for i := range long {
+		long[i] = 'A'
+	}
+	assert.Less(t, len(quoteOutput(long)), maxErrorSize+10)
+}

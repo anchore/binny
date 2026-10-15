@@ -18,7 +18,7 @@ func TestVersionResolver_ResolveVersion(t *testing.T) {
 		config                   VersionResolutionParameters
 		version                  string
 		constraint               string
-		availableVersionsFetcher func(ctx context.Context, url string) ([]string, error)
+		availableVersionsFetcher func(ctx context.Context, module string) ([]string, error)
 		want                     string
 		wantErr                  require.ErrorAssertionFunc
 	}{
@@ -29,7 +29,7 @@ func TestVersionResolver_ResolveVersion(t *testing.T) {
 			},
 			version: "latest",
 			want:    "2.0.0",
-			availableVersionsFetcher: func(_ context.Context, url string) ([]string, error) {
+			availableVersionsFetcher: func(_ context.Context, _ string) ([]string, error) {
 				return []string{"1.0.0", "2.0.0", "1.1.0"}, nil
 			},
 		},
@@ -42,12 +42,57 @@ func TestVersionResolver_ResolveVersion(t *testing.T) {
 			want:    "1.0.0",
 		},
 		{
-			name: "non-semver input is honored as is",
+			name: "branch resolves to a pseudo-version",
 			config: VersionResolutionParameters{
 				Module: "github.com/anchore/binny",
 			},
-			version: "bogus",
-			want:    "bogus",
+			version: "main",
+			want:    "v0.0.0-20261015120000-abcdef123456",
+		},
+		{
+			name: "full commit sha resolves to a pseudo-version",
+			config: VersionResolutionParameters{
+				Module: "github.com/anchore/binny",
+			},
+			version: "abcdef1234567890abcdef1234567890abcdef12",
+			want:    "v0.0.0-20261015120000-abcdef123456",
+		},
+		{
+			name: "short commit sha resolves to a pseudo-version",
+			config: VersionResolutionParameters{
+				Module: "github.com/anchore/binny",
+			},
+			version: "abcdef123456",
+			want:    "v0.0.0-20261015120000-abcdef123456",
+		},
+		{
+			name: "ref that is a tag resolves to the tag",
+			config: VersionResolutionParameters{
+				Module: "github.com/anchore/binny",
+			},
+			version: "release-1.2",
+			want:    "v1.2.0",
+		},
+		{
+			name: "unresolvable ref errors",
+			config: VersionResolutionParameters{
+				Module: "github.com/anchore/binny",
+			},
+			version: "no-such-branch",
+			wantErr: func(t require.TestingT, err error, _ ...interface{}) {
+				require.ErrorContains(t, err, `"no-such-branch"`)
+				require.ErrorContains(t, err, `"github.com/anchore/binny"`)
+				require.ErrorContains(t, err, "unknown revision")
+			},
+		},
+		{
+			name: "allow for unresolved refs",
+			config: VersionResolutionParameters{
+				Module:                 "github.com/anchore/binny",
+				AllowUnresolvedVersion: true,
+			},
+			version: "main",
+			want:    "main",
 		},
 		{
 			name: "do not allow for unresolved versions",
@@ -56,7 +101,7 @@ func TestVersionResolver_ResolveVersion(t *testing.T) {
 			},
 			version: "latest",
 			wantErr: require.Error,
-			availableVersionsFetcher: func(_ context.Context, url string) ([]string, error) {
+			availableVersionsFetcher: func(_ context.Context, _ string) ([]string, error) {
 				return []string{""}, nil
 			},
 		},
@@ -68,7 +113,7 @@ func TestVersionResolver_ResolveVersion(t *testing.T) {
 			},
 			version: "latest",
 			want:    "latest", // this is a pass through to go-install, which supports this as input
-			availableVersionsFetcher: func(_ context.Context, url string) ([]string, error) {
+			availableVersionsFetcher: func(_ context.Context, _ string) ([]string, error) {
 				return nil, fmt.Errorf("should never be called")
 			},
 		},
@@ -80,6 +125,12 @@ func TestVersionResolver_ResolveVersion(t *testing.T) {
 			}
 			v := NewVersionResolver(tt.config)
 			v.availableVersionsFetcher = tt.availableVersionsFetcher
+			v.versionInfoFetcher = stubRefs(map[string]string{
+				"main": "v0.0.0-20261015120000-abcdef123456",
+				"abcdef1234567890abcdef1234567890abcdef12": "v0.0.0-20261015120000-abcdef123456",
+				"abcdef123456": "v0.0.0-20261015120000-abcdef123456",
+				"release-1.2":  "v1.2.0",
+			})
 
 			got, err := v.ResolveVersion(context.Background(), binny.VersionIntent{Want: tt.version, Constraint: tt.constraint})
 			tt.wantErr(t, err)
@@ -94,7 +145,7 @@ func TestVersionResolver_UpdateVersion(t *testing.T) {
 		config                   VersionResolutionParameters
 		version                  string
 		constraint               string
-		availableVersionsFetcher func(ctx context.Context, url string) ([]string, error)
+		availableVersionsFetcher func(ctx context.Context, module string) ([]string, error)
 		want                     string
 		wantErr                  require.ErrorAssertionFunc
 	}{
@@ -113,17 +164,17 @@ func TestVersionResolver_UpdateVersion(t *testing.T) {
 			},
 			version: "1.0.0",
 			want:    "2.0.0",
-			availableVersionsFetcher: func(_ context.Context, url string) ([]string, error) {
+			availableVersionsFetcher: func(_ context.Context, _ string) ([]string, error) {
 				return []string{"1.0.0", "2.0.0", "1.1.0"}, nil
 			},
 		},
 		{
-			name: "non-semver input is honored as is",
+			name: "ref is kept as the intent",
 			config: VersionResolutionParameters{
 				Module: "github.com/anchore/binny",
 			},
-			version: "bogus",
-			want:    "bogus",
+			version: "main",
+			want:    "main",
 		},
 	}
 	for _, tt := range tests {
@@ -150,7 +201,7 @@ func TestVersionResolver_ResolveVersion_withCooldown(t *testing.T) {
 		name                     string
 		cooldown                 time.Duration
 		version                  string
-		availableVersionsFetcher func(ctx context.Context, url string) ([]string, error)
+		availableVersionsFetcher func(ctx context.Context, module string) ([]string, error)
 		versionInfoFetcher       func(ctx context.Context, module, version string) (*versionInfo, error)
 		want                     string
 		wantErr                  require.ErrorAssertionFunc
@@ -280,7 +331,7 @@ func TestVersionResolver_UpdateVersion_withCooldown(t *testing.T) {
 		cooldown                 time.Duration
 		version                  string
 		constraint               string
-		availableVersionsFetcher func(ctx context.Context, url string) ([]string, error)
+		availableVersionsFetcher func(ctx context.Context, module string) ([]string, error)
 		versionInfoFetcher       func(ctx context.Context, module, version string) (*versionInfo, error)
 		want                     string
 		wantErr                  require.ErrorAssertionFunc
@@ -367,4 +418,68 @@ func TestVersionResolver_UpdateVersion_withCooldown(t *testing.T) {
 			}
 		})
 	}
+}
+
+// stubRefs answers go proxy .info lookups from a ref->version table, erroring like the proxy does for anything else.
+func stubRefs(refs map[string]string) func(context.Context, string, string) (*versionInfo, error) {
+	return func(_ context.Context, _, ref string) (*versionInfo, error) {
+		ver, ok := refs[ref]
+		if !ok {
+			return nil, fmt.Errorf("failed to get version info from go proxy: 404 Not Found: unknown revision %s", ref)
+		}
+		return &versionInfo{Version: ver}, nil
+	}
+}
+
+func TestVersionResolver_RefTracksMovedBranch(t *testing.T) {
+	v := NewVersionResolver(VersionResolutionParameters{Module: "github.com/anchore/binny"})
+	intent := binny.VersionIntent{Want: "main"}
+
+	v.versionInfoFetcher = stubRefs(map[string]string{"main": "v0.0.0-20261014120000-111111111111"})
+	before, err := v.ResolveVersion(context.Background(), intent)
+	require.NoError(t, err)
+
+	// the branch moves upstream
+	v.versionInfoFetcher = stubRefs(map[string]string{"main": "v0.0.0-20261015120000-222222222222"})
+	after, err := v.ResolveVersion(context.Background(), intent)
+	require.NoError(t, err)
+	assert.Equal(t, "v0.0.0-20261015120000-222222222222", after)
+	assert.NotEqual(t, before, after, "a moved branch should resolve to a new version so check/install see the tool as stale")
+
+	// update leaves the configured ref alone
+	updated, err := v.UpdateVersion(context.Background(), intent)
+	require.NoError(t, err)
+	assert.Equal(t, "main", updated)
+}
+
+func TestVersionResolver_ResolveVersion_validatesAnswer(t *testing.T) {
+	refs := map[string]string{
+		"evil":  "v1 -extld=/tmp/x",
+		"major": "v2.0.0", // wrong major for a module without a /v2 suffix
+	}
+	tests := []struct {
+		name       string
+		want       string
+		constraint string
+		wantErr    string
+	}{
+		{name: "invalid version is rejected", want: "evil", wantErr: "invalid version"},
+		{name: "version with wrong major is rejected", want: "major", wantErr: "invalid version"},
+		{name: "constraint with a ref is rejected", want: "main", constraint: "< 2.0", wantErr: "cannot specify a version constraint"},
+		{name: "unresolvable ref points at the escape hatch", want: "nope", wantErr: "allow-unresolved-version"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v := NewVersionResolver(VersionResolutionParameters{Module: "github.com/anchore/binny"})
+			v.versionInfoFetcher = stubRefs(refs)
+			_, err := v.ResolveVersion(context.Background(), binny.VersionIntent{Want: tt.want, Constraint: tt.constraint})
+			require.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
+
+func TestVersionResolver_UpdateVersion_refWithConstraint(t *testing.T) {
+	v := NewVersionResolver(VersionResolutionParameters{Module: "github.com/anchore/binny"})
+	_, err := v.UpdateVersion(context.Background(), binny.VersionIntent{Want: "main", Constraint: "< 2.0"})
+	require.ErrorContains(t, err, "cannot specify a version constraint")
 }

@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"golang.org/x/mod/module"
+
 	"github.com/anchore/binny/internal/log"
 )
 
@@ -63,12 +65,24 @@ func cloneSource(ctx context.Context, module, version, repoURL string) (string, 
 		}
 	}
 
-	// try shallow clone with --branch first (works for tags and branches)
+	version = gitRev(version)
 	lgr.WithFields("repo", repoURL, "version", version).Debug("cloning repository")
 
-	if err := shallowClone(ctx, repoURL, version, tempDir); err != nil {
-		// shallow clone failed, try full clone + checkout (handles commit hashes)
+	if fullSHAPattern.MatchString(version) {
+		// a full commit (what a tracked git ref resolves to) can be fetched on its own, without history
+		err = fetchCommit(ctx, repoURL, version, tempDir)
+	} else {
+		// shallow clone with --branch works for tags and branches
+		err = shallowClone(ctx, repoURL, version, tempDir)
+	}
+
+	if err != nil {
+		// try full clone + checkout (handles short commit hashes, and servers that refuse fetching by sha)
 		lgr.WithFields("repo", repoURL, "version", version).Debug("shallow clone failed, trying full clone")
+		if err := resetDir(tempDir); err != nil {
+			cleanup()
+			return "", nil, err
+		}
 		if err := fullCloneAndCheckout(ctx, repoURL, version, tempDir); err != nil {
 			cleanup()
 			return "", nil, fmt.Errorf("failed to clone repository: %w", err)
@@ -77,6 +91,17 @@ func cloneSource(ctx context.Context, module, version, repoURL string) (string, 
 
 	// for modules with subpaths (e.g., github.com/owner/repo/subpkg), the workDir is still the repo root
 	return tempDir, cleanup, nil
+}
+
+// gitRev maps a version to something git can check out. A go-proxy pseudo-version (e.g. the resolved form of a
+// branch) is not a git ref, but it embeds the commit it points to.
+func gitRev(version string) string {
+	if module.IsPseudoVersion(version) {
+		if rev, err := module.PseudoVersionRev(version); err == nil {
+			return rev
+		}
+	}
+	return version
 }
 
 // shallowClone performs a shallow clone (depth=1) for a specific tag or branch.
@@ -92,11 +117,42 @@ func shallowClone(ctx context.Context, repoURL, version, destDir string) error {
 	return nil
 }
 
+// fetchCommit fetches a single commit (depth=1) into an empty repo and checks it out.
+func fetchCommit(ctx context.Context, repoURL, sha, destDir string) error {
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"fetch", "-q", "--depth", "1", "--", repoURL, sha},
+		{"checkout", "-q", "--detach", "FETCH_HEAD"},
+	} {
+		log.Trace("running: git " + strings.Join(args, " "))
+		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Dir = destDir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("git %s failed: %v\nOutput: %s", args[0], err, output)
+		}
+	}
+	return nil
+}
+
+// resetDir empties a directory so a failed clone attempt doesn't block the next one.
+func resetDir(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // fullCloneAndCheckout performs a full clone and then checks out the specified version.
 // This is used as a fallback when shallow clone fails (e.g., for commit hashes).
 func fullCloneAndCheckout(ctx context.Context, repoURL, version, destDir string) error {
-	// full clone
-	cloneArgs := []string{"clone", repoURL, destDir}
+	// full history, but blobs are only fetched for the commit that gets checked out
+	cloneArgs := []string{"clone", "--filter=blob:none", repoURL, destDir}
 	log.Trace("running: git " + strings.Join(cloneArgs, " "))
 
 	cmd := exec.CommandContext(ctx, "git", cloneArgs...)

@@ -2,6 +2,7 @@ package tool
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/mitchellh/hashstructure/v2"
 
@@ -60,9 +61,13 @@ func New(t Config) (binny.Tool, error) {
 		return nil, fmt.Errorf("failed to get installer for tool %q: %w", t.Name, err)
 	}
 
-	resolver, err := getResolver(t.VersionResolverConfig.Method, t.VersionResolverConfig.Parameters)
+	resolver, err := getResolver(t.VersionResolverConfig.Method, t.VersionResolverConfig.Parameters, t.InstallerConfig.Parameters)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get version resolver for tool %q: %w", t.Name, err)
+	}
+
+	if params, ok := t.InstallerConfig.Parameters.(gobuild.InstallerParameters); ok {
+		resolver = gobuild.WithGitRefResolution(params, resolver)
 	}
 
 	return &compositeTool{
@@ -111,13 +116,14 @@ func getInstaller(method string, installParams any) (installer binny.Installer, 
 	return installer, nil
 }
 
-func getResolver(method string, params any) (resolver binny.VersionResolver, err error) {
+func getResolver(method string, params, installParams any) (resolver binny.VersionResolver, err error) {
 	switch {
 	case goproxy.IsResolveMethod(method):
 		config, ok := params.(goproxy.VersionResolutionParameters)
 		if !ok {
 			return nil, fmt.Errorf("invalid go proxy version resolution parameters")
 		}
+		config.Env = goCommandEnv(installParams)
 		resolver = goproxy.NewVersionResolver(config)
 	case githubrelease.IsResolveMethod(method):
 		config, ok := params.(githubrelease.VersionResolutionParameters)
@@ -174,4 +180,25 @@ func defaultVersionResolverConfig(installMethod string, installParams any) (meth
 	}
 
 	return "", nil, nil
+}
+
+// goCommandEnv returns the env a go installer runs the go command with, so version lookups see the same
+// GOPROXY/GOPRIVATE/etc as the install. Entries templated on the version are left out, since the version is what
+// is being resolved.
+func goCommandEnv(installParams any) []string {
+	var env []string
+	switch p := installParams.(type) {
+	case goinstall.InstallerParameters:
+		env = p.Env
+	case gobuild.InstallerParameters:
+		env = p.Env
+	}
+
+	var out []string
+	for _, e := range env {
+		if strings.Contains(e, "=") && !strings.Contains(e, "{{") {
+			out = append(out, e)
+		}
+	}
+	return out
 }
