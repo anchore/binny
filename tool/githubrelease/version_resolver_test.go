@@ -2,6 +2,7 @@ package githubrelease
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -78,6 +79,41 @@ func TestVersionResolver_ResolveVersion(t *testing.T) {
 			},
 			version: "bogus",
 			want:    "bogus",
+		},
+		{
+			name: "latest on a repo with prefixed tags uses the latest release",
+			config: VersionResolutionParameters{
+				Repo: "oven-sh/bun",
+			},
+			version: "latest",
+			want:    "bun-v1.4.3",
+			latestReleaseFetcher: func(_ context.Context, user, repo string) (*ghRelease, error) {
+				return &ghRelease{Tag: "bun-v1.4.3"}, nil
+			},
+			releasesFetcher: func(_ context.Context, user, repo string) ([]ghRelease, error) {
+				t.Fatal("should not have been called")
+				return nil, nil
+			},
+		},
+		{
+			name: "latest with a constraint on a repo with prefixed tags only considers that prefix",
+			config: VersionResolutionParameters{
+				Repo: "oven-sh/bun",
+			},
+			version:    "latest",
+			constraint: "< 2.0.0",
+			want:       "bun-v1.9.0",
+			latestReleaseFetcher: func(_ context.Context, user, repo string) (*ghRelease, error) {
+				return &ghRelease{Tag: "bun-v2.0.0"}, nil
+			},
+			releasesFetcher: func(_ context.Context, user, repo string) ([]ghRelease, error) {
+				return []ghRelease{
+					{Tag: "bun-v1.2.0"},
+					{Tag: "bun-v1.9.0"},
+					{Tag: "bun-v2.0.0"},
+					{Tag: "v1.9.5"},
+				}, nil
+			},
 		},
 	}
 	for _, tt := range tests {
@@ -199,6 +235,28 @@ func TestVersionResolver_UpdateVersion(t *testing.T) {
 					{Tag: "v2.0.0"},
 				}, nil
 			},
+		},
+		{
+			name: "prefixed semver tag keeps the pin when no other release can be fetched",
+			config: VersionResolutionParameters{
+				Repo: "org/monorepo",
+			},
+			version: "cli/v1.0.0",
+			want:    "cli/v1.0.0",
+			latestReleaseFetcher: func(_ context.Context, user, repo string) (*ghRelease, error) {
+				return &ghRelease{Tag: "lib/v9.0.0"}, nil
+			},
+			releaseFetcher: func(_ context.Context, user, repo string) ([]ghRelease, error) {
+				return nil, errors.New("GITHUB_TOKEN not set")
+			},
+		},
+		{
+			name: "date-like tags are not treated as prefixed semver",
+			config: VersionResolutionParameters{
+				Repo: "org/repo",
+			},
+			version: "nightly-2024-01-01",
+			want:    "nightly-2024-01-01",
 		},
 	}
 	for _, tt := range tests {
@@ -605,30 +663,6 @@ func TestVersionResolver_UpdateVersion_withCooldown(t *testing.T) {
 			if err == nil {
 				assert.Equal(t, tt.want, got)
 			}
-		})
-	}
-}
-
-func Test_semverTagPrefix(t *testing.T) {
-	tests := []struct {
-		tag    string
-		want   string
-		wantOK bool
-	}{
-		{tag: "bun-v1.4.3", want: "bun-", wantOK: true},
-		{tag: "cli/v2.0.0", want: "cli/", wantOK: true},
-		{tag: "foo-bar-1.2.3", want: "foo-bar-", wantOK: true},
-		{tag: "jq-1.7.1", want: "jq-", wantOK: true},
-		{tag: "bun-v1.4.3-canary.1", want: "bun-", wantOK: true},
-		{tag: "nightly", wantOK: false},
-		{tag: "release-candidate", wantOK: false},
-		{tag: "bun-", wantOK: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.tag, func(t *testing.T) {
-			got, ok := semverTagPrefix(tt.tag)
-			assert.Equal(t, tt.wantOK, ok)
-			assert.Equal(t, tt.want, got)
 		})
 	}
 }

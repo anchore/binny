@@ -3,6 +3,7 @@ package githubrelease
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -48,34 +49,23 @@ func (v VersionResolver) UpdateVersion(ctx context.Context, intent binny.Version
 	}
 
 	if internal.IsSemver(intent.Want) {
-		return v.findLatestVersion(ctx, intent.Constraint, intent.Cooldown, "")
+		return v.findLatestVersion(ctx, intent.Constraint, intent.Cooldown, "", false)
 	}
 
-	// tags like "bun-v1.4.3" are semver behind a fixed prefix, so only compare tags with that same prefix
-	if prefix, ok := semverTagPrefix(intent.Want); ok {
-		return v.findLatestVersion(ctx, intent.Constraint, intent.Cooldown, prefix)
+	// tags like "bun-v1.4.3" are semver behind a fixed prefix, so only compare tags with that same prefix. This is
+	// best-effort: pins like this used to be left alone, so not finding a newer tag keeps the pin instead of failing.
+	if prefix, ok := internal.SemverTagPrefix(intent.Want); ok {
+		latest, err := v.findLatestVersion(ctx, intent.Constraint, intent.Cooldown, prefix, false)
+		var cooldownErr *binny.CooldownError
+		if err != nil && !errors.As(err, &cooldownErr) {
+			log.FromContext(ctx).WithFields("repo", v.config.Repo, "version", intent.Want, "error", err).
+				Warn("unable to find a newer version with the same tag prefix, keeping the current pin")
+			return intent.Want, nil
+		}
+		return latest, nil
 	}
 
 	return intent.Want, nil
-}
-
-// semverTagPrefix splits a tag like "bun-v1.4.3" (or "cli/v2.0.0") into the prefix before the semver portion.
-func semverTagPrefix(tag string) (string, bool) {
-	for i := 0; i < len(tag)-1; i++ {
-		switch tag[i] {
-		case '-', '_', '/', '@':
-		default:
-			continue
-		}
-		rest := tag[i+1:]
-		if rest[0] != 'v' && (rest[0] < '0' || rest[0] > '9') {
-			continue
-		}
-		if internal.IsSemver(rest) {
-			return tag[:i+1], true
-		}
-	}
-	return "", false
 }
 
 func (v VersionResolver) ResolveVersion(ctx context.Context, intent binny.VersionIntent) (string, error) {
@@ -86,14 +76,15 @@ func (v VersionResolver) ResolveVersion(ctx context.Context, intent binny.Versio
 	}
 
 	if intent.Want == "latest" {
-		return v.findLatestVersion(ctx, intent.Constraint, intent.Cooldown, "")
+		return v.findLatestVersion(ctx, intent.Constraint, intent.Cooldown, "", true)
 	}
 
 	return intent.Want, nil
 }
 
-// findLatestVersion finds the latest release tag, considering only tags that start with tagPrefix (when given).
-func (v VersionResolver) findLatestVersion(ctx context.Context, versionConstraint string, cooldown time.Duration, tagPrefix string) (string, error) {
+// findLatestVersion finds the latest release tag, considering only tags that start with tagPrefix (when given). When
+// inferPrefix is set and no prefix is given, the prefix of github's own latest tag is used (e.g. "bun-" for "bun-v1.4.3").
+func (v VersionResolver) findLatestVersion(ctx context.Context, versionConstraint string, cooldown time.Duration, tagPrefix string, inferPrefix bool) (string, error) {
 	lgr := log.FromContext(ctx)
 	cfg := v.config
 	fields := strings.Split(cfg.Repo, "/")
@@ -118,6 +109,9 @@ func (v VersionResolver) findLatestVersion(ctx context.Context, versionConstrain
 
 		// try the cheapest path forward first -- if this is compliant to the constraint, use it.
 		if latestRelease != nil {
+			if inferPrefix && tagPrefix == "" {
+				tagPrefix, _ = internal.SemverTagPrefix(latestRelease.Tag)
+			}
 			latestVersion, err := filterToLatestVersion([]ghRelease{*latestRelease}, versionConstraint, nil, tagPrefix)
 			if err != nil {
 				return "", fmt.Errorf("unable to filter to latest version: %v", err)

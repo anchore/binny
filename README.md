@@ -339,10 +339,12 @@ The `version.want` option allows a special entry:
 - `latest`: don't pin to a version, use the latest available
 
 Tags with a prefix before the semver portion (e.g. `bun-v1.4.3` or `cli/v2.0.0`) are updated too. Only tags with
-the same prefix are considered, and constraints apply to the version after the prefix.
+the same prefix are considered, and constraints apply to the version after the prefix. If no newer tag with that
+prefix can be found, the pin is left as-is. With `latest`, the prefix of the repo's latest release is used.
 
 Note: this approach will require a GitHub API token to be set in the `GITHUB_TOKEN` environment variable if there
-is a version constraint or release cooldown used.
+is a version constraint or release cooldown used, or when a prefixed pin's repo has a latest release with a different
+prefix (e.g. a monorepo releasing `cli/v2.0.0` and `lib/v1.0.0`).
 
 #### `go-proxy`
 

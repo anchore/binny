@@ -59,3 +59,36 @@ func Test_filterLatestVersion(t *testing.T) {
 		})
 	}
 }
+
+func Test_SemverTagPrefix(t *testing.T) {
+	tests := []struct {
+		tag     string
+		want    string
+		wantOK  bool
+		trimmed string
+	}{
+		{tag: "bun-v1.4.3", want: "bun-", wantOK: true, trimmed: "v1.4.3"},
+		{tag: "cli/v2.0.0", want: "cli/", wantOK: true, trimmed: "v2.0.0"},
+		{tag: "foo-bar-1.2.3", want: "foo-bar-", wantOK: true, trimmed: "1.2.3"},
+		{tag: "jq-1.7.1", want: "jq-", wantOK: true, trimmed: "1.7.1"},
+		{tag: "bun-v1.4.3-canary.1", want: "bun-", wantOK: true, trimmed: "v1.4.3-canary.1"},
+		// already semver, so the prerelease isn't mistaken for a prefixed version
+		{tag: "v1.2.3-rc.1", trimmed: "v1.2.3-rc.1"},
+		{tag: "1.2.3-1.0", trimmed: "1.2.3-1.0"},
+		// date-like or major-only remainders aren't versions
+		{tag: "nightly-2024-01-01", trimmed: "nightly-2024-01-01"},
+		{tag: "release-2024", trimmed: "release-2024"},
+		{tag: "build-1", trimmed: "build-1"},
+		{tag: "nightly", trimmed: "nightly"},
+		{tag: "release-candidate", trimmed: "release-candidate"},
+		{tag: "bun-", trimmed: "bun-"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.tag, func(t *testing.T) {
+			got, ok := SemverTagPrefix(tt.tag)
+			assert.Equal(t, tt.wantOK, ok)
+			assert.Equal(t, tt.want, got)
+			assert.Equal(t, tt.trimmed, TrimSemverTagPrefix(tt.tag))
+		})
+	}
+}

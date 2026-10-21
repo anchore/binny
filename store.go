@@ -45,6 +45,8 @@ type StoreEntry struct {
 	InstalledVersion string            `json:"version"`
 	Digests          map[string]string `json:"digests"`
 	PathInRoot       string            `json:"path"`
+	// DirInRoot is set when the whole install dir was kept in the store (see AddToolDir)
+	DirInRoot string `json:"dir,omitempty"`
 }
 
 func (e StoreEntry) Path() string {
@@ -248,6 +250,7 @@ func (s *Store) AddToolDir(toolName string, resolvedVersion, dirOutsideRoot, bin
 		InstalledVersion: resolvedVersion,
 		Digests:          digests,
 		PathInRoot:       toolName,
+		DirInRoot:        filepath.Join(toolDirsName, toolName),
 	}, sha256Hash)
 }
 

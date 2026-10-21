@@ -7,6 +7,7 @@ import (
 	"github.com/Masterminds/semver/v3"
 
 	"github.com/anchore/binny"
+	"github.com/anchore/binny/internal"
 	"github.com/anchore/binny/tool/git"
 	"github.com/anchore/binny/tool/githubrelease"
 	"github.com/anchore/binny/tool/goproxy"
@@ -31,7 +32,8 @@ func ResolveVersion(ctx context.Context, tool binny.VersionResolver, intent binn
 	}
 
 	if constraint != "" {
-		ver, err := semver.NewVersion(resolvedVersion)
+		// constraints apply to the semver portion of prefixed tags (e.g. "1.4.3" in "bun-v1.4.3")
+		ver, err := semver.NewVersion(internal.TrimSemverTagPrefix(resolvedVersion))
 		if err == nil {
 			constraintObj, err := semver.NewConstraint(constraint)
 			if err != nil {
