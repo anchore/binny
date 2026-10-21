@@ -131,7 +131,7 @@ The `github-release` install method uses the GitHub Releases API to download the
 |--------|-------------------------------------------------------------------------------------------------|
 | `repo` | The GitHub repository to reference releases from. This should be in the format `<owner>/<repo>` |
 | `assets` (optional) | Regex pattern(s) to filter release assets. Can be a single string or array of strings for priority matching |
-| `keep-archive-files` (optional) | Keep the whole extracted archive (at `.tool/<name>.d/`) and link `.tool/<name>` to the binary inside it. Useful for tools that read files next to their own binary (e.g. `tsc` and its `lib/*.d.ts`) |
+| `keep-archive-files` (optional) | Keep the whole extracted archive (at `.tool/.binny-dirs/<name>/`) and link `.tool/<name>` to the binary inside it. Useful for tools that read files next to their own binary (e.g. `tsc` and its `lib/*.d.ts`) |
 
 When multiple assets match the OS/architecture, the `assets` field allows you to specify which one to select:
 

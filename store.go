@@ -123,6 +123,10 @@ func (s Store) Entries() (entries []StoreEntry) {
 func (s *Store) AddTool(toolName string, resolvedVersion, pathOutsideRoot string) error {
 	log.WithFields("tool", toolName, "from", pathOutsideRoot).Trace("adding tool to store")
 
+	if err := validateToolName(toolName); err != nil {
+		return err
+	}
+
 	err := s.loadState()
 	if err != nil {
 		return err
@@ -171,10 +175,14 @@ func (s *Store) AddTool(toolName string, resolvedVersion, pathOutsideRoot string
 	}, sha256Hash)
 }
 
-// AddToolDir is like AddTool, but moves the whole install directory into the store (at root/<name>.d) and links
+// AddToolDir is like AddTool, but moves the whole install directory into the store (at root/.binny-dirs/<name>) and links
 // root/<name> to the binary inside it. This is for tools that read files relative to their own location.
 func (s *Store) AddToolDir(toolName string, resolvedVersion, dirOutsideRoot, binPath string) error {
 	log.WithFields("tool", toolName, "from", dirOutsideRoot).Trace("adding tool directory to store")
+
+	if err := validateToolName(toolName); err != nil {
+		return err
+	}
 
 	binInDir, err := filepath.Rel(dirOutsideRoot, binPath)
 	if err != nil || binInDir == ".." || strings.HasPrefix(binInDir, ".."+string(filepath.Separator)) {
@@ -206,6 +214,10 @@ func (s *Store) AddToolDir(toolName string, resolvedVersion, dirOutsideRoot, bin
 		return fmt.Errorf("failed to remove previous install dir %q: %w", targetDir, err)
 	}
 
+	if err := os.MkdirAll(filepath.Dir(targetDir), 0755); err != nil {
+		return err
+	}
+
 	if err := os.Rename(dirOutsideRoot, targetDir); err != nil {
 		return err
 	}
@@ -223,7 +235,7 @@ func (s *Store) AddToolDir(toolName string, resolvedVersion, dirOutsideRoot, bin
 	targetPath := filepath.Join(s.root, toolName)
 	tmpLink := targetPath + ".binny-link"
 	_ = os.Remove(tmpLink)
-	if err := os.Symlink(filepath.Join(filepath.Base(targetDir), binInDir), tmpLink); err != nil {
+	if err := os.Symlink(filepath.Join(toolDirsName, toolName, binInDir), tmpLink); err != nil {
 		return fmt.Errorf("failed to link %q: %w", targetPath, err)
 	}
 	if err := os.Rename(tmpLink, targetPath); err != nil {
@@ -239,8 +251,19 @@ func (s *Store) AddToolDir(toolName string, resolvedVersion, dirOutsideRoot, bin
 	}, sha256Hash)
 }
 
+// kept install dirs live under their own dir in the store so they can never collide with a tool's binary path
+const toolDirsName = ".binny-dirs"
+
 func toolDirPath(root, toolName string) string {
-	return filepath.Join(root, toolName+".d")
+	return filepath.Join(root, toolDirsName, toolName)
+}
+
+// validateToolName ensures that paths derived from the tool name stay directly within the store root.
+func validateToolName(name string) error {
+	if name == "" || name == "." || name == ".." || name == toolDirsName || strings.ContainsAny(name, `/\`) {
+		return fmt.Errorf("invalid tool name %q", name)
+	}
+	return nil
 }
 
 func (s *Store) upsert(fileInfo StoreEntry, sha256Hash string) error {

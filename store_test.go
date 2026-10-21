@@ -332,7 +332,13 @@ func TestStore_AddToolDir(t *testing.T) {
 	got, err := os.ReadFile(filepath.Join(store.root, "tsc"))
 	require.NoError(t, err)
 	assert.Equal(t, "v2", string(got))
-	assert.FileExists(t, filepath.Join(store.root, "tsc.d", "package", "lib", "lib.d.ts"))
+	assert.FileExists(t, filepath.Join(store.root, ".binny-dirs", "tsc", "package", "lib", "lib.d.ts"))
+
+	// names that would escape the store (or reach the kept dirs) are rejected
+	for _, name := range []string{"", ".", "..", "../tsc", "a/b", ".binny-dirs"} {
+		assert.Error(t, store.AddToolDir(name, "v1", staging, filepath.Join(staging, "x")), name)
+		assert.Error(t, store.AddTool(name, "v1", filepath.Join(staging, "x")), name)
+	}
 
 	// the binary must live within the dir being moved
 	assert.Error(t, store.AddToolDir("tsc", "v3", staging, filepath.Join(t.TempDir(), "tsc")))
@@ -341,7 +347,7 @@ func TestStore_AddToolDir(t *testing.T) {
 	plain := filepath.Join(staging, "plain")
 	require.NoError(t, os.WriteFile(plain, []byte("v4"), 0o644))
 	require.NoError(t, store.AddTool("tsc", "v4", plain))
-	assert.NoDirExists(t, filepath.Join(store.root, "tsc.d"))
+	assert.NoDirExists(t, filepath.Join(store.root, ".binny-dirs", "tsc"))
 	got, err = os.ReadFile(filepath.Join(store.root, "tsc"))
 	require.NoError(t, err)
 	assert.Equal(t, "v4", string(got))
