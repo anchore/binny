@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/OneOfOne/xxhash"
@@ -156,24 +157,103 @@ func (s *Store) AddTool(toolName string, resolvedVersion, pathOutsideRoot string
 		return fmt.Errorf("failed to chmod %q: %w", targetPath, err)
 	}
 
-	fileInfo := StoreEntry{
+	// a previous install may have kept a whole directory for this tool
+	if err := os.RemoveAll(toolDirPath(s.root, toolName)); err != nil {
+		return fmt.Errorf("failed to remove previous install dir for %q: %w", toolName, err)
+	}
+
+	return s.upsert(StoreEntry{
 		root:             s.root,
 		Name:             toolName,
 		InstalledVersion: resolvedVersion,
 		Digests:          digests,
 		PathInRoot:       targetName, // path in the store relative to the root
+	}, sha256Hash)
+}
+
+// AddToolDir is like AddTool, but moves the whole install directory into the store (at root/<name>.d) and links
+// root/<name> to the binary inside it. This is for tools that read files relative to their own location.
+func (s *Store) AddToolDir(toolName string, resolvedVersion, dirOutsideRoot, binPath string) error {
+	log.WithFields("tool", toolName, "from", dirOutsideRoot).Trace("adding tool directory to store")
+
+	binInDir, err := filepath.Rel(dirOutsideRoot, binPath)
+	if err != nil || binInDir == ".." || strings.HasPrefix(binInDir, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("binary %q is not within %q", binPath, dirOutsideRoot)
 	}
 
+	if err := s.loadState(); err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(s.root, 0755); err != nil {
+		return err
+	}
+
+	digests, err := getDigestsForFile(binPath)
+	if err != nil {
+		return err
+	}
+
+	sha256Hash, ok := digests[internal.SHA256Algorithm]
+	if !ok {
+		return fmt.Errorf("failed to get sha256 hash for %q", binPath)
+	}
+
+	// ponytail: the old dir is removed before the new one lands, so a concurrent run of this tool can briefly
+	// miss its files. Use versioned dirs and swap the link if that ever matters.
+	targetDir := toolDirPath(s.root, toolName)
+	if err := os.RemoveAll(targetDir); err != nil {
+		return fmt.Errorf("failed to remove previous install dir %q: %w", targetDir, err)
+	}
+
+	if err := os.Rename(dirOutsideRoot, targetDir); err != nil {
+		return err
+	}
+
+	// the staging dir is created 0700, open it up like the rest of the store
+	if err := os.Chmod(targetDir, 0755); err != nil {
+		return fmt.Errorf("failed to chmod %q: %w", targetDir, err)
+	}
+
+	if err := os.Chmod(filepath.Join(targetDir, binInDir), 0755); err != nil {
+		return fmt.Errorf("failed to chmod %q: %w", binInDir, err)
+	}
+
+	// create the link aside and rename it over root/<name> so the replacement is atomic
+	targetPath := filepath.Join(s.root, toolName)
+	tmpLink := targetPath + ".binny-link"
+	_ = os.Remove(tmpLink)
+	if err := os.Symlink(filepath.Join(filepath.Base(targetDir), binInDir), tmpLink); err != nil {
+		return fmt.Errorf("failed to link %q: %w", targetPath, err)
+	}
+	if err := os.Rename(tmpLink, targetPath); err != nil {
+		return err
+	}
+
+	return s.upsert(StoreEntry{
+		root:             s.root,
+		Name:             toolName,
+		InstalledVersion: resolvedVersion,
+		Digests:          digests,
+		PathInRoot:       toolName,
+	}, sha256Hash)
+}
+
+func toolDirPath(root, toolName string) string {
+	return filepath.Join(root, toolName+".d")
+}
+
+func (s *Store) upsert(fileInfo StoreEntry, sha256Hash string) error {
 	// if entry name exists, replace it, otherwise add it
 	for i, entry := range s.entries {
-		if entry.Name == toolName {
-			log.WithFields("tool", toolName, "sha256", sha256Hash, pathOutsideRoot).Trace("replacing existing tool store entry")
+		if entry.Name == fileInfo.Name {
+			log.WithFields("tool", fileInfo.Name, "sha256", sha256Hash).Trace("replacing existing tool store entry")
 			s.entries[i] = fileInfo
 			return s.saveState()
 		}
 	}
 
-	log.WithFields("tool", toolName, "sha256", sha256Hash, pathOutsideRoot).Trace("adding new tool store entry")
+	log.WithFields("tool", fileInfo.Name, "sha256", sha256Hash).Trace("adding new tool store entry")
 
 	s.entries = append(s.entries, fileInfo)
 	return s.saveState()

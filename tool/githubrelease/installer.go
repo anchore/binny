@@ -86,6 +86,8 @@ type InstallerParameters struct {
 	Binary string `json:"binary" yaml:"binary" mapstructure:"binary"`
 	Repo   string `json:"repo" yaml:"repo" mapstructure:"repo"`
 	Assets any    `json:"assets" yaml:"assets" mapstructure:"assets"`
+	// keep the rest of the archive beside the binary (for tools that read sibling files relative to themselves)
+	KeepArchiveFiles bool `json:"keep-archive-files" yaml:"keep-archive-files" mapstructure:"keep-archive-files"`
 }
 
 type Installer struct {
@@ -137,6 +139,10 @@ func compileAssetPatterns(assets any) []*regexp.Regexp {
 	}
 
 	return compiled
+}
+
+func (i Installer) KeepArchiveFiles() bool {
+	return i.config.KeepArchiveFiles
 }
 
 func (i Installer) InstallTo(ctx context.Context, version, destDir string) (string, error) {
@@ -418,7 +424,7 @@ func selectChecksumAsset(ctx context.Context, assets []ghAsset) *ghAsset {
 // this list is derived from https://github.com/golang/go/blob/master/src/go/build/syslist.go
 var architectureAliases = map[string][]string{
 	"386":         {"i386", "x32", "x86"},
-	"amd64":       {"x86_64", "86_64", "x86-64", "86-64"},
+	"amd64":       {"x86_64", "86_64", "x86-64", "86-64", "x64"},
 	"amd64p32":    {},
 	"arm":         {},
 	"arm64":       {"aarch64"},
@@ -822,9 +828,31 @@ func processExpandedAssets(ctx context.Context, reader io.Reader, from string) [
 					}
 				}
 			}
+			if token.Data == "clipboard-copy" && len(assets) > 0 {
+				addExpandedAssetDigest(&assets[len(assets)-1], token.Attr)
+			}
 		}
 	}
 	return assets
+}
+
+// addExpandedAssetDigest captures the digest GitHub shows beside each asset, e.g.
+// <clipboard-copy aria-label="Copy to clipboard digest for tool_linux_amd64.tar.gz" value="sha256:...">
+func addExpandedAssetDigest(asset *ghAsset, attrs []html.Attribute) {
+	var label, value string
+	for _, attr := range attrs {
+		switch attr.Key {
+		case "aria-label":
+			label = attr.Val
+		case "value":
+			value = attr.Val
+		}
+	}
+	// only trust a digest that is explicitly labeled for this asset
+	if !strings.HasSuffix(label, "digest for "+asset.Name) || !strings.HasPrefix(value, "sha256:") {
+		return
+	}
+	asset.addChecksum(value)
 }
 
 func fetchReleaseGithubV4API(ctx context.Context, user, repo, tag string) (*ghRelease, error) {

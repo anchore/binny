@@ -69,7 +69,12 @@ func Install(ctx context.Context, tool binny.Tool, intent binny.VersionIntent, s
 	stage.Set("storing")
 
 	// if the installation was successful, add the tool to the store
-	if err = store.AddTool(tool.Name(), resolvedVersion, binPath); err != nil {
+	if k, ok := tool.(binny.ArchiveFileKeeper); ok && k.KeepArchiveFiles() {
+		err = store.AddToolDir(tool.Name(), resolvedVersion, tmpdir, binPath)
+	} else {
+		err = store.AddTool(tool.Name(), resolvedVersion, binPath)
+	}
+	if err != nil {
 		return err
 	}
 

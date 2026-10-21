@@ -164,6 +164,42 @@ func TestVersionResolver_UpdateVersion(t *testing.T) {
 			version: "bogus",
 			want:    "bogus",
 		},
+		{
+			name: "prefixed semver tag updates from the latest release",
+			config: VersionResolutionParameters{
+				Repo: "oven-sh/bun",
+			},
+			version: "bun-v1.4.0",
+			want:    "bun-v1.4.3",
+			latestReleaseFetcher: func(_ context.Context, user, repo string) (*ghRelease, error) {
+				return &ghRelease{Tag: "bun-v1.4.3"}, nil
+			},
+			releaseFetcher: func(_ context.Context, user, repo string) ([]ghRelease, error) {
+				t.Fatal("should not have been called")
+				return nil, nil
+			},
+		},
+		{
+			name: "prefixed semver tag only considers tags with the same prefix",
+			config: VersionResolutionParameters{
+				Repo: "org/monorepo",
+			},
+			version:    "cli/v1.0.0",
+			constraint: "< 3.0.0",
+			want:       "cli/v1.2.0",
+			latestReleaseFetcher: func(_ context.Context, user, repo string) (*ghRelease, error) {
+				return &ghRelease{Tag: "lib/v9.0.0"}, nil
+			},
+			releaseFetcher: func(_ context.Context, user, repo string) ([]ghRelease, error) {
+				return []ghRelease{
+					{Tag: "cli/v1.0.0"},
+					{Tag: "lib/v2.5.0"},
+					{Tag: "cli/v1.2.0"},
+					{Tag: "cli/v3.0.0"},
+					{Tag: "v2.0.0"},
+				}, nil
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -310,7 +346,7 @@ func Test_filterToLatestVersion(t *testing.T) {
 			if tt.wantErr == nil {
 				tt.wantErr = require.NoError
 			}
-			got, err := filterToLatestVersion(tt.releases, tt.versionConstraint, nil)
+			got, err := filterToLatestVersion(tt.releases, tt.versionConstraint, nil, "")
 			tt.wantErr(t, err)
 			assert.Equal(t, tt.want, got)
 		})
@@ -424,7 +460,7 @@ func Test_filterToLatestVersion_withCooldown(t *testing.T) {
 			if tt.wantErr == nil {
 				tt.wantErr = require.NoError
 			}
-			got, err := filterToLatestVersion(tt.releases, tt.versionConstraint, tt.cutoff)
+			got, err := filterToLatestVersion(tt.releases, tt.versionConstraint, tt.cutoff, "")
 			tt.wantErr(t, err)
 			assert.Equal(t, tt.want, got)
 		})
@@ -569,6 +605,30 @@ func TestVersionResolver_UpdateVersion_withCooldown(t *testing.T) {
 			if err == nil {
 				assert.Equal(t, tt.want, got)
 			}
+		})
+	}
+}
+
+func Test_semverTagPrefix(t *testing.T) {
+	tests := []struct {
+		tag    string
+		want   string
+		wantOK bool
+	}{
+		{tag: "bun-v1.4.3", want: "bun-", wantOK: true},
+		{tag: "cli/v2.0.0", want: "cli/", wantOK: true},
+		{tag: "foo-bar-1.2.3", want: "foo-bar-", wantOK: true},
+		{tag: "jq-1.7.1", want: "jq-", wantOK: true},
+		{tag: "bun-v1.4.3-canary.1", want: "bun-", wantOK: true},
+		{tag: "nightly", wantOK: false},
+		{tag: "release-candidate", wantOK: false},
+		{tag: "bun-", wantOK: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.tag, func(t *testing.T) {
+			got, ok := semverTagPrefix(tt.tag)
+			assert.Equal(t, tt.wantOK, ok)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }

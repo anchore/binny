@@ -15,6 +15,12 @@ type Installer interface {
 	InstallTo(ctx context.Context, version, destDir string) (string, error)
 }
 
+// ArchiveFileKeeper is optionally implemented by an Installer whose binary needs the rest of the
+// installed files (e.g. an extracted archive) kept beside it.
+type ArchiveFileKeeper interface {
+	KeepArchiveFiles() bool
+}
+
 type VersionResolver interface {
 	ResolveVersion(ctx context.Context, intent VersionIntent) (string, error)
 	UpdateVersion(ctx context.Context, intent VersionIntent) (string, error)

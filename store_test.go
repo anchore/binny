@@ -303,3 +303,46 @@ func TestStore_Entries_IsACopy(t *testing.T) {
 	}
 
 }
+
+func TestStore_AddToolDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires symlinks")
+	}
+	store, err := NewStore(t.TempDir())
+	require.NoError(t, err)
+
+	// an extracted archive with the binary next to files it reads relative to itself
+	staging := t.TempDir()
+	install := func(contents string) {
+		dir := filepath.Join(staging, "install-"+contents)
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "package", "lib"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "package", "lib", "lib.d.ts"), []byte("decl"), 0o644))
+		bin := filepath.Join(dir, "package", "lib", "tsc")
+		require.NoError(t, os.WriteFile(bin, []byte(contents), 0o644))
+		require.NoError(t, store.AddToolDir("tsc", contents, dir, bin))
+	}
+
+	install("v1")
+	install("v2") // replaces the previous dir and link
+
+	entry, err := store.Get("tsc", "v2")
+	require.NoError(t, err)
+	require.NoError(t, entry.Verify(true, true))
+
+	got, err := os.ReadFile(filepath.Join(store.root, "tsc"))
+	require.NoError(t, err)
+	assert.Equal(t, "v2", string(got))
+	assert.FileExists(t, filepath.Join(store.root, "tsc.d", "package", "lib", "lib.d.ts"))
+
+	// the binary must live within the dir being moved
+	assert.Error(t, store.AddToolDir("tsc", "v3", staging, filepath.Join(t.TempDir(), "tsc")))
+
+	// switching back to a plain binary install drops the kept dir
+	plain := filepath.Join(staging, "plain")
+	require.NoError(t, os.WriteFile(plain, []byte("v4"), 0o644))
+	require.NoError(t, store.AddTool("tsc", "v4", plain))
+	assert.NoDirExists(t, filepath.Join(store.root, "tsc.d"))
+	got, err = os.ReadFile(filepath.Join(store.root, "tsc"))
+	require.NoError(t, err)
+	assert.Equal(t, "v4", string(got))
+}

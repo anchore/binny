@@ -48,10 +48,34 @@ func (v VersionResolver) UpdateVersion(ctx context.Context, intent binny.Version
 	}
 
 	if internal.IsSemver(intent.Want) {
-		return v.findLatestVersion(ctx, intent.Constraint, intent.Cooldown)
+		return v.findLatestVersion(ctx, intent.Constraint, intent.Cooldown, "")
+	}
+
+	// tags like "bun-v1.4.3" are semver behind a fixed prefix, so only compare tags with that same prefix
+	if prefix, ok := semverTagPrefix(intent.Want); ok {
+		return v.findLatestVersion(ctx, intent.Constraint, intent.Cooldown, prefix)
 	}
 
 	return intent.Want, nil
+}
+
+// semverTagPrefix splits a tag like "bun-v1.4.3" (or "cli/v2.0.0") into the prefix before the semver portion.
+func semverTagPrefix(tag string) (string, bool) {
+	for i := 0; i < len(tag)-1; i++ {
+		switch tag[i] {
+		case '-', '_', '/', '@':
+		default:
+			continue
+		}
+		rest := tag[i+1:]
+		if rest[0] != 'v' && (rest[0] < '0' || rest[0] > '9') {
+			continue
+		}
+		if internal.IsSemver(rest) {
+			return tag[:i+1], true
+		}
+	}
+	return "", false
 }
 
 func (v VersionResolver) ResolveVersion(ctx context.Context, intent binny.VersionIntent) (string, error) {
@@ -62,13 +86,14 @@ func (v VersionResolver) ResolveVersion(ctx context.Context, intent binny.Versio
 	}
 
 	if intent.Want == "latest" {
-		return v.findLatestVersion(ctx, intent.Constraint, intent.Cooldown)
+		return v.findLatestVersion(ctx, intent.Constraint, intent.Cooldown, "")
 	}
 
 	return intent.Want, nil
 }
 
-func (v VersionResolver) findLatestVersion(ctx context.Context, versionConstraint string, cooldown time.Duration) (string, error) {
+// findLatestVersion finds the latest release tag, considering only tags that start with tagPrefix (when given).
+func (v VersionResolver) findLatestVersion(ctx context.Context, versionConstraint string, cooldown time.Duration, tagPrefix string) (string, error) {
 	lgr := log.FromContext(ctx)
 	cfg := v.config
 	fields := strings.Split(cfg.Repo, "/")
@@ -93,7 +118,7 @@ func (v VersionResolver) findLatestVersion(ctx context.Context, versionConstrain
 
 		// try the cheapest path forward first -- if this is compliant to the constraint, use it.
 		if latestRelease != nil {
-			latestVersion, err := filterToLatestVersion([]ghRelease{*latestRelease}, versionConstraint, nil)
+			latestVersion, err := filterToLatestVersion([]ghRelease{*latestRelease}, versionConstraint, nil, tagPrefix)
 			if err != nil {
 				return "", fmt.Errorf("unable to filter to latest version: %v", err)
 			}
@@ -112,14 +137,14 @@ func (v VersionResolver) findLatestVersion(ctx context.Context, versionConstrain
 		return "", fmt.Errorf("unable to fetch all releases: %v", err)
 	}
 
-	latestVersion, err := filterToLatestVersion(releases, versionConstraint, cutoff)
+	latestVersion, err := filterToLatestVersion(releases, versionConstraint, cutoff, tagPrefix)
 	if err != nil {
 		return "", fmt.Errorf("unable to filter to latest version: %v", err)
 	}
 	if latestVersion == nil {
 		if cutoff != nil {
 			// find the absolute latest (without cooldown) to produce a helpful error message
-			absoluteLatest, _ := filterToLatestVersion(releases, versionConstraint, nil)
+			absoluteLatest, _ := filterToLatestVersion(releases, versionConstraint, nil, tagPrefix)
 			var latestTag string
 			var latestDate *time.Time
 			if absoluteLatest != nil {
@@ -142,10 +167,11 @@ func (v VersionResolver) findLatestVersion(ctx context.Context, versionConstrain
 }
 
 // filterToLatestVersion finds the latest release that satisfies the version constraint and cooldown cutoff.
-// If cutoff is non-nil, releases published after the cutoff time are skipped (too new).
+// If cutoff is non-nil, releases published after the cutoff time are skipped (too new). If tagPrefix is non-empty,
+// only tags with that prefix are considered and the version is parsed from what follows it.
 //
 //nolint:gocognit
-func filterToLatestVersion(releases []ghRelease, versionConstraint string, cutoff *time.Time) (*ghRelease, error) {
+func filterToLatestVersion(releases []ghRelease, versionConstraint string, cutoff *time.Time, tagPrefix string) (*ghRelease, error) {
 	var constraint *semver.Constraints
 	var err error
 
@@ -171,7 +197,11 @@ func filterToLatestVersion(releases []ghRelease, versionConstraint string, cutof
 			}
 		}
 
-		ver, err := semver.NewVersion(ty.Tag)
+		if tagPrefix != "" && !strings.HasPrefix(ty.Tag, tagPrefix) {
+			continue
+		}
+
+		ver, err := semver.NewVersion(strings.TrimPrefix(ty.Tag, tagPrefix))
 		if err != nil {
 			log.WithFields("tag", ty.Tag).Debug("unable to parse version as semver")
 			ver = nil

@@ -131,6 +131,7 @@ The `github-release` install method uses the GitHub Releases API to download the
 |--------|-------------------------------------------------------------------------------------------------|
 | `repo` | The GitHub repository to reference releases from. This should be in the format `<owner>/<repo>` |
 | `assets` (optional) | Regex pattern(s) to filter release assets. Can be a single string or array of strings for priority matching |
+| `keep-archive-files` (optional) | Keep the whole extracted archive (at `.tool/<name>.d/`) and link `.tool/<name>` to the binary inside it. Useful for tools that read files next to their own binary (e.g. `tsc` and its `lib/*.d.ts`) |
 
 When multiple assets match the OS/architecture, the `assets` field allows you to specify which one to select:
 
@@ -336,6 +337,9 @@ The `github-release` version method uses the GitHub Releases API to determine th
 
 The `version.want` option allows a special entry:
 - `latest`: don't pin to a version, use the latest available
+
+Tags with a prefix before the semver portion (e.g. `bun-v1.4.3` or `cli/v2.0.0`) are updated too. Only tags with
+the same prefix are considered, and constraints apply to the version after the prefix.
 
 Note: this approach will require a GitHub API token to be set in the `GITHUB_TOKEN` environment variable if there
 is a version constraint or release cooldown used.

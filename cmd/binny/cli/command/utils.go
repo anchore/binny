@@ -31,6 +31,10 @@ func toMap(s any) (map[string]any, error) {
 			if len(vv) == 0 {
 				delete(m, k)
 			}
+		case bool:
+			if !vv {
+				delete(m, k)
+			}
 		default:
 			if vv == nil {
 				delete(m, k)

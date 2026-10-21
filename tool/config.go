@@ -144,6 +144,11 @@ func (c compositeTool) Name() string {
 	return c.config.Name
 }
 
+func (c compositeTool) KeepArchiveFiles() bool {
+	k, ok := c.Installer.(binny.ArchiveFileKeeper)
+	return ok && k.KeepArchiveFiles()
+}
+
 func (c compositeTool) ID() string {
 	f, err := hashstructure.Hash(c.config, hashstructure.FormatV2, &hashstructure.HashOptions{
 		ZeroNil:      true,
