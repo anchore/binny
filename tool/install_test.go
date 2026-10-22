@@ -70,3 +70,21 @@ func TestInstall_keepArchiveFilesToggle(t *testing.T) {
 	assert.NoDirExists(t, keptDir)
 	require.NoError(t, Check(store, fakeTool{name: "tsc"}, "v1", cfg))
 }
+
+func TestInstall_keptInstallSurvivesReload(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires symlinks")
+	}
+	root := t.TempDir()
+	store, err := binny.NewStore(root)
+	require.NoError(t, err)
+
+	keeper := fakeTool{name: "tsc", keep: true}
+	cfg := VerifyConfig{VerifySHA256Digest: true}
+	require.NoError(t, Install(context.Background(), keeper, binny.VersionIntent{Want: "v1"}, store, cfg))
+
+	// a later binny run reads the layout back from the state file, so it must not reinstall every time
+	reopened, err := binny.NewStore(root)
+	require.NoError(t, err)
+	require.NoError(t, Check(reopened, keeper, "v1", cfg))
+}

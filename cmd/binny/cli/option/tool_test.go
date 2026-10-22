@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/anchore/binny"
 	"github.com/anchore/binny/tool/githubrelease"
 )
 
@@ -67,5 +68,24 @@ func TestDeriveInstallParameters_GithubRelease(t *testing.T) {
 				require.Equal(t, tt.expected, instParams)
 			}
 		})
+	}
+}
+
+func TestTool_ToTool_keepArchiveFiles(t *testing.T) {
+	for _, keep := range []bool{true, false} {
+		toolCfg := Tool{
+			Name:          "bun",
+			InstallMethod: githubrelease.InstallMethod,
+			Parameters:    map[string]any{"repo": "oven-sh/bun", "keep-archive-files": keep},
+			Version:       ToolVersionConfig{Want: "bun-v1.4.3"},
+		}
+
+		got, _, err := toolCfg.ToTool(ToolOptions{})
+		require.NoError(t, err)
+
+		// install and check only see the option through the tool, so it must be forwarded from the installer
+		keeper, ok := got.(binny.ArchiveFileKeeper)
+		require.True(t, ok)
+		require.Equal(t, keep, keeper.KeepArchiveFiles())
 	}
 }

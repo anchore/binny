@@ -71,12 +71,16 @@ func Test_SemverTagPrefix(t *testing.T) {
 		{tag: "cli/v2.0.0", want: "cli/", wantOK: true, trimmed: "v2.0.0"},
 		{tag: "foo-bar-1.2.3", want: "foo-bar-", wantOK: true, trimmed: "1.2.3"},
 		{tag: "jq-1.7.1", want: "jq-", wantOK: true, trimmed: "1.7.1"},
+		{tag: "tool_v1.2.3", want: "tool_", wantOK: true, trimmed: "v1.2.3"},
+		{tag: "@scope/pkg@1.2.3", want: "@scope/pkg@", wantOK: true, trimmed: "1.2.3"},
 		{tag: "bun-v1.4.3-canary.1", want: "bun-", wantOK: true, trimmed: "v1.4.3-canary.1"},
 		// already semver, so the prerelease isn't mistaken for a prefixed version
 		{tag: "v1.2.3-rc.1", trimmed: "v1.2.3-rc.1"},
 		{tag: "1.2.3-1.0", trimmed: "1.2.3-1.0"},
 		// date-like or major-only remainders aren't versions
 		{tag: "nightly-2024-01-01", trimmed: "nightly-2024-01-01"},
+		// dotted calendar versions do parse as semver, so these are prefixed versions and `update` moves them
+		{tag: "release-2024.01.01", want: "release-", wantOK: true, trimmed: "2024.01.01"},
 		{tag: "release-2024", trimmed: "release-2024"},
 		{tag: "build-1", trimmed: "build-1"},
 		{tag: "nightly", trimmed: "nightly"},

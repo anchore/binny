@@ -580,6 +580,19 @@ func TestVersionResolver_ResolveVersion_withCooldown(t *testing.T) {
 			},
 		},
 		{
+			name:     "latest takes the tag prefix from the release marked latest, not the first one listed",
+			cooldown: 7 * 24 * time.Hour,
+			version:  "latest",
+			want:     "bun-v1.4.0",
+			releasesFetcher: func(_ context.Context, _, _ string) ([]ghRelease, error) {
+				return []ghRelease{
+					{Tag: "lib/v9.0.0", Date: &newDate, IsLatest: boolRef(false)},
+					{Tag: "bun-v1.4.3", Date: &newDate, IsLatest: boolRef(true)},
+					{Tag: "bun-v1.4.0", Date: &oldDate, IsLatest: boolRef(false)},
+				}, nil
+			},
+		},
+		{
 			name:     "pinned version bypasses cooldown",
 			cooldown: 7 * 24 * time.Hour,
 			version:  "2.0.0",
@@ -663,6 +676,22 @@ func TestVersionResolver_UpdateVersion_withCooldown(t *testing.T) {
 				return []ghRelease{
 					{Tag: "bun-v1.4.4", Date: &newDate},
 					{Tag: "bun-v1.4.3", Date: &newDate},
+				}, nil
+			},
+		},
+		{
+			name:     "prefixed cooldown error reports the latest tag with the same prefix",
+			cooldown: 7 * 24 * time.Hour,
+			version:  "bun-v1.4.3",
+			wantErr: func(t require.TestingT, err error, _ ...any) {
+				var cooldownErr *binny.CooldownError
+				require.ErrorAs(t, err, &cooldownErr)
+				assert.Equal(t, "bun-v1.4.4", cooldownErr.LatestVersion)
+			},
+			releasesFetcher: func(_ context.Context, _, _ string) ([]ghRelease, error) {
+				return []ghRelease{
+					{Tag: "cli-v9.0.0", Date: &newDate},
+					{Tag: "bun-v1.4.4", Date: &newDate},
 				}, nil
 			},
 		},
