@@ -158,11 +158,12 @@ The default version resolver for this method is `github-release`.
 
 #### `go-install`
 
-The `go-install` install method uses `go install` to install a tool. It requires the following configuration options:
+The `go-install` install method uses `go install` to install a tool (`go build` for a local `module`, see below). It requires
+the following configuration options:
 
 | Option                  | Description                                                                          |
 |-------------------------|--------------------------------------------------------------------------------------|
-| `module`                | The FQDN to the Go module (e.g. `github.com/anchore/syft`)                           |
+| `module`                | The FQDN to the Go module (e.g. `github.com/anchore/syft`) or a local path           |
 | `entrypoint` (optional) | The path within the repo to the main package for the tool (e.g. `cmd/syft`)          |
 | `ldflags` (optional)    | A list of ldflags to pass to `go install` (e.g. `-X main.version={{ .Version }}`)    |
 | `args` (optional)       | A list of args/flags to pass to `go install` (e.g. `-tags containers_image_openpgp`) |
@@ -170,6 +171,35 @@ The `go-install` install method uses `go install` to install a tool. It requires
 
 The `module` option allows for a special entry:
 - `.` or `path/to/module/on/disk`
+
+A local module is built the same way as with `go-build`: `go build` runs from inside the module directory,
+so it can live anywhere on disk: the repo you run binny from, a sibling checkout, a git submodule, or a
+subdirectory of a monorepo. Relative paths (here and in the `git` resolver's `path`) are resolved against the
+directory binny is run from, same as the store `root`. binny fails early, naming the resolved path, if the
+directory doesn't exist. `ldflags`, `args` and `env` are passed to `go build` instead of `go install`.
+
+Since go runs from the module directory, that's also where it looks for a `go.work` and reads the `go` /
+`toolchain` directives, not where binny was run from. If a `go.work` in a parent directory doesn't list the
+module (common for a nested module in a monorepo), add `GOWORK=off` to `env`. With the default
+`GOTOOLCHAIN=auto`, a module that asks for a newer toolchain than the one installed will download it.
+
+```yaml
+- name: mytool
+  version:
+    want: current          # the checkout's HEAD commit
+    method: git
+    with:
+      path: ../mytool
+  method: go-install
+  with:
+    module: ../mytool      # a sibling checkout
+    entrypoint: cmd/mytool
+```
+
+**note**: a local module's installed version is its resolved version (with `want: current`, the HEAD commit),
+not the state of the working tree. Uncommitted edits don't change that version, so binny considers the tool
+already installed and won't rebuild it. With `want: current`, commit the change; otherwise (or with a branch
+name, which resolves to itself) remove the tool from the store (e.g. delete it from `.tool/`) to force a rebuild.
 
 The `ldflags` allow for templating with the following variables:
 
@@ -185,7 +215,7 @@ ldflags:
 
 For more information about sprig functions, see the [sprig documentation](http://masterminds.github.io/sprig/).
 
-The default version resolver for this method is `go-proxy`.
+The default version resolver for local modules is `git`, otherwise it is `go-proxy`.
 
 
 #### `go-build`
@@ -197,7 +227,7 @@ forks, or patches.
 
 | Option                  | Description                                                                                             |
 |-------------------------|---------------------------------------------------------------------------------------------------------|
-| `module`                | The FQDN to the Go module (e.g. `github.com/anchore/syft`)                                              |
+| `module`                | The FQDN to the Go module (e.g. `github.com/anchore/syft`) or a local path                              |
 | `entrypoint` (optional) | The path within the repo to the main package for the tool (e.g. `cmd/syft`)                             |
 | `ldflags` (optional)    | A list of ldflags to pass to `go build` (e.g. `-X main.version={{ .Version }}`)                         |
 | `args` (optional)       | A list of args/flags to pass to `go build` (e.g. `-trimpath`)                                           |
@@ -209,7 +239,7 @@ The `module` option allows for a special entry:
 - `.` or `path/to/module/on/disk`
 
 When using a local path, no cloning or downloading occurs - the build runs directly in the specified directory,
-honoring any `replace` directives in the local `go.mod`.
+honoring any `replace` directives in the local `go.mod`. Local paths behave as described for `go-install` above.
 
 The `ldflags`, `args`, and `env` options support templating with the following variables:
 

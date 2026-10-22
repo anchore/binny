@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/anchore/binny"
 	"github.com/anchore/binny/internal"
 	"github.com/anchore/binny/internal/log"
+	"github.com/anchore/binny/tool/gobuild"
 )
 
 var _ binny.Installer = (*Installer)(nil)
@@ -25,7 +28,7 @@ type InstallerParameters struct {
 
 type Installer struct {
 	config          InstallerParameters
-	goInstallRunner func(spec, ldflags string, args []string, env []string, destDir string, isLocal bool, binName string) error
+	goInstallRunner func(ctx context.Context, spec, ldflags string, args []string, env []string, destDir string) error
 }
 
 func NewInstaller(cfg InstallerParameters) Installer {
@@ -36,24 +39,29 @@ func NewInstaller(cfg InstallerParameters) Installer {
 }
 
 func (i Installer) InstallTo(ctx context.Context, version, destDir string) (string, error) {
-	ctx, lgr := log.WithNested(ctx, "tool", fmt.Sprintf("%s@%s", i.config.Module, version)) //nolint: ineffassign,staticcheck // we want any future calls we add to always have the right context
-
-	path := i.config.Module
-	if i.config.Entrypoint != "" {
-		path += "/" + i.config.Entrypoint
+	// go install in module mode for a local module is not a good idea, and go-build already builds a
+	// local module from inside its directory, so hand it off
+	if gobuild.IsLocalModule(i.config.Module) {
+		return gobuild.NewInstaller(gobuild.InstallerParameters{
+			Module:     i.config.Module,
+			Entrypoint: i.config.Entrypoint,
+			LDFlags:    i.config.LDFlags,
+			Args:       i.config.Args,
+			Env:        i.config.Env,
+		}).InstallTo(ctx, version, destDir)
 	}
-	fields := strings.Split(path, "/")
-	binName := fields[len(fields)-1]
+
+	ctx, lgr := log.WithNested(ctx, "tool", fmt.Sprintf("%s@%s", i.config.Module, version))
+
+	importPath := path.Join(i.config.Module, i.config.Entrypoint)
+	binName, err := binaryName(importPath)
+	if err != nil {
+		return "", err
+	}
 	binPath := filepath.Join(destDir, binName)
 
-	spec := fmt.Sprintf("%s@%s", path, version)
-	isLocal := strings.HasPrefix(i.config.Module, ".") || strings.HasPrefix(i.config.Module, "/")
-	if isLocal {
-		spec = path
-		lgr.WithFields("module", i.config.Module, "version", version).Debug("installing go module (local)")
-	} else {
-		lgr.WithFields("module", i.config.Module, "version", version).Debug("installing go module (remote)")
-	}
+	spec := fmt.Sprintf("%s@%s", importPath, version)
+	lgr.WithFields("module", i.config.Module, "version", version).Debug("installing go module (remote)")
 
 	ldflags, err := internal.TemplateFlags(i.config.LDFlags, version)
 	if err != nil {
@@ -74,21 +82,46 @@ func (i Installer) InstallTo(ctx context.Context, version, destDir string) (stri
 		return "", fmt.Errorf("failed to template env: %v", err)
 	}
 
-	if err := i.goInstallRunner(spec, ldflags, args, env, destDir, isLocal, binName); err != nil {
+	if err := i.goInstallRunner(ctx, spec, ldflags, args, env, destDir); err != nil {
 		return "", fmt.Errorf("failed to install: %v", err)
 	}
 
 	return binPath, nil
 }
 
-func runGoInstall(spec, ldflags string, userArgs, userEnv []string, destDir string, isLocal bool, binName string) error {
-	var args []string
-	if isLocal {
-		// go install in module mode for a local module is not a good idea, so use go build in this case since the source is already local
-		args = append(args, "build", "-o", filepath.Join(destDir, binName))
-	} else {
-		args = append(args, "install")
+// binaryName predicts the file go install writes to GOBIN for the given import path, mirroring
+// cmd/go's DefaultExecName: the last element, unless it is a major version suffix (/v2, /v3, ...) in
+// which case the element before it. It errors rather than return a name that is empty or a path.
+func binaryName(importPath string) (string, error) {
+	dir, name := path.Split(importPath)
+	if dir != "" && isMajorVersionElement(name) {
+		name = path.Base(dir)
 	}
+	if name == "" || name == "." || name == ".." || strings.Contains(name, `\`) {
+		return "", fmt.Errorf("unable to derive a binary name from %q", importPath)
+	}
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	return name, nil
+}
+
+// isMajorVersionElement reports whether s is a /vN module suffix: v followed only by digits, N >= 2
+// (cmd/go's isVersionElement). "v1", "v0", "v2ray" and "v8go" are not.
+func isMajorVersionElement(s string) bool {
+	if len(s) < 2 || s[0] != 'v' || s[1] == '0' || s[1] == '1' && len(s) == 2 {
+		return false
+	}
+	for _, c := range s[1:] {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func runGoInstall(ctx context.Context, spec, ldflags string, userArgs, userEnv []string, destDir string) error {
+	args := []string{"install"}
 	args = append(args, userArgs...)
 
 	if ldflags != "" {
@@ -98,15 +131,13 @@ func runGoInstall(spec, ldflags string, userArgs, userEnv []string, destDir stri
 
 	log.WithFields("env-vars", len(userEnv)).Trace("running: go " + strings.Join(args, " "))
 
-	cmd := exec.Command("go", args...)
+	cmd := exec.CommandContext(ctx, "go", args...)
 
 	// set env vars...
 	env := os.Environ()
 	env = append(env, userEnv...)
 	// always override any conflicting env vars
-	if !isLocal {
-		env = append(env, "GOBIN="+destDir)
-	}
+	env = append(env, "GOBIN="+destDir)
 	cmd.Env = env
 
 	output, err := cmd.CombinedOutput()
