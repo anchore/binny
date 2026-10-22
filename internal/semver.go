@@ -56,3 +56,34 @@ func IsSemver(v string) bool {
 	}
 	return ver != nil
 }
+
+// SemverTagPrefix splits a tag like "bun-v1.4.3" (or "cli/v2.0.0") into the prefix before the semver portion. Tags
+// that are already semver have no prefix. The semver portion must have at least a major and minor version so that
+// date-like tags (e.g. "nightly-2024-01-01") aren't mistaken for a prefixed version.
+func SemverTagPrefix(tag string) (string, bool) {
+	if IsSemver(tag) {
+		return "", false
+	}
+	for i := 0; i < len(tag)-1; i++ {
+		switch tag[i] {
+		case '-', '_', '/', '@':
+		default:
+			continue
+		}
+		rest := tag[i+1:]
+		if rest[0] != 'v' && (rest[0] < '0' || rest[0] > '9') {
+			continue
+		}
+		core, _, _ := strings.Cut(strings.SplitN(rest, "+", 2)[0], "-")
+		if strings.Contains(core, ".") && IsSemver(rest) {
+			return tag[:i+1], true
+		}
+	}
+	return "", false
+}
+
+// TrimSemverTagPrefix returns the semver portion of a tag, dropping any prefix found by SemverTagPrefix.
+func TrimSemverTagPrefix(tag string) string {
+	prefix, _ := SemverTagPrefix(tag)
+	return strings.TrimPrefix(tag, prefix)
+}

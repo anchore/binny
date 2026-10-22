@@ -2,6 +2,7 @@ package githubrelease
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -78,6 +79,41 @@ func TestVersionResolver_ResolveVersion(t *testing.T) {
 			},
 			version: "bogus",
 			want:    "bogus",
+		},
+		{
+			name: "latest on a repo with prefixed tags uses the latest release",
+			config: VersionResolutionParameters{
+				Repo: "oven-sh/bun",
+			},
+			version: "latest",
+			want:    "bun-v1.4.3",
+			latestReleaseFetcher: func(_ context.Context, user, repo string) (*ghRelease, error) {
+				return &ghRelease{Tag: "bun-v1.4.3"}, nil
+			},
+			releasesFetcher: func(_ context.Context, user, repo string) ([]ghRelease, error) {
+				t.Fatal("should not have been called")
+				return nil, nil
+			},
+		},
+		{
+			name: "latest with a constraint on a repo with prefixed tags only considers that prefix",
+			config: VersionResolutionParameters{
+				Repo: "oven-sh/bun",
+			},
+			version:    "latest",
+			constraint: "< 2.0.0",
+			want:       "bun-v1.9.0",
+			latestReleaseFetcher: func(_ context.Context, user, repo string) (*ghRelease, error) {
+				return &ghRelease{Tag: "bun-v2.0.0"}, nil
+			},
+			releasesFetcher: func(_ context.Context, user, repo string) ([]ghRelease, error) {
+				return []ghRelease{
+					{Tag: "bun-v1.2.0"},
+					{Tag: "bun-v1.9.0"},
+					{Tag: "bun-v2.0.0"},
+					{Tag: "v1.9.5"},
+				}, nil
+			},
 		},
 	}
 	for _, tt := range tests {
@@ -163,6 +199,115 @@ func TestVersionResolver_UpdateVersion(t *testing.T) {
 			},
 			version: "bogus",
 			want:    "bogus",
+		},
+		{
+			name: "prefixed semver tag updates from the latest release",
+			config: VersionResolutionParameters{
+				Repo: "oven-sh/bun",
+			},
+			version: "bun-v1.4.0",
+			want:    "bun-v1.4.3",
+			latestReleaseFetcher: func(_ context.Context, user, repo string) (*ghRelease, error) {
+				return &ghRelease{Tag: "bun-v1.4.3"}, nil
+			},
+			releaseFetcher: func(_ context.Context, user, repo string) ([]ghRelease, error) {
+				t.Fatal("should not have been called")
+				return nil, nil
+			},
+		},
+		{
+			name: "prefixed semver tag only considers tags with the same prefix",
+			config: VersionResolutionParameters{
+				Repo: "org/monorepo",
+			},
+			version:    "cli/v1.0.0",
+			constraint: "< 3.0.0",
+			want:       "cli/v1.2.0",
+			latestReleaseFetcher: func(_ context.Context, user, repo string) (*ghRelease, error) {
+				return &ghRelease{Tag: "lib/v9.0.0"}, nil
+			},
+			releaseFetcher: func(_ context.Context, user, repo string) ([]ghRelease, error) {
+				return []ghRelease{
+					{Tag: "cli/v1.0.0"},
+					{Tag: "lib/v2.5.0"},
+					{Tag: "cli/v1.2.0"},
+					{Tag: "cli/v3.0.0"},
+					{Tag: "v2.0.0"},
+				}, nil
+			},
+		},
+		{
+			name: "prefixed semver tag keeps the pin when the full release listing needs a token",
+			config: VersionResolutionParameters{
+				Repo: "org/monorepo",
+			},
+			version: "cli/v1.0.0",
+			want:    "cli/v1.0.0",
+			latestReleaseFetcher: func(_ context.Context, user, repo string) (*ghRelease, error) {
+				return &ghRelease{Tag: "lib/v9.0.0"}, nil
+			},
+			releaseFetcher: func(_ context.Context, user, repo string) ([]ghRelease, error) {
+				return nil, errNoGithubToken
+			},
+		},
+		{
+			name: "prefixed semver tag keeps the pin when no tag has the same prefix",
+			config: VersionResolutionParameters{
+				Repo: "org/monorepo",
+			},
+			version: "cli/v1.0.0",
+			want:    "cli/v1.0.0",
+			latestReleaseFetcher: func(_ context.Context, user, repo string) (*ghRelease, error) {
+				return &ghRelease{Tag: "lib/v9.0.0"}, nil
+			},
+			releaseFetcher: func(_ context.Context, user, repo string) ([]ghRelease, error) {
+				return []ghRelease{{Tag: "lib/v9.0.0"}}, nil
+			},
+		},
+		{
+			name: "prefixed semver tag fails on a network error fetching the latest release",
+			config: VersionResolutionParameters{
+				Repo: "oven-sh/bun",
+			},
+			version: "bun-v1.4.0",
+			latestReleaseFetcher: func(_ context.Context, user, repo string) (*ghRelease, error) {
+				return nil, errors.New("connection reset by peer")
+			},
+			wantErr: require.Error,
+		},
+		{
+			name: "prefixed semver tag fails on a network error fetching all releases",
+			config: VersionResolutionParameters{
+				Repo: "org/monorepo",
+			},
+			version: "cli/v1.0.0",
+			latestReleaseFetcher: func(_ context.Context, user, repo string) (*ghRelease, error) {
+				return &ghRelease{Tag: "lib/v9.0.0"}, nil
+			},
+			releaseFetcher: func(_ context.Context, user, repo string) ([]ghRelease, error) {
+				return nil, errors.New("connection reset by peer")
+			},
+			wantErr: require.Error,
+		},
+		{
+			name: "prefixed semver tag fails on an invalid constraint",
+			config: VersionResolutionParameters{
+				Repo: "oven-sh/bun",
+			},
+			version:    "bun-v1.4.0",
+			constraint: "not a constraint",
+			latestReleaseFetcher: func(_ context.Context, user, repo string) (*ghRelease, error) {
+				return &ghRelease{Tag: "bun-v1.4.3"}, nil
+			},
+			wantErr: require.Error,
+		},
+		{
+			name: "date-like tags are not treated as prefixed semver",
+			config: VersionResolutionParameters{
+				Repo: "org/repo",
+			},
+			version: "nightly-2024-01-01",
+			want:    "nightly-2024-01-01",
 		},
 	}
 	for _, tt := range tests {
@@ -310,7 +455,7 @@ func Test_filterToLatestVersion(t *testing.T) {
 			if tt.wantErr == nil {
 				tt.wantErr = require.NoError
 			}
-			got, err := filterToLatestVersion(tt.releases, tt.versionConstraint, nil)
+			got, err := filterToLatestVersion(tt.releases, tt.versionConstraint, nil, "")
 			tt.wantErr(t, err)
 			assert.Equal(t, tt.want, got)
 		})
@@ -424,7 +569,7 @@ func Test_filterToLatestVersion_withCooldown(t *testing.T) {
 			if tt.wantErr == nil {
 				tt.wantErr = require.NoError
 			}
-			got, err := filterToLatestVersion(tt.releases, tt.versionConstraint, tt.cutoff)
+			got, err := filterToLatestVersion(tt.releases, tt.versionConstraint, tt.cutoff, "")
 			tt.wantErr(t, err)
 			assert.Equal(t, tt.want, got)
 		})
@@ -470,6 +615,31 @@ func TestVersionResolver_ResolveVersion_withCooldown(t *testing.T) {
 				return []ghRelease{
 					{Tag: "2.0.0", Date: &newDate},
 					{Tag: "1.0.0", Date: &newDate},
+				}, nil
+			},
+		},
+		{
+			name:     "latest infers the tag prefix when cooldown is active",
+			cooldown: 7 * 24 * time.Hour,
+			version:  "latest",
+			want:     "bun-v1.4.0",
+			releasesFetcher: func(_ context.Context, _, _ string) ([]ghRelease, error) {
+				return []ghRelease{
+					{Tag: "bun-v1.4.3", Date: &newDate, IsLatest: boolRef(true)},
+					{Tag: "bun-v1.4.0", Date: &oldDate, IsLatest: boolRef(false)},
+				}, nil
+			},
+		},
+		{
+			name:     "latest takes the tag prefix from the release marked latest, not the first one listed",
+			cooldown: 7 * 24 * time.Hour,
+			version:  "latest",
+			want:     "bun-v1.4.0",
+			releasesFetcher: func(_ context.Context, _, _ string) ([]ghRelease, error) {
+				return []ghRelease{
+					{Tag: "lib/v9.0.0", Date: &newDate, IsLatest: boolRef(false)},
+					{Tag: "bun-v1.4.3", Date: &newDate, IsLatest: boolRef(true)},
+					{Tag: "bun-v1.4.0", Date: &oldDate, IsLatest: boolRef(false)},
 				}, nil
 			},
 		},
@@ -541,6 +711,38 @@ func TestVersionResolver_UpdateVersion_withCooldown(t *testing.T) {
 				return []ghRelease{
 					{Tag: "2.0.0", Date: &newDate},
 					{Tag: "1.0.0", Date: &newDate},
+				}, nil
+			},
+		},
+		{
+			name:     "update prefixed pin with cooldown error when all too new",
+			cooldown: 7 * 24 * time.Hour,
+			version:  "bun-v1.4.3",
+			wantErr: func(t require.TestingT, err error, _ ...any) {
+				require.Error(t, err)
+				var cooldownErr *binny.CooldownError
+				require.ErrorAs(t, err, &cooldownErr)
+			},
+			releasesFetcher: func(_ context.Context, _, _ string) ([]ghRelease, error) {
+				return []ghRelease{
+					{Tag: "bun-v1.4.4", Date: &newDate},
+					{Tag: "bun-v1.4.3", Date: &newDate},
+				}, nil
+			},
+		},
+		{
+			name:     "prefixed cooldown error reports the latest tag with the same prefix",
+			cooldown: 7 * 24 * time.Hour,
+			version:  "bun-v1.4.3",
+			wantErr: func(t require.TestingT, err error, _ ...any) {
+				var cooldownErr *binny.CooldownError
+				require.ErrorAs(t, err, &cooldownErr)
+				assert.Equal(t, "bun-v1.4.4", cooldownErr.LatestVersion)
+			},
+			releasesFetcher: func(_ context.Context, _, _ string) ([]ghRelease, error) {
+				return []ghRelease{
+					{Tag: "cli-v9.0.0", Date: &newDate},
+					{Tag: "bun-v1.4.4", Date: &newDate},
 				}, nil
 			},
 		},

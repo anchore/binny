@@ -1216,3 +1216,67 @@ func Test_selectBinaryAsset_withRegexPatterns(t *testing.T) {
 		})
 	}
 }
+
+func Test_selectBinaryAsset_x64(t *testing.T) {
+	var bunAssets []ghAsset
+	for _, n := range []string{
+		"bun-darwin-aarch64.zip", "bun-darwin-x64-baseline.zip", "bun-darwin-x64.zip",
+		"bun-linux-aarch64.zip", "bun-linux-x64-baseline.zip", "bun-linux-x64-musl.zip", "bun-linux-x64.zip",
+		"bun-windows-x64.zip", "SHASUMS256.txt",
+	} {
+		bunAssets = append(bunAssets, ghAsset{Name: n})
+	}
+	bunPattern := []*regexp.Regexp{regexp.MustCompile(`^bun-[a-z]+-(aarch64|x64)\.zip$`)}
+
+	var tsAssets []ghAsset
+	for _, n := range []string{
+		"typescript-darwin-arm64.tgz", "typescript-darwin-x64.tgz",
+		"typescript-linux-arm64.tgz", "typescript-linux-x64.tgz", "typescript.tgz",
+	} {
+		tsAssets = append(tsAssets, ghAsset{Name: n})
+	}
+
+	tests := []struct {
+		goOS, goArch string
+		assets       []ghAsset
+		patterns     []*regexp.Regexp
+		want         string
+	}{
+		{goOS: "linux", goArch: "amd64", assets: bunAssets, patterns: bunPattern, want: "bun-linux-x64.zip"},
+		{goOS: "darwin", goArch: "amd64", assets: bunAssets, patterns: bunPattern, want: "bun-darwin-x64.zip"},
+		{goOS: "darwin", goArch: "arm64", assets: bunAssets, patterns: bunPattern, want: "bun-darwin-aarch64.zip"},
+		{goOS: "linux", goArch: "amd64", assets: tsAssets, want: "typescript-linux-x64.tgz"},
+		{goOS: "darwin", goArch: "amd64", assets: tsAssets, want: "typescript-darwin-x64.tgz"},
+		{goOS: "darwin", goArch: "arm64", assets: tsAssets, want: "typescript-darwin-arm64.tgz"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.want+"/"+tt.goOS+"_"+tt.goArch, func(t *testing.T) {
+			got := selectBinaryAsset(context.Background(), tt.assets, tt.goOS, tt.goArch, tt.patterns)
+			require.NotNil(t, got)
+			assert.Equal(t, tt.want, got.Name)
+		})
+	}
+}
+
+func Test_processExpandedAssets_digests(t *testing.T) {
+	page := `
+<a href="/o/r/releases/download/v1/tool-linux-x64.tgz"><span>tool-linux-x64.tgz</span></a>
+<span>sha256:7ecad6f67377e831856367ab062ef394f21506a611405bf8ac0ff039348637d3</span>
+<clipboard-copy aria-label="Copy to clipboard digest for tool-linux-x64.tgz" value="sha256:7ecad6f67377e831856367ab062ef394f21506a611405bf8ac0ff039348637d3"></clipboard-copy>
+<a href="/o/r/releases/download/v1/tool-darwin-x64.tgz"><span>tool-darwin-x64.tgz</span></a>
+<clipboard-copy aria-label="Copy to clipboard digest for something-else.tgz" value="sha256:afc662ba78fe126f96209b39d6c64c08088ff12b6df363c4bae04a6b79a26000"></clipboard-copy>
+`
+	want := []ghAsset{
+		{
+			Name:     "tool-linux-x64.tgz",
+			URL:      "https://github.com/o/r/releases/download/v1/tool-linux-x64.tgz",
+			Checksum: "sha256:7ecad6f67377e831856367ab062ef394f21506a611405bf8ac0ff039348637d3",
+		},
+		{
+			// a digest labeled for a different asset is ignored
+			Name: "tool-darwin-x64.tgz",
+			URL:  "https://github.com/o/r/releases/download/v1/tool-darwin-x64.tgz",
+		},
+	}
+	assert.Equal(t, want, processExpandedAssets(context.Background(), strings.NewReader(page), "my-url"))
+}

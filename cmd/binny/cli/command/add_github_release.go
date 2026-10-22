@@ -18,6 +18,11 @@ type AddGithubReleaseConfig struct {
 	Config      string `json:"config" yaml:"config" mapstructure:"config"`
 	option.Core `json:"" yaml:",inline" mapstructure:",squash"`
 
+	// CLI options
+	Install struct {
+		GithubRelease option.GithubRelease `json:"github-release" yaml:"github-release" mapstructure:"github-release"`
+	} `json:"install" yaml:"install" mapstructure:"install"`
+
 	VersionResolution option.VersionResolution `json:"version-resolver" yaml:"version-resolver" mapstructure:"version-resolver"`
 }
 
@@ -27,7 +32,7 @@ func AddGithubRelease(app clio.Application) *cobra.Command {
 	}
 
 	return app.SetupCommand(&cobra.Command{
-		Use:   "github-release OWNER/REPO@VERSION",
+		Use:   "github-release OWNER/REPO@VERSION [--keep-archive-files]",
 		Short: "Add a new tool configuration that sources binaries from GitHub releases",
 		Args:  cobra.ExactArgs(1),
 		PreRunE: func(_ *cobra.Command, args []string) error {
@@ -74,7 +79,8 @@ func runGithubReleaseConfig(cmdCfg AddGithubReleaseConfig, repoVersion string) e
 	vCfg := cmdCfg.VersionResolution
 
 	coreInstallParams := githubrelease.InstallerParameters{
-		Repo: repo,
+		Repo:             repo,
+		KeepArchiveFiles: cmdCfg.Install.GithubRelease.KeepArchiveFiles,
 	}
 
 	installParamMap, err := toMap(coreInstallParams)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 
 	securejoin "github.com/cyphar/filepath-securejoin"
@@ -46,9 +47,16 @@ func extractToDir(ctx context.Context, archivePath, destDir string) error {
 
 		// Handle symlinks
 		if f.LinkTarget != "" {
+			// relative targets are relative to the link's own directory (as tar and ln -s write them), absolute
+			// targets are treated as relative to the archive root
+			target := f.LinkTarget
+			if !path.IsAbs(target) {
+				target = path.Join(path.Dir(f.NameInArchive), target)
+			}
+
 			// Validate symlink target using securejoin to prevent directory traversal.
 			// SecureJoin ensures the target path resolves to somewhere inside destDir.
-			validatedTarget, err := securejoin.SecureJoin(destDir, f.LinkTarget)
+			validatedTarget, err := securejoin.SecureJoin(destDir, target)
 			if err != nil {
 				return fmt.Errorf("invalid symlink target %q: %w", f.LinkTarget, err)
 			}

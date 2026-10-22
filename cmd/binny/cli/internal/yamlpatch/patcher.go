@@ -72,15 +72,13 @@ func Write(path string, patcher Patcher) error {
 		return err
 	}
 
-	defer fh.Close()
-
-	_, err = fh.WriteString(document)
-
-	if err != nil {
+	if _, err := fh.WriteString(document); err != nil {
+		_ = fh.Close()
 		return err
 	}
 
-	return nil
+	// close explicitly, a failed close can mean the config was never fully written
+	return fh.Close()
 }
 
 func formatYaml(contents string) (string, error) {
@@ -123,6 +121,9 @@ func formatYaml(contents string) (string, error) {
 		return "", fmt.Errorf("unable to unmarshal formatted YAML: %w", err)
 	}
 
+	// yam renders flow collections (e.g. "version: {want: v1.0.0}") as invalid yaml, so emit everything in block style
+	blockStyle(&node)
+
 	var buf bytes.Buffer
 	enc := formatted.NewEncoder(&buf)
 	enc, err = enc.SetGapExpressions(".tools")
@@ -136,4 +137,11 @@ func formatYaml(contents string) (string, error) {
 	}
 
 	return buf.String(), nil
+}
+
+func blockStyle(n *yaml.Node) {
+	n.Style &^= yaml.FlowStyle
+	for _, c := range n.Content {
+		blockStyle(c)
+	}
 }

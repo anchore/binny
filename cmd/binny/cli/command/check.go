@@ -124,7 +124,7 @@ func checkTool(ctx context.Context, store *binny.Store, opt option.Tool, opts op
 	}
 
 	// otherwise continue to install the tool
-	err = tool.Check(store, t.Name(), resolvedVersion, tool.VerifyConfig{
+	err = tool.Check(store, t, resolvedVersion, tool.VerifyConfig{
 		VerifyXXH64Digest:  true,
 		VerifySHA256Digest: verifySha256Digest,
 	})

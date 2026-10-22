@@ -303,3 +303,197 @@ func TestStore_Entries_IsACopy(t *testing.T) {
 	}
 
 }
+
+func TestStore_AddToolDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires symlinks")
+	}
+	store, err := NewStore(t.TempDir())
+	require.NoError(t, err)
+
+	// an extracted archive with the binary next to files it reads relative to itself
+	staging := t.TempDir()
+	install := func(contents string) {
+		dir := filepath.Join(staging, "install-"+contents)
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "package", "lib"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "package", "lib", "lib.d.ts"), []byte("decl"), 0o644))
+		bin := filepath.Join(dir, "package", "lib", "tsc")
+		require.NoError(t, os.WriteFile(bin, []byte(contents), 0o644))
+		require.NoError(t, store.AddToolDir("tsc", contents, dir, bin))
+	}
+
+	install("v1")
+	install("v2") // replaces the previous dir and link
+
+	entry, err := store.Get("tsc", "v2")
+	require.NoError(t, err)
+	require.NoError(t, entry.Verify(true, true))
+
+	got, err := os.ReadFile(filepath.Join(store.root, "tsc"))
+	require.NoError(t, err)
+	assert.Equal(t, "v2", string(got))
+	assert.FileExists(t, filepath.Join(store.root, ".binny-dirs", "tsc", "package", "lib", "lib.d.ts"))
+
+	// names that would escape the store (or reach the kept dirs) are rejected
+	for _, name := range []string{"", ".", "..", "../tsc", "a/b", ".binny-dirs"} {
+		assert.Error(t, store.AddToolDir(name, "v1", staging, filepath.Join(staging, "x")), name)
+		assert.Error(t, store.AddTool(name, "v1", filepath.Join(staging, "x")), name)
+	}
+
+	// the binary must live within the dir being moved
+	assert.Error(t, store.AddToolDir("tsc", "v3", staging, filepath.Join(t.TempDir(), "tsc")))
+
+	// switching back to a plain binary install drops the kept dir
+	plain := filepath.Join(staging, "plain")
+	require.NoError(t, os.WriteFile(plain, []byte("v4"), 0o644))
+	require.NoError(t, store.AddTool("tsc", "v4", plain))
+	assert.NoDirExists(t, filepath.Join(store.root, ".binny-dirs", "tsc"))
+	got, err = os.ReadFile(filepath.Join(store.root, "tsc"))
+	require.NoError(t, err)
+	assert.Equal(t, "v4", string(got))
+}
+
+func TestStore_AddToolDir_failedLinkForcesReinstall(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires symlinks")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	store, err := NewStore(t.TempDir())
+	require.NoError(t, err)
+
+	staging := t.TempDir()
+	install := func(contents string) error {
+		dir := filepath.Join(staging, "install-"+contents)
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "package", "lib"), 0o755))
+		bin := filepath.Join(dir, "package", "lib", "tsc")
+		require.NoError(t, os.WriteFile(bin, []byte(contents), 0o644))
+		return store.AddToolDir("tsc", contents, dir, bin)
+	}
+
+	require.NoError(t, install("v1"))
+
+	// a read-only store root makes the second install fail once it has to link root/tsc
+	require.NoError(t, os.Chmod(store.root, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(store.root, 0o755) })
+	require.Error(t, install("v2"))
+	require.NoError(t, os.Chmod(store.root, 0o755))
+
+	// the store may only report the old install as healthy if it still is: otherwise the next run must reinstall
+	entry, err := store.Get("tsc", "v1")
+	require.NoError(t, err)
+	if entry.Verify(true, true) == nil {
+		got, err := os.ReadFile(entry.Path())
+		require.NoError(t, err)
+		assert.Equal(t, "v1", string(got))
+	}
+}
+
+func TestStore_AddToolDir_modes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires symlinks")
+	}
+	store, err := NewStore(t.TempDir())
+	require.NoError(t, err)
+
+	// staging dirs are created 0700 and archive entries may not be executable
+	dir, err := os.MkdirTemp(t.TempDir(), "staging")
+	require.NoError(t, err)
+	bin := filepath.Join(dir, "tsc")
+	require.NoError(t, os.WriteFile(bin, []byte("v1"), 0o644))
+	require.NoError(t, store.AddToolDir("tsc", "v1", dir, bin))
+
+	binInfo, err := os.Stat(filepath.Join(store.root, "tsc"))
+	require.NoError(t, err)
+	assert.NotZero(t, binInfo.Mode()&0o111, "the kept binary should be executable")
+
+	dirInfo, err := os.Stat(filepath.Join(store.root, ".binny-dirs", "tsc"))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o755), dirInfo.Mode().Perm(), "the kept dir should be opened up like the rest of the store")
+}
+
+func TestStore_AddTool_rejectsEscapingNames(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires symlinks")
+	}
+	parent := t.TempDir()
+	root := filepath.Join(parent, "store")
+	store, err := NewStore(root)
+	require.NoError(t, err)
+
+	// other tools already in the store, one plain and one with a kept dir
+	plain := filepath.Join(t.TempDir(), "plain")
+	require.NoError(t, os.WriteFile(plain, []byte("plain"), 0o644))
+	require.NoError(t, store.AddTool("plain", "v1", plain))
+	keptDir := t.TempDir()
+	keptBin := filepath.Join(keptDir, "kept")
+	require.NoError(t, os.WriteFile(keptBin, []byte("kept"), 0o644))
+	require.NoError(t, store.AddToolDir("kept", "v1", keptDir, keptBin))
+
+	// real files, so a rejection can only come from the name check (not from a missing source)
+	for _, name := range []string{"", ".", "..", "../tsc", "a/b"} {
+		bin := filepath.Join(t.TempDir(), "bin")
+		require.NoError(t, os.WriteFile(bin, []byte("v1"), 0o644))
+		assert.Error(t, store.AddTool(name, "v1", bin), name)
+
+		dir := t.TempDir()
+		dirBin := filepath.Join(dir, "bin")
+		require.NoError(t, os.WriteFile(dirBin, []byte("v1"), 0o644))
+		assert.Error(t, store.AddToolDir(name, "v1", dir, dirBin), name)
+	}
+
+	// a rejected name must not have touched the other tools, or anything beside the store
+	for _, name := range []string{"plain", "kept"} {
+		entry, err := store.Get(name, "v1")
+		require.NoError(t, err, name)
+		assert.NoError(t, entry.Verify(true, true), name)
+	}
+	assert.DirExists(t, filepath.Join(root, ".binny-dirs", "kept"))
+	beside, err := os.ReadDir(parent)
+	require.NoError(t, err)
+	require.Len(t, beside, 1)
+	assert.Equal(t, "store", beside[0].Name())
+}
+func TestStore_AddToolDir_rejectsBinaryOutsideDir(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	require.NoError(t, err)
+
+	// a real binary beside (not within) the dir, so a rejection can only come from the containment check
+	base := t.TempDir()
+	dir := filepath.Join(base, "stage")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	bin := filepath.Join(base, "tsc")
+	require.NoError(t, os.WriteFile(bin, []byte("v1"), 0o644))
+
+	assert.Error(t, store.AddToolDir("tsc", "v1", dir, bin))
+	assert.DirExists(t, dir, "nothing should be moved into the store")
+}
+
+func TestStore_AddToolDir_movedStore(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires symlinks")
+	}
+	root := filepath.Join(t.TempDir(), "before")
+	store, err := NewStore(root)
+	require.NoError(t, err)
+
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "tsc")
+	require.NoError(t, os.WriteFile(bin, []byte("v1"), 0o644))
+	require.NoError(t, store.AddToolDir("tsc", "v1", dir, bin))
+
+	// a project copied or renamed along with its tool dir must keep running its own copy of the tool
+	moved := filepath.Join(t.TempDir(), "after")
+	require.NoError(t, os.Rename(root, moved))
+
+	reopened, err := NewStore(moved)
+	require.NoError(t, err)
+	entry, err := reopened.Get("tsc", "v1")
+	require.NoError(t, err)
+	require.NoError(t, entry.Verify(true, true))
+
+	got, err := os.ReadFile(filepath.Join(moved, "tsc"))
+	require.NoError(t, err)
+	assert.Equal(t, "v1", string(got))
+}
