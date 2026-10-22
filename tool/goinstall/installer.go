@@ -54,6 +54,10 @@ func (i Installer) InstallTo(ctx context.Context, version, destDir string) (stri
 	ctx, lgr := log.WithNested(ctx, "tool", fmt.Sprintf("%s@%s", i.config.Module, version))
 
 	importPath := path.Join(i.config.Module, i.config.Entrypoint)
+	// joining cleans "..", which would otherwise quietly point go install at a different module
+	if mod := path.Clean(i.config.Module); importPath != mod && !strings.HasPrefix(importPath, mod+"/") {
+		return "", fmt.Errorf("entrypoint %q is outside of module %q", i.config.Entrypoint, i.config.Module)
+	}
 	binName, err := binaryName(importPath)
 	if err != nil {
 		return "", err

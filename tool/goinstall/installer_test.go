@@ -185,6 +185,24 @@ func TestInstaller_InstallTo(t *testing.T) {
 			want:    "/tmp/to/place/deployer",
 			wantErr: assert.NoError,
 		},
+		{
+			name: "entrypoint outside of the module",
+			fields: fields{
+				config: InstallerParameters{
+					Module:     "github.com/example/project",
+					Entrypoint: "../../other/tool",
+				},
+				goInstallRunner: func(context.Context, string, string, []string, []string, string) error {
+					t.Error("go install should not run for an entrypoint outside of the module")
+					return nil
+				},
+			},
+			args: args{
+				version: "1.2.3",
+				destDir: "/tmp/to/place",
+			},
+			wantErr: assert.Error,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

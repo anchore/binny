@@ -77,7 +77,7 @@ func openRepo(repoPath string) (*git.Repository, error) {
 		EnableDotGitCommonDir: true,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("unable to open repo: %w", err)
+		return nil, fmt.Errorf("unable to open repo %q: %w", repoPath, err)
 	}
 	return r, nil
 }
