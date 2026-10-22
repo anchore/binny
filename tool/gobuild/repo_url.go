@@ -2,6 +2,7 @@ package gobuild
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 )
 
@@ -58,4 +59,23 @@ func DeriveGitHubRepo(module string) string {
 	}
 
 	return parts[0] + "/" + parts[1]
+}
+
+// redactCredentials removes the credentials in repoURL (e.g. https://TOKEN@host/repo or https://user:pass@host/repo)
+// from s, so they can't leak through logs or errors, including git output that echoes the URL back.
+func redactCredentials(s, repoURL string) string {
+	u, err := url.Parse(repoURL)
+	if err != nil || u.User == nil {
+		return s
+	}
+	userinfo := u.User.String()
+	password, hasPassword := u.User.Password()
+	u.User = nil
+
+	s = strings.ReplaceAll(s, repoURL, u.String())
+	s = strings.ReplaceAll(s, userinfo+"@", "")
+	if hasPassword && password != "" {
+		s = strings.ReplaceAll(s, password, "***")
+	}
+	return s
 }

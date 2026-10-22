@@ -76,14 +76,14 @@ func (r gitRefResolver) ResolveVersion(ctx context.Context, intent binny.Version
 
 	sha, err := r.lsRemote(ctx, repoURL, intent.Want)
 	if err != nil {
-		return "", fmt.Errorf("unable to resolve git ref %q from %q: %w", intent.Want, repoURL, err)
+		return "", fmt.Errorf("unable to resolve git ref %q from %q: %w", intent.Want, redactCredentials(repoURL, repoURL), err)
 	}
 	if sha == "" {
 		if shaPattern.MatchString(intent.Want) {
 			// not a branch or tag, so a commit sha, which can't move
 			return intent.Want, nil
 		}
-		return "", fmt.Errorf("git ref %q not found in %q", intent.Want, repoURL)
+		return "", fmt.Errorf("git ref %q not found in %q", intent.Want, redactCredentials(repoURL, repoURL))
 	}
 
 	lgr.WithFields("module", r.module, "ref", intent.Want, "commit", sha).Trace("resolved git ref")
@@ -123,7 +123,7 @@ func lsRemote(ctx context.Context, repoURL, ref string) (string, error) {
 	order := refCandidates(ref)
 
 	args := append([]string{"ls-remote", "--", repoURL}, order...)
-	log.Trace("running: git " + strings.Join(args, " "))
+	log.Trace("running: git " + redactCredentials(strings.Join(args, " "), repoURL))
 
 	cmd := exec.CommandContext(ctx, "git", args...)
 	// fail rather than hang on a credential prompt
@@ -132,7 +132,7 @@ func lsRemote(ctx context.Context, repoURL, ref string) (string, error) {
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("git ls-remote failed: %w: %q", err, strings.TrimSpace(stderr.String()))
+		return "", fmt.Errorf("git ls-remote failed: %w: %q", err, redactCredentials(strings.TrimSpace(stderr.String()), repoURL))
 	}
 
 	found := map[string]string{}

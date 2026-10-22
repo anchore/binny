@@ -200,3 +200,29 @@ func TestCloneSource_commits(t *testing.T) {
 		})
 	}
 }
+
+func Test_redactCredentials(t *testing.T) {
+	tests := []struct {
+		name, repoURL, in, want string
+	}{
+		{name: "token as user", repoURL: "https://TOKEN123@github.com/o/r", in: "clone https://TOKEN123@github.com/o/r failed", want: "clone https://github.com/o/r failed"},
+		{name: "user and password", repoURL: "https://bot:s3cr3t@git.corp/o/r", in: "fatal: https://bot:s3cr3t@git.corp/o/r: auth failed for s3cr3t", want: "fatal: https://git.corp/o/r: auth failed for ***"},
+		{name: "echoed in another form", repoURL: "https://bot:s3cr3t@git.corp/o/r", in: "remote: bot:s3cr3t@git.corp", want: "remote: git.corp"},
+		{name: "no credentials", repoURL: "https://github.com/o/r", in: "clone https://github.com/o/r", want: "clone https://github.com/o/r"},
+		{name: "scp-style is left alone", repoURL: "git@github.com:o/r.git", in: "git@github.com:o/r.git", want: "git@github.com:o/r.git"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, redactCredentials(tt.in, tt.repoURL))
+		})
+	}
+}
+
+func TestGitRefResolver_doesNotLeakCredentials(t *testing.T) {
+	// nothing listens on port 1, so git fails fast and its error (and ours) would carry the URL
+	r := WithGitRefResolution(InstallerParameters{Module: "example.com/tool", RepoURL: "https://bot:s3cr3t@127.0.0.1:1/o/r.git"}, &delegate{})
+	_, err := r.ResolveVersion(context.Background(), binny.VersionIntent{Want: "main"})
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "s3cr3t")
+	assert.Contains(t, err.Error(), "https://127.0.0.1:1/o/r.git")
+}

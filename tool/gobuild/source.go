@@ -66,7 +66,7 @@ func cloneSource(ctx context.Context, module, version, repoURL string) (string, 
 	}
 
 	version = gitRev(version)
-	lgr.WithFields("repo", repoURL, "version", version).Debug("cloning repository")
+	lgr.WithFields("repo", redactCredentials(repoURL, repoURL), "version", version).Debug("cloning repository")
 
 	if fullSHAPattern.MatchString(version) {
 		// a full commit (what a tracked git ref resolves to) can be fetched on its own, without history
@@ -78,7 +78,7 @@ func cloneSource(ctx context.Context, module, version, repoURL string) (string, 
 
 	if err != nil {
 		// try full clone + checkout (handles short commit hashes, and servers that refuse fetching by sha)
-		lgr.WithFields("repo", repoURL, "version", version).Debug("shallow clone failed, trying full clone")
+		lgr.WithFields("repo", redactCredentials(repoURL, repoURL), "version", version).Debug("shallow clone failed, trying full clone")
 		if err := resetDir(tempDir); err != nil {
 			cleanup()
 			return "", nil, err
@@ -107,12 +107,12 @@ func gitRev(version string) string {
 // shallowClone performs a shallow clone (depth=1) for a specific tag or branch.
 func shallowClone(ctx context.Context, repoURL, version, destDir string) error {
 	args := []string{"clone", "--depth", "1", "--branch", version, repoURL, destDir}
-	log.Trace("running: git " + strings.Join(args, " "))
+	log.Trace("running: git " + redactCredentials(strings.Join(args, " "), repoURL))
 
 	cmd := exec.CommandContext(ctx, "git", args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("git clone failed: %v\nOutput: %s", err, output)
+		return fmt.Errorf("git clone failed: %v\nOutput: %s", err, redactCredentials(string(output), repoURL))
 	}
 	return nil
 }
@@ -124,11 +124,11 @@ func fetchCommit(ctx context.Context, repoURL, sha, destDir string) error {
 		{"fetch", "-q", "--depth", "1", "--", repoURL, sha},
 		{"checkout", "-q", "--detach", "FETCH_HEAD"},
 	} {
-		log.Trace("running: git " + strings.Join(args, " "))
+		log.Trace("running: git " + redactCredentials(strings.Join(args, " "), repoURL))
 		cmd := exec.CommandContext(ctx, "git", args...)
 		cmd.Dir = destDir
 		if output, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("git %s failed: %v\nOutput: %s", args[0], err, output)
+			return fmt.Errorf("git %s failed: %v\nOutput: %s", args[0], err, redactCredentials(string(output), repoURL))
 		}
 	}
 	return nil
@@ -153,23 +153,23 @@ func resetDir(dir string) error {
 func fullCloneAndCheckout(ctx context.Context, repoURL, version, destDir string) error {
 	// full history, but blobs are only fetched for the commit that gets checked out
 	cloneArgs := []string{"clone", "--filter=blob:none", repoURL, destDir}
-	log.Trace("running: git " + strings.Join(cloneArgs, " "))
+	log.Trace("running: git " + redactCredentials(strings.Join(cloneArgs, " "), repoURL))
 
 	cmd := exec.CommandContext(ctx, "git", cloneArgs...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("git clone failed: %v\nOutput: %s", err, output)
+		return fmt.Errorf("git clone failed: %v\nOutput: %s", err, redactCredentials(string(output), repoURL))
 	}
 
 	// checkout the specific version
 	checkoutArgs := []string{"checkout", version}
-	log.Trace("running: git " + strings.Join(checkoutArgs, " "))
+	log.Trace("running: git " + redactCredentials(strings.Join(checkoutArgs, " "), repoURL))
 
 	cmd = exec.CommandContext(ctx, "git", checkoutArgs...)
 	cmd.Dir = destDir
 	output, err = cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("git checkout failed: %v\nOutput: %s", err, output)
+		return fmt.Errorf("git checkout failed: %v\nOutput: %s", err, redactCredentials(string(output), repoURL))
 	}
 	return nil
 }
