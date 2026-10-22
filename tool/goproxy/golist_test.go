@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,8 +36,14 @@ func fileProxy(t *testing.T) []string {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600))
 	}
 
+	// file URLs need a leading slash before a windows drive letter (file:///C:/...)
+	proxyPath := filepath.ToSlash(root)
+	if !strings.HasPrefix(proxyPath, "/") {
+		proxyPath = "/" + proxyPath
+	}
+
 	return []string{
-		"GOPROXY=file://" + filepath.ToSlash(root),
+		"GOPROXY=file://" + proxyPath,
 		"GONOPROXY=",
 		"GOPRIVATE=",
 		"GOSUMDB=off",
