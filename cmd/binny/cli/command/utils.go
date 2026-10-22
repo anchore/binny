@@ -85,12 +85,7 @@ func updateConfiguration(path string, cfg option.Tool) error {
 			return fmt.Errorf("unable to encode new tool configuration: %w", err)
 		}
 
-		fh, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0644)
-		if err != nil {
-			return fmt.Errorf("unable to create config file: %w", err)
-		}
-
-		if _, err := fh.Write(by); err != nil {
+		if err := os.WriteFile(path, by, 0644); err != nil {
 			return fmt.Errorf("unable to write config: %w", err)
 		}
 	} else if err != nil {
