@@ -64,7 +64,7 @@ func (v VersionResolver) ResolveVersion(ctx context.Context, intent binny.Versio
 	}
 
 	if intent.Want == latest {
-		return v.findLatestVersion(ctx, "", intent.Cooldown)
+		return v.latestVersion(ctx, "", intent.Cooldown)
 	}
 
 	return v.resolveRef(ctx, intent)
@@ -77,8 +77,8 @@ func (v VersionResolver) resolveRef(ctx context.Context, intent binny.VersionInt
 	lgr := log.FromContext(ctx)
 	ref := intent.Want
 
-	if intent.Constraint != "" {
-		return "", fmt.Errorf("cannot specify a version constraint with git ref %q", ref)
+	if err := internal.CheckRefConstraint(ref, intent.Constraint); err != nil {
+		return "", err
 	}
 
 	info, err := v.versionInfoFetcher(ctx, v.config.Module, ref)
@@ -112,16 +112,36 @@ func (v VersionResolver) UpdateVersion(ctx context.Context, intent binny.Version
 	}
 
 	if internal.IsSemver(intent.Want) {
-		return v.findLatestVersion(ctx, intent.Constraint, intent.Cooldown)
+		return v.latestVersion(ctx, intent.Constraint, intent.Cooldown)
 	}
 
-	if intent.Constraint != "" {
-		return "", fmt.Errorf("cannot specify a version constraint with git ref %q", intent.Want)
+	if err := internal.CheckRefConstraint(intent.Want, intent.Constraint); err != nil {
+		return "", err
 	}
 
 	// a git ref is kept as the intent (like "latest"). Where it points to now is picked up by ResolveVersion
 	// during install and check.
 	return intent.Want, nil
+}
+
+// latestVersion returns the newest version allowed by the constraint and cooldown. Without either it is whatever
+// `go install mod@latest` would install: a release over a prerelease, retracted versions skipped, and a pseudo-version
+// for a module with no tags. The version list (and picking from it) is only needed to apply a constraint or cooldown.
+func (v VersionResolver) latestVersion(ctx context.Context, versionConstraint string, cooldown time.Duration) (string, error) {
+	if versionConstraint != "" || cooldown > 0 {
+		return v.findLatestVersion(ctx, versionConstraint, cooldown)
+	}
+
+	info, err := v.versionInfoFetcher(ctx, v.config.Module, latest)
+	if err != nil {
+		return "", fmt.Errorf("could not resolve latest version for module %q: %w", v.config.Module, err)
+	}
+	if err := module.Check(v.config.Module, info.Version); err != nil {
+		return "", fmt.Errorf("got an invalid latest version for module %q: %w", v.config.Module, err)
+	}
+
+	log.FromContext(ctx).WithFields(latest, info.Version, "module", v.config.Module).Trace("found latest version")
+	return info.Version, nil
 }
 
 func (v VersionResolver) findLatestVersion(ctx context.Context, versionConstraint string, cooldown time.Duration) (string, error) {

@@ -69,7 +69,7 @@ func (d *delegate) UpdateVersion(_ context.Context, intent binny.VersionIntent) 
 	return "from-delegate", nil
 }
 
-func TestGitRefResolver(t *testing.T) {
+func TestRefResolver(t *testing.T) {
 	ctx := context.Background()
 	repo := newGitRepo(t)
 	first := repo.commit("one")
@@ -78,7 +78,7 @@ func TestGitRefResolver(t *testing.T) {
 	second := repo.commit("two")
 
 	inner := &delegate{}
-	r := WithGitRefResolution(InstallerParameters{Module: "example.com/tool", RepoURL: repo.url()}, inner)
+	r := WithRefResolution(InstallerParameters{Module: "example.com/tool", RepoURL: repo.url()}, inner, false)
 
 	resolve := func(want string) (string, error) {
 		return r.ResolveVersion(ctx, binny.VersionIntent{Want: want})
@@ -152,15 +152,94 @@ func TestGitRefResolver(t *testing.T) {
 	assert.Equal(t, []string{"cli/v2.0.0", "bun-v1.4.3"}, inner.asked)
 
 	// a date-like tag isn't a prefixed version, it stays a ref
-	assert.True(t, isGitRef("nightly-2024-01-01"))
+	assert.False(t, versionTag("nightly-2024-01-01", gitRef{}, nil))
 }
 
-func TestWithGitRefResolution_onlyForGitSource(t *testing.T) {
+func TestRefResolver_fullSHAIsNotRedirected(t *testing.T) {
+	ctx := context.Background()
+	repo := newGitRepo(t)
+	pinned := repo.commit("one")
+	other := repo.commit("two")
+	// a branch and a tag named after the pinned commit, pointing somewhere else
+	repo.git("update-ref", "refs/heads/"+pinned, other)
+	repo.git("update-ref", "refs/tags/"+pinned, other)
+
+	r := WithRefResolution(InstallerParameters{Module: "example.com/tool", RepoURL: repo.url()}, &delegate{}, false)
+	got, err := r.ResolveVersion(ctx, binny.VersionIntent{Want: pinned})
+	require.NoError(t, err)
+	assert.Equal(t, pinned, got)
+}
+
+func TestRefResolver_versionShapedNames(t *testing.T) {
+	ctx := context.Background()
+	repo := newGitRepo(t)
+	repo.commit("one")
+	repo.git("tag", "release-1.2")
+	repo.git("branch", "release-1.30")
+	branchHead := repo.commit("two")
+	repo.git("branch", "-f", "release-1.30", branchHead)
+
 	inner := &delegate{}
-	assert.IsType(t, gitRefResolver{}, WithGitRefResolution(InstallerParameters{Module: "example.com/tool"}, inner))
-	assert.IsType(t, gitRefResolver{}, WithGitRefResolution(InstallerParameters{Module: "example.com/tool", Source: "GIT"}, inner))
-	assert.Same(t, inner, WithGitRefResolution(InstallerParameters{Module: "example.com/tool", Source: SourceModeGoProxy}, inner))
-	assert.Same(t, inner, WithGitRefResolution(InstallerParameters{Module: "./local"}, inner))
+	r := WithRefResolution(InstallerParameters{Module: "example.com/tool", RepoURL: repo.url()}, inner, false)
+
+	// a branch that looks like a prefixed version is still tracked
+	got, err := r.ResolveVersion(ctx, binny.VersionIntent{Want: "release-1.30"})
+	require.NoError(t, err)
+	assert.Equal(t, branchHead, got)
+	got, err = r.UpdateVersion(ctx, binny.VersionIntent{Want: "release-1.30"})
+	require.NoError(t, err)
+	assert.Equal(t, "release-1.30", got)
+	assert.Empty(t, inner.asked)
+
+	// a tag of that shape is a version, so the wrapped resolver handles it
+	got, err = r.ResolveVersion(ctx, binny.VersionIntent{Want: "release-1.2"})
+	require.NoError(t, err)
+	assert.Equal(t, "from-delegate", got)
+	got, err = r.UpdateVersion(ctx, binny.VersionIntent{Want: "release-1.2"})
+	require.NoError(t, err)
+	assert.Equal(t, "from-delegate", got)
+	assert.Equal(t, []string{"release-1.2", "release-1.2"}, inner.asked)
+}
+
+func TestRefResolver_allowUnresolved(t *testing.T) {
+	ctx := context.Background()
+	repo := newGitRepo(t)
+	repo.commit("one")
+
+	tests := []struct {
+		name    string
+		repoURL string
+	}{
+		{name: "ref not found", repoURL: repo.url()},
+		{name: "repo unreachable", repoURL: "file://" + filepath.ToSlash(filepath.Join(t.TempDir(), "missing"))},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			params := InstallerParameters{Module: "example.com/tool", RepoURL: tt.repoURL}
+
+			_, err := WithRefResolution(params, &delegate{}, false).ResolveVersion(ctx, binny.VersionIntent{Want: "gone"})
+			require.Error(t, err)
+
+			got, err := WithRefResolution(params, &delegate{}, true).ResolveVersion(ctx, binny.VersionIntent{Want: "gone"})
+			require.NoError(t, err)
+			assert.Equal(t, "gone", got)
+		})
+	}
+}
+
+func TestWithRefResolution_sourceModes(t *testing.T) {
+	inner := &delegate{}
+	for _, source := range []SourceMode{"", "GIT"} {
+		r := WithRefResolution(InstallerParameters{Module: "example.com/tool", Source: source}, inner, false)
+		require.IsType(t, refResolver{}, r)
+		assert.Nil(t, r.(refResolver).proxy, "git source resolves refs with git")
+	}
+
+	r := WithRefResolution(InstallerParameters{Module: "example.com/tool", Source: SourceModeGoProxy}, inner, false)
+	require.IsType(t, refResolver{}, r)
+	assert.NotNil(t, r.(refResolver).proxy, "go-proxy source resolves refs with the go command")
+
+	assert.Same(t, inner, WithRefResolution(InstallerParameters{Module: "./local"}, inner, false))
 }
 
 func TestCloneSource_commits(t *testing.T) {
@@ -218,9 +297,9 @@ func Test_redactCredentials(t *testing.T) {
 	}
 }
 
-func TestGitRefResolver_doesNotLeakCredentials(t *testing.T) {
+func TestRefResolver_doesNotLeakCredentials(t *testing.T) {
 	// nothing listens on port 1, so git fails fast and its error (and ours) would carry the URL
-	r := WithGitRefResolution(InstallerParameters{Module: "example.com/tool", RepoURL: "https://bot:s3cr3t@127.0.0.1:1/o/r.git"}, &delegate{})
+	r := WithRefResolution(InstallerParameters{Module: "example.com/tool", RepoURL: "https://bot:s3cr3t@127.0.0.1:1/o/r.git"}, &delegate{}, false)
 	_, err := r.ResolveVersion(context.Background(), binny.VersionIntent{Want: "main"})
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "s3cr3t")

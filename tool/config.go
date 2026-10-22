@@ -2,11 +2,11 @@ package tool
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/mitchellh/hashstructure/v2"
 
 	"github.com/anchore/binny"
+	"github.com/anchore/binny/internal"
 	"github.com/anchore/binny/internal/log"
 	"github.com/anchore/binny/tool/git"
 	"github.com/anchore/binny/tool/githubrelease"
@@ -67,7 +67,8 @@ func New(t Config) (binny.Tool, error) {
 	}
 
 	if params, ok := t.InstallerConfig.Parameters.(gobuild.InstallerParameters); ok {
-		resolver = gobuild.WithGitRefResolution(params, resolver)
+		proxyParams, _ := t.VersionResolverConfig.Parameters.(goproxy.VersionResolutionParameters)
+		resolver = gobuild.WithRefResolution(params, resolver, proxyParams.AllowUnresolvedVersion)
 	}
 
 	return &compositeTool{
@@ -194,11 +195,5 @@ func goCommandEnv(installParams any) []string {
 		env = p.Env
 	}
 
-	var out []string
-	for _, e := range env {
-		if strings.Contains(e, "=") && !strings.Contains(e, "{{") {
-			out = append(out, e)
-		}
-	}
-	return out
+	return internal.StaticEnv(env)
 }

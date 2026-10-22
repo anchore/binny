@@ -19,18 +19,19 @@ func TestVersionResolver_ResolveVersion(t *testing.T) {
 		version                  string
 		constraint               string
 		availableVersionsFetcher func(ctx context.Context, module string) ([]string, error)
+		versionInfoFetcher       func(ctx context.Context, module, version string) (*versionInfo, error)
 		want                     string
 		wantErr                  require.ErrorAssertionFunc
 	}{
 		{
-			name: "latest will trigger a lookup for the latest version",
+			name: "latest asks the go command for its latest version",
 			config: VersionResolutionParameters{
 				Module: "github.com/anchore/binny",
 			},
 			version: "latest",
-			want:    "2.0.0",
+			want:    "v1.3.0",
 			availableVersionsFetcher: func(_ context.Context, _ string) ([]string, error) {
-				return []string{"1.0.0", "2.0.0", "1.1.0"}, nil
+				return nil, fmt.Errorf("should never be called")
 			},
 		},
 		{
@@ -104,6 +105,7 @@ func TestVersionResolver_ResolveVersion(t *testing.T) {
 			availableVersionsFetcher: func(_ context.Context, _ string) ([]string, error) {
 				return []string{""}, nil
 			},
+			versionInfoFetcher: stubRefs(nil),
 		},
 		{
 			name: "allow for unresolved versions",
@@ -130,7 +132,11 @@ func TestVersionResolver_ResolveVersion(t *testing.T) {
 				"abcdef1234567890abcdef1234567890abcdef12": "v0.0.0-20261015120000-abcdef123456",
 				"abcdef123456": "v0.0.0-20261015120000-abcdef123456",
 				"release-1.2":  "v1.2.0",
+				"latest":       "v1.3.0",
 			})
+			if tt.versionInfoFetcher != nil {
+				v.versionInfoFetcher = tt.versionInfoFetcher
+			}
 
 			got, err := v.ResolveVersion(context.Background(), binny.VersionIntent{Want: tt.version, Constraint: tt.constraint})
 			tt.wantErr(t, err)
@@ -163,7 +169,16 @@ func TestVersionResolver_UpdateVersion(t *testing.T) {
 				Module: "github.com/anchore/binny",
 			},
 			version: "1.0.0",
-			want:    "2.0.0",
+			want:    "v1.3.0",
+		},
+		{
+			name: "a constraint picks from the version list",
+			config: VersionResolutionParameters{
+				Module: "github.com/anchore/binny",
+			},
+			version:    "1.0.0",
+			constraint: "< 2.0",
+			want:       "1.1.0",
 			availableVersionsFetcher: func(_ context.Context, _ string) ([]string, error) {
 				return []string{"1.0.0", "2.0.0", "1.1.0"}, nil
 			},
@@ -184,6 +199,7 @@ func TestVersionResolver_UpdateVersion(t *testing.T) {
 			}
 			v := NewVersionResolver(tt.config)
 			v.availableVersionsFetcher = tt.availableVersionsFetcher
+			v.versionInfoFetcher = stubRefs(map[string]string{"latest": "v1.3.0"})
 
 			got, err := v.UpdateVersion(context.Background(), binny.VersionIntent{Want: tt.version, Constraint: tt.constraint})
 			tt.wantErr(t, err)
@@ -248,13 +264,11 @@ func TestVersionResolver_ResolveVersion_withCooldown(t *testing.T) {
 			want:     "1.0.0",
 		},
 		{
-			name:     "no cooldown uses standard resolution",
-			cooldown: 0,
-			version:  "latest",
-			want:     "2.0.0",
-			availableVersionsFetcher: func(_ context.Context, _ string) ([]string, error) {
-				return []string{"1.0.0", "2.0.0"}, nil
-			},
+			name:               "no cooldown uses standard resolution",
+			cooldown:           0,
+			version:            "latest",
+			want:               "v1.3.0",
+			versionInfoFetcher: stubRefs(map[string]string{"latest": "v1.3.0"}),
 		},
 		{
 			name:     "version info fetch error skips to next candidate",

@@ -23,13 +23,15 @@ func fileProxy(t *testing.T) []string {
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 
 	files := map[string]string{
-		"list":        "v1.0.0\nv1.1.0\n",
+		"list":        "v1.0.0\nv1.1.0\nv1.2.0-rc.1\n",
 		"v1.0.0.info": `{"Version":"v1.0.0","Time":"2026-01-01T00:00:00Z"}`,
 		"v1.1.0.info": `{"Version":"v1.1.0","Time":"2026-02-01T00:00:00Z"}`,
+		// a prerelease newer than the latest release, which @latest skips
+		"v1.2.0-rc.1.info": `{"Version":"v1.2.0-rc.1","Time":"2026-03-01T00:00:00Z"}`,
 		// a branch: the proxy answers the ref query with a pseudo-version
 		"main.info": `{"Version":"v1.1.1-0.20261015120000-abcdef123456","Time":"2026-10-15T12:00:00Z"}`,
 	}
-	for _, v := range []string{"v1.0.0", "v1.1.0", "v1.1.1-0.20261015120000-abcdef123456"} {
+	for _, v := range []string{"v1.0.0", "v1.1.0", "v1.2.0-rc.1", "v1.1.1-0.20261015120000-abcdef123456"} {
 		files[v+".mod"] = "module example.com/tool\n"
 	}
 	for name, content := range files {
@@ -61,6 +63,7 @@ func TestVersionResolver_goList(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "v1.1.1-0.20261015120000-abcdef123456", got)
 
+	// what `go install @latest` would pick: the newest release, not the newer prerelease
 	got, err = v.ResolveVersion(ctx, binny.VersionIntent{Want: "latest"})
 	require.NoError(t, err)
 	assert.Equal(t, "v1.1.0", got)

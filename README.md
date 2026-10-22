@@ -229,13 +229,18 @@ In addition to these variables, [sprig functions](http://masterminds.github.io/s
   - a branch or tag, including ones with `/` (e.g. `main`, `feature/x`); tags win over a branch of the same name
   - a PR / MR head: `pull/123` (GitHub) or `merge-requests/45` (GitLab), or spelled out as `pull/123/head`
   - any full ref name, e.g. `refs/pull/123/head`
-  - a commit sha (kept as-is, it can't move)
+  - a commit sha (kept as-is, it can't move; a full sha is never looked up, so a branch or tag named after it can't
+    redirect the build)
 
-  To build a branch from a fork, point `repo-url` at the fork and set `want` to the branch.
+  A name shaped like a prefixed version (e.g. `bun-v1.4.3`, `release-1.30`) is tracked when the repo says it's a
+  branch, and treated as a version (left to the version method) when it's a tag. To build a branch from a fork, point
+  `repo-url` at the fork and set `want` to the branch. Refs that can't be resolved fail, unless the version method is
+  `go-proxy` with `allow-unresolved-version: true`, which passes the ref through as-is.
 
 - `go-proxy`: Downloads the source via `go mod download`. This uses the Go module proxy cache and may be
   faster for publicly available modules, but does not support private repositories without proper GOPRIVATE
-  configuration.
+  configuration. A `want` that is a git ref is resolved by the go command the same way as for `go-install` (see
+  `go-proxy` under version methods), so the recorded version is a pseudo-version.
 
 **Example configurations:**
 
@@ -367,7 +372,8 @@ set in the tool's `env`. It requires the following configuration options:
 | `allow-unresolved-version` | Skip resolving `latest` or a git ref and pass it to `go install` as-is | 
 
 The `version.want` option allows a special entry:
-- `latest`: don't pin to a version, use the latest available
+- `latest`: don't pin to a version, use whatever `go install <module>@latest` would install (the newest release over
+  a prerelease, skipping retracted versions, or a pseudo-version for a module with no tags)
 - a git ref (branch, tag, or commit sha): track that ref, e.g. to try an unreleased fix
 
 ```yaml

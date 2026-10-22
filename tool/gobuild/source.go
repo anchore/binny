@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"golang.org/x/mod/module"
 
@@ -104,13 +105,25 @@ func gitRev(version string) string {
 	return version
 }
 
+// fetchCommitTimeout bounds fetching a single commit, so a stalled host or an ssh prompt can't hang the install.
+const fetchCommitTimeout = 10 * time.Minute
+
+// gitCommand builds a git command that fails instead of prompting for https credentials. ssh prompts (unknown host
+// key, key passphrase) aren't covered, forcing ssh BatchMode would override a user's core.sshCommand, so callers that
+// talk to a remote bound the time instead.
+func gitCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	return cmd
+}
+
 // shallowClone performs a shallow clone (depth=1) for a specific tag or branch.
 func shallowClone(ctx context.Context, repoURL, version, destDir string) error {
 	args := []string{"clone", "--depth", "1", "--branch", version, repoURL, destDir}
 	log.Trace("running: git " + redactCredentials(strings.Join(args, " "), repoURL))
 
-	cmd := exec.CommandContext(ctx, "git", args...)
-	output, err := cmd.CombinedOutput()
+	output, err := gitCommand(ctx, "", args...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git clone failed: %v\nOutput: %s", err, redactCredentials(string(output), repoURL))
 	}
@@ -119,15 +132,16 @@ func shallowClone(ctx context.Context, repoURL, version, destDir string) error {
 
 // fetchCommit fetches a single commit (depth=1) into an empty repo and checks it out.
 func fetchCommit(ctx context.Context, repoURL, sha, destDir string) error {
+	ctx, cancel := context.WithTimeout(ctx, fetchCommitTimeout)
+	defer cancel()
+
 	for _, args := range [][]string{
 		{"init", "-q"},
 		{"fetch", "-q", "--depth", "1", "--", repoURL, sha},
 		{"checkout", "-q", "--detach", "FETCH_HEAD"},
 	} {
 		log.Trace("running: git " + redactCredentials(strings.Join(args, " "), repoURL))
-		cmd := exec.CommandContext(ctx, "git", args...)
-		cmd.Dir = destDir
-		if output, err := cmd.CombinedOutput(); err != nil {
+		if output, err := gitCommand(ctx, destDir, args...).CombinedOutput(); err != nil {
 			return fmt.Errorf("git %s failed: %v\nOutput: %s", args[0], err, redactCredentials(string(output), repoURL))
 		}
 	}
@@ -155,8 +169,7 @@ func fullCloneAndCheckout(ctx context.Context, repoURL, version, destDir string)
 	cloneArgs := []string{"clone", "--filter=blob:none", repoURL, destDir}
 	log.Trace("running: git " + redactCredentials(strings.Join(cloneArgs, " "), repoURL))
 
-	cmd := exec.CommandContext(ctx, "git", cloneArgs...)
-	output, err := cmd.CombinedOutput()
+	output, err := gitCommand(ctx, "", cloneArgs...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git clone failed: %v\nOutput: %s", err, redactCredentials(string(output), repoURL))
 	}
@@ -165,9 +178,7 @@ func fullCloneAndCheckout(ctx context.Context, repoURL, version, destDir string)
 	checkoutArgs := []string{"checkout", version}
 	log.Trace("running: git " + redactCredentials(strings.Join(checkoutArgs, " "), repoURL))
 
-	cmd = exec.CommandContext(ctx, "git", checkoutArgs...)
-	cmd.Dir = destDir
-	output, err = cmd.CombinedOutput()
+	output, err = gitCommand(ctx, destDir, checkoutArgs...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git checkout failed: %v\nOutput: %s", err, redactCredentials(string(output), repoURL))
 	}
