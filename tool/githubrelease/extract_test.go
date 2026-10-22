@@ -189,6 +189,21 @@ func Test_extractToDir_symlinkBeforeTarget(t *testing.T) {
 	assert.Equal(t, "target content", string(content))
 }
 
+func Test_extractToDir_relativeSymlinkInSubdir(t *testing.T) {
+	// symlink targets are relative to the link's own directory (as tar and ln -s write them), not the archive root
+	dir := t.TempDir()
+
+	archivePath := createArchiveWithSymlinkInSubdir(t, t.TempDir())
+
+	err := extractToDir(context.Background(), archivePath, dir)
+	require.NoError(t, err)
+
+	// Verify symlink can be followed to its sibling and reads correct content
+	content, err := os.ReadFile(filepath.Join(dir, "pkg", "lib", "libx.so"))
+	require.NoError(t, err)
+	assert.Equal(t, "target content", string(content))
+}
+
 func createMaliciousArchive(t *testing.T, dir, maliciousPath string) string {
 	archivePath := filepath.Join(dir, "malicious.tar.gz")
 	archiveFile, err := os.Create(archivePath)
@@ -309,6 +324,40 @@ func createArchiveWithSymlinkBeforeTarget(t *testing.T, dir string) string {
 	require.NoError(t, tarWriter.WriteHeader(fileHeader))
 	_, err = tarWriter.Write(content)
 	require.NoError(t, err)
+
+	return archivePath
+}
+
+// createArchiveWithSymlinkInSubdir creates an archive with a file and a sibling symlink to it, both in a subdirectory.
+func createArchiveWithSymlinkInSubdir(t *testing.T, dir string) string {
+	archivePath := filepath.Join(dir, "symlink_in_subdir.tar.gz")
+	archiveFile, err := os.Create(archivePath)
+	require.NoError(t, err)
+	defer archiveFile.Close()
+
+	gzipWriter := gzip.NewWriter(archiveFile)
+	defer gzipWriter.Close()
+
+	tarWriter := tar.NewWriter(gzipWriter)
+	defer tarWriter.Close()
+
+	content := []byte("target content")
+	fileHeader := &tar.Header{
+		Name: "pkg/lib/libx.so.1",
+		Size: int64(len(content)),
+		Mode: 0644,
+	}
+	require.NoError(t, tarWriter.WriteHeader(fileHeader))
+	_, err = tarWriter.Write(content)
+	require.NoError(t, err)
+
+	linkHeader := &tar.Header{
+		Name:     "pkg/lib/libx.so",
+		Typeflag: tar.TypeSymlink,
+		Linkname: "libx.so.1",
+		Mode:     0777,
+	}
+	require.NoError(t, tarWriter.WriteHeader(linkHeader))
 
 	return archivePath
 }
