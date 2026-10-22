@@ -72,15 +72,13 @@ func Write(path string, patcher Patcher) error {
 		return err
 	}
 
-	defer fh.Close()
-
-	_, err = fh.WriteString(document)
-
-	if err != nil {
+	if _, err := fh.WriteString(document); err != nil {
+		_ = fh.Close()
 		return err
 	}
 
-	return nil
+	// close explicitly, a failed close can mean the config was never fully written
+	return fh.Close()
 }
 
 func formatYaml(contents string) (string, error) {

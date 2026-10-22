@@ -89,10 +89,14 @@ func updateConfiguration(path string, cfg option.Tool) error {
 		if err != nil {
 			return fmt.Errorf("unable to create config file: %w", err)
 		}
-		defer fh.Close()
-
 		if _, err := fh.Write(by); err != nil {
+			_ = fh.Close()
 			return fmt.Errorf("unable to write config: %w", err)
+		}
+
+		// close explicitly, a failed close can mean the config was never fully written
+		if err := fh.Close(); err != nil {
+			return fmt.Errorf("unable to close config file: %w", err)
 		}
 	} else if err != nil {
 		return fmt.Errorf("unable to stat config file: %w", err)
