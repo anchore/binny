@@ -62,7 +62,7 @@ func (v VersionResolver) UpdateVersion(ctx context.Context, intent binny.Version
 				Warn("unable to find a newer version with the same tag prefix, keeping the current pin")
 			return intent.Want, nil
 		}
-		return latest, nil
+		return latest, err
 	}
 
 	return intent.Want, nil
@@ -83,7 +83,8 @@ func (v VersionResolver) ResolveVersion(ctx context.Context, intent binny.Versio
 }
 
 // findLatestVersion finds the latest release tag, considering only tags that start with tagPrefix (when given). When
-// inferPrefix is set and no prefix is given, the prefix of github's own latest tag is used (e.g. "bun-" for "bun-v1.4.3").
+// inferPrefix is set and no prefix is given, the prefix of the release github flags as latest is used (e.g. "bun-" for
+// "bun-v1.4.3").
 func (v VersionResolver) findLatestVersion(ctx context.Context, versionConstraint string, cooldown time.Duration, tagPrefix string, inferPrefix bool) (string, error) {
 	lgr := log.FromContext(ctx)
 	cfg := v.config
@@ -131,25 +132,17 @@ func (v VersionResolver) findLatestVersion(ctx context.Context, versionConstrain
 		return "", fmt.Errorf("unable to fetch all releases: %v", err)
 	}
 
+	if inferPrefix && tagPrefix == "" {
+		tagPrefix = latestTagPrefix(releases)
+	}
+
 	latestVersion, err := filterToLatestVersion(releases, versionConstraint, cutoff, tagPrefix)
 	if err != nil {
 		return "", fmt.Errorf("unable to filter to latest version: %v", err)
 	}
 	if latestVersion == nil {
 		if cutoff != nil {
-			// find the absolute latest (without cooldown) to produce a helpful error message
-			absoluteLatest, _ := filterToLatestVersion(releases, versionConstraint, nil, tagPrefix)
-			var latestTag string
-			var latestDate *time.Time
-			if absoluteLatest != nil {
-				latestTag = absoluteLatest.Tag
-				latestDate = absoluteLatest.Date
-			}
-			return "", &binny.CooldownError{
-				Cooldown:      cooldown,
-				LatestVersion: latestTag,
-				LatestDate:    latestDate,
-			}
+			return "", newCooldownError(releases, versionConstraint, tagPrefix, cooldown)
 		}
 		return "", fmt.Errorf("no latest version found")
 	}
@@ -158,6 +151,27 @@ func (v VersionResolver) findLatestVersion(ctx context.Context, versionConstrain
 		Trace("found latest version from the github release")
 
 	return latestVersion.Tag, nil
+}
+
+// newCooldownError reports the absolute latest version (ignoring the cooldown) to produce a helpful error message.
+func newCooldownError(releases []ghRelease, versionConstraint, tagPrefix string, cooldown time.Duration) *binny.CooldownError {
+	err := &binny.CooldownError{Cooldown: cooldown}
+	if absoluteLatest, _ := filterToLatestVersion(releases, versionConstraint, nil, tagPrefix); absoluteLatest != nil {
+		err.LatestVersion = absoluteLatest.Tag
+		err.LatestDate = absoluteLatest.Date
+	}
+	return err
+}
+
+// latestTagPrefix returns the tag prefix of the release github flags as latest (e.g. "bun-" for "bun-v1.4.3").
+func latestTagPrefix(releases []ghRelease) string {
+	for _, r := range releases {
+		if r.IsLatest != nil && *r.IsLatest {
+			prefix, _ := internal.SemverTagPrefix(r.Tag)
+			return prefix
+		}
+	}
+	return ""
 }
 
 // filterToLatestVersion finds the latest release that satisfies the version constraint and cooldown cutoff.
