@@ -858,7 +858,7 @@ func addExpandedAssetDigest(asset *ghAsset, attrs []html.Attribute) {
 func fetchReleaseGithubV4API(ctx context.Context, user, repo, tag string) (*ghRelease, error) {
 	token := os.Getenv("GITHUB_TOKEN")
 	if token == "" {
-		return nil, fmt.Errorf("GITHUB_TOKEN environment variable not set but is required to use the GitHub v4 API")
+		return nil, errNoGithubToken
 	}
 
 	client := githubv4.NewClient(newRetryableGitHubClient(ctx, token))

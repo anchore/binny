@@ -237,7 +237,7 @@ func TestVersionResolver_UpdateVersion(t *testing.T) {
 			},
 		},
 		{
-			name: "prefixed semver tag keeps the pin when no other release can be fetched",
+			name: "prefixed semver tag keeps the pin when the full release listing needs a token",
 			config: VersionResolutionParameters{
 				Repo: "org/monorepo",
 			},
@@ -247,8 +247,59 @@ func TestVersionResolver_UpdateVersion(t *testing.T) {
 				return &ghRelease{Tag: "lib/v9.0.0"}, nil
 			},
 			releaseFetcher: func(_ context.Context, user, repo string) ([]ghRelease, error) {
-				return nil, errors.New("GITHUB_TOKEN not set")
+				return nil, errNoGithubToken
 			},
+		},
+		{
+			name: "prefixed semver tag keeps the pin when no tag has the same prefix",
+			config: VersionResolutionParameters{
+				Repo: "org/monorepo",
+			},
+			version: "cli/v1.0.0",
+			want:    "cli/v1.0.0",
+			latestReleaseFetcher: func(_ context.Context, user, repo string) (*ghRelease, error) {
+				return &ghRelease{Tag: "lib/v9.0.0"}, nil
+			},
+			releaseFetcher: func(_ context.Context, user, repo string) ([]ghRelease, error) {
+				return []ghRelease{{Tag: "lib/v9.0.0"}}, nil
+			},
+		},
+		{
+			name: "prefixed semver tag fails on a network error fetching the latest release",
+			config: VersionResolutionParameters{
+				Repo: "oven-sh/bun",
+			},
+			version: "bun-v1.4.0",
+			latestReleaseFetcher: func(_ context.Context, user, repo string) (*ghRelease, error) {
+				return nil, errors.New("connection reset by peer")
+			},
+			wantErr: require.Error,
+		},
+		{
+			name: "prefixed semver tag fails on a network error fetching all releases",
+			config: VersionResolutionParameters{
+				Repo: "org/monorepo",
+			},
+			version: "cli/v1.0.0",
+			latestReleaseFetcher: func(_ context.Context, user, repo string) (*ghRelease, error) {
+				return &ghRelease{Tag: "lib/v9.0.0"}, nil
+			},
+			releaseFetcher: func(_ context.Context, user, repo string) ([]ghRelease, error) {
+				return nil, errors.New("connection reset by peer")
+			},
+			wantErr: require.Error,
+		},
+		{
+			name: "prefixed semver tag fails on an invalid constraint",
+			config: VersionResolutionParameters{
+				Repo: "oven-sh/bun",
+			},
+			version:    "bun-v1.4.0",
+			constraint: "not a constraint",
+			latestReleaseFetcher: func(_ context.Context, user, repo string) (*ghRelease, error) {
+				return &ghRelease{Tag: "bun-v1.4.3"}, nil
+			},
+			wantErr: require.Error,
 		},
 		{
 			name: "date-like tags are not treated as prefixed semver",

@@ -43,6 +43,11 @@ func NewVersionResolver(cfg VersionResolutionParameters) *VersionResolver {
 	}
 }
 
+var (
+	errNoLatestVersion = errors.New("no latest version found")
+	errNoGithubToken   = errors.New("GITHUB_TOKEN environment variable not set but is required to use the GitHub v4 API")
+)
+
 func (v VersionResolver) UpdateVersion(ctx context.Context, intent binny.VersionIntent) (string, error) {
 	if intent.Want == "latest" {
 		return intent.Want, nil
@@ -52,13 +57,13 @@ func (v VersionResolver) UpdateVersion(ctx context.Context, intent binny.Version
 		return v.findLatestVersion(ctx, intent.Constraint, intent.Cooldown, "", false)
 	}
 
-	// tags like "bun-v1.4.3" are semver behind a fixed prefix, so only compare tags with that same prefix. This is
-	// best-effort: pins like this used to be left alone, so not finding a newer tag keeps the pin instead of failing.
+	// tags like "bun-v1.4.3" are semver behind a fixed prefix, so only compare tags with that same prefix. Pins like
+	// this used to be left alone, so the cases that couldn't happen before (no comparable tags, or needing a token for
+	// the full release listing) keep the pin. Any other failure (network, rate limit, bad constraint) is still an error.
 	if prefix, ok := internal.SemverTagPrefix(intent.Want); ok {
 		latest, err := v.findLatestVersion(ctx, intent.Constraint, intent.Cooldown, prefix, false)
-		var cooldownErr *binny.CooldownError
-		if err != nil && !errors.As(err, &cooldownErr) {
-			log.FromContext(ctx).WithFields("repo", v.config.Repo, "version", intent.Want, "error", err).
+		if errors.Is(err, errNoLatestVersion) || errors.Is(err, errNoGithubToken) {
+			log.FromContext(ctx).WithFields("repo", v.config.Repo, "version", intent.Want, "reason", err).
 				Warn("unable to find a newer version with the same tag prefix, keeping the current pin")
 			return intent.Want, nil
 		}
@@ -129,7 +134,7 @@ func (v VersionResolver) findLatestVersion(ctx context.Context, versionConstrain
 	// this path requires the most work, but is typically needed if there is a constraint or cooldown
 	releases, err := v.releasesFetcher(ctx, user, repo)
 	if err != nil {
-		return "", fmt.Errorf("unable to fetch all releases: %v", err)
+		return "", fmt.Errorf("unable to fetch all releases: %w", err)
 	}
 
 	if inferPrefix && tagPrefix == "" {
@@ -144,7 +149,7 @@ func (v VersionResolver) findLatestVersion(ctx context.Context, versionConstrain
 		if cutoff != nil {
 			return "", newCooldownError(releases, versionConstraint, tagPrefix, cooldown)
 		}
-		return "", fmt.Errorf("no latest version found")
+		return "", errNoLatestVersion
 	}
 
 	lgr.WithFields("latest", latestVersion.Tag, "repo", cfg.Repo).
@@ -354,7 +359,7 @@ const maxReleasesFetched = 100
 func fetchAllReleasesFromGithubV4API(ctx context.Context, user, repo string) ([]ghRelease, error) {
 	token := os.Getenv("GITHUB_TOKEN")
 	if token == "" {
-		return nil, fmt.Errorf("GITHUB_TOKEN environment variable not set but is required to use the GitHub v4 API")
+		return nil, errNoGithubToken
 	}
 
 	client := githubv4.NewClient(newRetryableGitHubClient(ctx, token))
