@@ -193,6 +193,10 @@ func (r refResolver) lookup(ctx context.Context, want string) (gitRef, string, e
 // "refs/pull/123/head", or the "pull/123" / "merge-requests/45" shorthand for their head ref. "^{}" is the commit an
 // annotated tag points at (the tag ref itself names the tag object).
 func refCandidates(ref string) []string {
+	if ref == "HEAD" {
+		// the remote's default branch
+		return []string{"HEAD"}
+	}
 	if strings.HasPrefix(ref, "refs/") {
 		return []string{ref + "^{}", ref}
 	}
@@ -214,7 +218,7 @@ func lsRemote(ctx context.Context, repoURL, ref string) (gitRef, error) {
 	order := refCandidates(ref)
 
 	args := append([]string{"ls-remote", "--", repoURL}, order...)
-	log.Trace("running: git " + redactCredentials(strings.Join(args, " "), repoURL))
+	log.FromContext(ctx).Trace("running: git " + redactCredentials(strings.Join(args, " "), repoURL))
 
 	cmd := gitCommand(ctx, "", args...)
 	var stderr bytes.Buffer

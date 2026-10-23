@@ -21,8 +21,8 @@ var _ binny.VersionResolver = (*VersionResolver)(nil)
 
 type VersionResolver struct {
 	config                   VersionResolutionParameters
-	availableVersionsFetcher func(ctx context.Context, module string) ([]string, error)
-	versionInfoFetcher       func(ctx context.Context, module, version string) (*versionInfo, error)
+	availableVersionsFetcher func(ctx context.Context, mod string) ([]string, error)
+	versionInfoFetcher       func(ctx context.Context, mod, version string) (*versionInfo, error)
 }
 
 type VersionResolutionParameters struct {
@@ -53,7 +53,7 @@ func NewVersionResolver(cfg VersionResolutionParameters) *VersionResolver {
 }
 
 func (v VersionResolver) ResolveVersion(ctx context.Context, intent binny.VersionIntent) (string, error) {
-	log.FromContext(ctx).WithFields("module", v.config.Module, "version", intent.Want).Trace("resolving version from go proxy")
+	log.FromContext(ctx).WithFields("module", v.config.Module, "version", intent.Want).Trace("resolving version with the go command")
 	if internal.IsSemver(intent.Want) {
 		return intent.Want, nil
 	}
@@ -152,7 +152,7 @@ func (v VersionResolver) findLatestVersion(ctx context.Context, versionConstrain
 		return "", fmt.Errorf("failed to get available versions for module %q: %w", v.config.Module, err)
 	}
 
-	// when cooldown is active, we need to check publish dates via the /@v/{version}.info endpoint
+	// when cooldown is active, we need each candidate's publish date, which the go command reports per version
 	if cooldown > 0 {
 		return v.findLatestVersionWithCooldown(ctx, versions, versionConstraint, cooldown)
 	}
@@ -164,14 +164,14 @@ func (v VersionResolver) findLatestVersion(ctx context.Context, versionConstrain
 
 	if latestVersion != "" {
 		lgr.WithFields(latest, latestVersion, "module", v.config.Module).
-			Trace("found latest version from the go proxy")
+			Trace("found latest version with the go command")
 	} else {
-		lgr.WithFields("module", v.config.Module).Trace("could not resolve latest version from go proxy")
+		lgr.WithFields("module", v.config.Module).Trace("could not resolve latest version with the go command")
 	}
 
 	if latestVersion == "" {
 		if v.config.AllowUnresolvedVersion {
-			// this can happen if the source repo has no tags, the proxy then won't know about it.
+			// this can happen if the source repo has no tags, so the go command finds no versions.
 			lgr.WithFields("module", v.config.Module).Trace("using 'latest' as the version")
 			return latest, nil
 		}
@@ -182,8 +182,8 @@ func (v VersionResolver) findLatestVersion(ctx context.Context, versionConstrain
 }
 
 // findLatestVersionWithCooldown checks version candidates in descending order, fetching their publish
-// dates from the go proxy info endpoint. It returns the first version that passes the cooldown check.
-// To avoid excessive API calls, it only checks the top candidates (up to maxCooldownCandidates).
+// dates from the go command (go list -m). It returns the first version that passes the cooldown check.
+// To avoid a go command call per version, it only checks the top candidates (up to maxCooldownCandidates).
 const maxCooldownCandidates = 10
 
 type versionCandidate struct {
@@ -204,7 +204,7 @@ func (v VersionResolver) findLatestVersionWithCooldown(ctx context.Context, vers
 
 	if result.foundVersion != "" {
 		lgr.WithFields(latest, result.foundVersion, "module", v.config.Module, "published", result.foundDate).
-			Trace("found version from go proxy that passes cooldown")
+			Trace("found version that passes cooldown")
 		return result.foundVersion, nil
 	}
 

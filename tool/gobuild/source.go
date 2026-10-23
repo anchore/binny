@@ -69,8 +69,10 @@ func cloneSource(ctx context.Context, module, version, repoURL string) (string, 
 	version = gitRev(version)
 	lgr.WithFields("repo", redactCredentials(repoURL, repoURL), "version", version).Debug("cloning repository")
 
+	attempt := "shallow clone"
 	if fullSHAPattern.MatchString(version) {
 		// a full commit (what a tracked git ref resolves to) can be fetched on its own, without history
+		attempt = "fetch by commit"
 		err = fetchCommit(ctx, repoURL, version, tempDir)
 	} else {
 		// shallow clone with --branch works for tags and branches
@@ -79,14 +81,15 @@ func cloneSource(ctx context.Context, module, version, repoURL string) (string, 
 
 	if err != nil {
 		// try full clone + checkout (handles short commit hashes, and servers that refuse fetching by sha)
-		lgr.WithFields("repo", redactCredentials(repoURL, repoURL), "version", version).Debug("shallow clone failed, trying full clone")
+		firstErr := err
+		lgr.WithFields("repo", redactCredentials(repoURL, repoURL), "version", version, "error", firstErr).Debug(attempt + " failed, trying full clone")
 		if err := resetDir(tempDir); err != nil {
 			cleanup()
 			return "", nil, err
 		}
 		if err := fullCloneAndCheckout(ctx, repoURL, version, tempDir); err != nil {
 			cleanup()
-			return "", nil, fmt.Errorf("failed to clone repository: %w", err)
+			return "", nil, fmt.Errorf("failed to clone repository: %w (after %s failed: %v)", err, attempt, firstErr)
 		}
 	}
 
@@ -108,19 +111,19 @@ func gitRev(version string) string {
 // fetchCommitTimeout bounds fetching a single commit, so a stalled host or an ssh prompt can't hang the install.
 const fetchCommitTimeout = 10 * time.Minute
 
-// gitCommand builds a git command that fails instead of prompting for https credentials. ssh prompts (unknown host
-// key, key passphrase) aren't covered, forcing ssh BatchMode would override a user's core.sshCommand, so callers that
-// talk to a remote bound the time instead.
+// gitCommand builds a git command that fails instead of prompting for https credentials, with untranslated messages
+// (fullCloneAndCheckout reads them). ssh prompts (unknown host key, key passphrase) aren't covered, forcing ssh
+// BatchMode would override a user's core.sshCommand, so callers that talk to a remote bound the time instead.
 func gitCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
 	return cmd
 }
 
 // shallowClone performs a shallow clone (depth=1) for a specific tag or branch.
 func shallowClone(ctx context.Context, repoURL, version, destDir string) error {
-	args := []string{"clone", "--depth", "1", "--branch", version, repoURL, destDir}
+	args := []string{"clone", "--depth", "1", "--branch", version, "--", repoURL, destDir}
 	log.Trace("running: git " + redactCredentials(strings.Join(args, " "), repoURL))
 
 	output, err := gitCommand(ctx, "", args...).CombinedOutput()
@@ -140,7 +143,7 @@ func fetchCommit(ctx context.Context, repoURL, sha, destDir string) error {
 		{"fetch", "-q", "--depth", "1", "--", repoURL, sha},
 		{"checkout", "-q", "--detach", "FETCH_HEAD"},
 	} {
-		log.Trace("running: git " + redactCredentials(strings.Join(args, " "), repoURL))
+		log.FromContext(ctx).Trace("running: git " + redactCredentials(strings.Join(args, " "), repoURL))
 		if output, err := gitCommand(ctx, destDir, args...).CombinedOutput(); err != nil {
 			return fmt.Errorf("git %s failed: %v\nOutput: %s", args[0], err, redactCredentials(string(output), repoURL))
 		}
@@ -162,11 +165,25 @@ func resetDir(dir string) error {
 	return nil
 }
 
-// fullCloneAndCheckout performs a full clone and then checks out the specified version.
-// This is used as a fallback when shallow clone fails (e.g., for commit hashes).
+// fullCloneAndCheckout clones the full history and then checks out the specified version. It is the fallback when
+// fetchCommit or shallowClone fails (e.g. a short commit hash, or a server that refuses fetching by sha). It tries a
+// partial clone first, where blobs are only fetched for the commit that gets checked out.
 func fullCloneAndCheckout(ctx context.Context, repoURL, version, destDir string) error {
-	// full history, but blobs are only fetched for the commit that gets checked out
-	cloneArgs := []string{"clone", "--filter=blob:none", repoURL, destDir}
+	err := cloneAndCheckout(ctx, repoURL, version, destDir, "--filter=blob:none")
+	if err == nil || !strings.Contains(err.Error(), "promisor remote") {
+		return err
+	}
+	// a partial clone fetches the blobs it needs by id at checkout, which a server that refuses unadvertised objects
+	// also refuses; a plain clone sends them up front
+	log.FromContext(ctx).WithFields("error", err).Debug("partial clone failed, trying a plain clone")
+	if err := resetDir(destDir); err != nil {
+		return err
+	}
+	return cloneAndCheckout(ctx, repoURL, version, destDir)
+}
+
+func cloneAndCheckout(ctx context.Context, repoURL, version, destDir string, cloneFlags ...string) error {
+	cloneArgs := append(append([]string{"clone"}, cloneFlags...), "--", repoURL, destDir)
 	log.Trace("running: git " + redactCredentials(strings.Join(cloneArgs, " "), repoURL))
 
 	output, err := gitCommand(ctx, "", cloneArgs...).CombinedOutput()

@@ -225,12 +225,13 @@ In addition to these variables, [sprig functions](http://masterminds.github.io/s
   derived from the module path. For other hosts, use the `repo-url` option to specify the git URL explicitly.
   A `want` that is a git ref is resolved against the repository itself (`git ls-remote`), whatever version method
   is configured, so the tool is rebuilt when the ref moves. The recorded version (and `{{ .Version }}`) is the full
-  commit sha. Accepted refs:
+  commit sha the ref points at. Accepted refs:
   - a branch or tag, including ones with `/` (e.g. `main`, `feature/x`); tags win over a branch of the same name
   - a PR / MR head: `pull/123` (GitHub) or `merge-requests/45` (GitLab), or spelled out as `pull/123/head`
   - any full ref name, e.g. `refs/pull/123/head`
-  - a commit sha (kept as-is, it can't move; a full sha is never looked up, so a branch or tag named after it can't
-    redirect the build)
+  - `HEAD`, the repository's default branch
+  - a commit sha (kept as written, full or short: it can't move; a full sha is never looked up, so a branch or tag
+    named after it can't redirect the build)
 
   A name shaped like a prefixed version (e.g. `bun-v1.4.3`, `release-1.30`) is tracked when the repo says it's a
   branch, and treated as a version (left to the version method) when it's a tag. To build a branch from a fork, point
@@ -364,7 +365,8 @@ prefix (e.g. a monorepo releasing `cli/v2.0.0` and `lib/v1.0.0`).
 
 The `go-proxy` version method asks the go command (`go list -m`) to determine the latest version of a Go module, so it
 follows the same `GOPROXY`, `GOPRIVATE`/`GONOPROXY`, `GOSUMDB` and auth settings that `go install` does, including any
-set in the tool's `env`. It requires the following configuration options:
+set in the tool's `env` (templated entries, any containing `{{`, are left out of the lookup). It requires the following
+configuration options:
 
 | Option | Description                                                                                                                              |
 |--------|------------------------------------------------------------------------------------------------------------------------------------------|
