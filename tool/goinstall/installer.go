@@ -39,8 +39,8 @@ func NewInstaller(cfg InstallerParameters) Installer {
 }
 
 func (i Installer) InstallTo(ctx context.Context, version, destDir string) (string, error) {
-	// go install in module mode for a local module is not a good idea, and go-build already builds a
-	// local module from inside its directory, so hand it off
+	// go finds the main module from the working directory, so a local module has to be built from inside
+	// its directory, which is what go-build does: hand it off
 	if gobuild.IsLocalModule(i.config.Module) {
 		return gobuild.NewInstaller(gobuild.InstallerParameters{
 			Module:     i.config.Module,
@@ -54,9 +54,9 @@ func (i Installer) InstallTo(ctx context.Context, version, destDir string) (stri
 	ctx, lgr := log.WithNested(ctx, "tool", fmt.Sprintf("%s@%s", i.config.Module, version))
 
 	importPath := path.Join(i.config.Module, i.config.Entrypoint)
-	// joining cleans "..", which would otherwise quietly point go install at a different module
-	if mod := path.Clean(i.config.Module); importPath != mod && !strings.HasPrefix(importPath, mod+"/") {
-		return "", fmt.Errorf("entrypoint %q is outside of module %q", i.config.Entrypoint, i.config.Module)
+	// path.Join also folds away "..", which would let an entrypoint name a different module
+	if module := path.Clean(i.config.Module); importPath != module && !strings.HasPrefix(importPath, module+"/") {
+		return "", fmt.Errorf("entrypoint %q leaves module %q (resolves to %q)", i.config.Entrypoint, i.config.Module, importPath)
 	}
 	binName, err := binaryName(importPath)
 	if err != nil {
@@ -65,7 +65,7 @@ func (i Installer) InstallTo(ctx context.Context, version, destDir string) (stri
 	binPath := filepath.Join(destDir, binName)
 
 	spec := fmt.Sprintf("%s@%s", importPath, version)
-	lgr.WithFields("module", i.config.Module, "version", version).Debug("installing go module (remote)")
+	lgr.WithFields("module", i.config.Module, "version", version).Debug("installing go module")
 
 	ldflags, err := internal.TemplateFlags(i.config.LDFlags, version)
 	if err != nil {
@@ -101,6 +101,7 @@ func binaryName(importPath string) (string, error) {
 	if dir != "" && isMajorVersionElement(name) {
 		name = path.Base(dir)
 	}
+	// a backslash is a separator on windows, so filepath.Join(destDir, name) would treat it as a path
 	if name == "" || name == "." || name == ".." || strings.Contains(name, `\`) {
 		return "", fmt.Errorf("unable to derive a binary name from %q", importPath)
 	}

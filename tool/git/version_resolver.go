@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -77,6 +78,9 @@ func openRepo(repoPath string) (*git.Repository, error) {
 		EnableDotGitCommonDir: true,
 	})
 	if err != nil {
+		if abs, absErr := filepath.Abs(repoPath); absErr == nil {
+			repoPath = abs
+		}
 		return nil, fmt.Errorf("unable to open repo %q: %w", repoPath, err)
 	}
 	return r, nil

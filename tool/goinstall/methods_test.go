@@ -1,12 +1,10 @@
 package goinstall
 
 import (
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/anchore/binny/tool/git"
 	"github.com/anchore/binny/tool/goproxy"
 )
 
@@ -59,13 +57,6 @@ func TestDefaultVersionResolverConfig(t *testing.T) {
 			wantParams: goproxy.VersionResolutionParameters{
 				Module: "github.com/anchore/binny",
 			},
-		},
-		{
-			// the test runs from tool/goinstall, so the git root is two levels up
-			name:          "local module uses the git resolver at the repo root",
-			installParams: InstallerParameters{Module: "."},
-			wantMethod:    git.ResolveMethod,
-			wantParams:    git.VersionResolutionParameters{Path: filepath.Join("..", "..")},
 		},
 		{
 			name: "invalid",

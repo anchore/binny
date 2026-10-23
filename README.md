@@ -170,11 +170,12 @@ the following configuration options:
 | `env` (optional)        | A list key=value environment variables to use when running `go install`              |
 
 The `module` option allows for a special entry:
-- `.` or `path/to/module/on/disk`
+- `.` or `./path/to/module/on/disk`
 
 A local module is built the same way as with `go-build`: `go build` runs from inside the module directory,
 so it can live anywhere on disk: the repo you run binny from, a sibling checkout, a git submodule, or a
-subdirectory of a monorepo. Relative paths (here and in the `git` resolver's `path`) are resolved against the
+subdirectory of a monorepo. A local path starts with `./`, `../` or `/` (or is absolute on windows); anything
+else is a remote module path. Relative paths (here and in the `git` resolver's `path`) are resolved against the
 directory binny is run from, same as the store `root`. binny fails early, naming the resolved path, if the
 directory doesn't exist. `ldflags`, `args` and `env` are passed to `go build` instead of `go install`.
 
