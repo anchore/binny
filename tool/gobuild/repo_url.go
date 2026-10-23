@@ -2,6 +2,8 @@ package gobuild
 
 import (
 	"fmt"
+	"net/url"
+	"regexp"
 	"strings"
 )
 
@@ -59,3 +61,41 @@ func DeriveGitHubRepo(module string) string {
 
 	return parts[0] + "/" + parts[1]
 }
+
+// redactCredentials removes the credentials in repoURL (e.g. https://TOKEN@host/repo or https://user:pass@host/repo)
+// from s, so they can't leak through logs or errors, including git output that echoes the URL back.
+func redactCredentials(s, repoURL string) string {
+	u, err := url.Parse(repoURL)
+	if err != nil {
+		// the credentials can't be told apart from the rest of the URL, so drop anything shaped like userinfo
+		return userinfoPattern.ReplaceAllString(s, "$1")
+	}
+	if u.User == nil {
+		return s
+	}
+	userinfo := u.User.String()
+	// the secret is the password, or the username when there is none (https://TOKEN@host)
+	secret, hasPassword := u.User.Password()
+	if !hasPassword {
+		secret = u.User.Username()
+	}
+	u.User = nil
+	redacted := u.String()
+
+	s = strings.ReplaceAll(s, repoURL, redacted)
+	s = strings.ReplaceAll(s, userinfo+"@", "")
+	// an account name that is also part of the rest of the URL (https://myorg@dev.azure.com/myorg/...) isn't a secret
+	if len(secret) >= minBareSecret && (hasPassword || !strings.Contains(redacted, secret)) {
+		// also where it appears on its own, e.g. decoded in git's output
+		s = strings.ReplaceAll(s, secret, "***")
+	}
+	return s
+}
+
+// userinfoPattern matches the userinfo of a URL in text: "https://TOKEN@host" -> "https://host".
+var userinfoPattern = regexp.MustCompile(`(://)[^/@\s]+@`)
+
+// minBareSecret is the shortest secret replaced wherever it appears in text; a shorter one (a one-letter password)
+// would mangle unrelated words, and is only removed as part of the URL. Short real passwords still get replaced, at
+// the cost of the odd garbled word ("pass" turns "password" into "***word").
+const minBareSecret = 4

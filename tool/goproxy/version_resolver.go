@@ -2,20 +2,16 @@ package goproxy
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/Masterminds/semver/v3"
-	"github.com/hashicorp/go-retryablehttp"
+	"golang.org/x/mod/module"
 
 	"github.com/anchore/binny"
 	"github.com/anchore/binny/internal"
-	internalhttp "github.com/anchore/binny/internal/http"
 	"github.com/anchore/binny/internal/log"
 )
 
@@ -25,16 +21,20 @@ var _ binny.VersionResolver = (*VersionResolver)(nil)
 
 type VersionResolver struct {
 	config                   VersionResolutionParameters
-	availableVersionsFetcher func(ctx context.Context, url string) ([]string, error)
-	versionInfoFetcher       func(ctx context.Context, module, version string) (*versionInfo, error)
+	availableVersionsFetcher func(ctx context.Context, mod string) ([]string, error)
+	versionInfoFetcher       func(ctx context.Context, mod, version string) (*versionInfo, error)
 }
 
 type VersionResolutionParameters struct {
 	Module                 string `json:"module" yaml:"module" mapstructure:"module"`
 	AllowUnresolvedVersion bool   `json:"allow-unresolved-version" yaml:"allow-unresolved-version" mapstructure:"allow-unresolved-version"`
+
+	// Env is added to the go command's environment when resolving, so lookups see the same GOPROXY/GOPRIVATE/etc
+	// as the install does. It is filled in from the installer's env, not from version config.
+	Env []string `json:"-" yaml:"-" mapstructure:"-"`
 }
 
-// versionInfo represents the JSON response from the go proxy /@v/{version}.info endpoint.
+// versionInfo is a module version and when it was published.
 type versionInfo struct {
 	Version string    `json:"Version"`
 	Time    time.Time `json:"Time"`
@@ -42,25 +42,65 @@ type versionInfo struct {
 
 func NewVersionResolver(cfg VersionResolutionParameters) *VersionResolver {
 	return &VersionResolver{
-		config:                   cfg,
-		availableVersionsFetcher: availableVersionsFetcher,
-		versionInfoFetcher:       fetchVersionInfo,
+		config: cfg,
+		availableVersionsFetcher: func(ctx context.Context, mod string) ([]string, error) {
+			return listVersions(ctx, cfg.Env, mod)
+		},
+		versionInfoFetcher: func(ctx context.Context, mod, version string) (*versionInfo, error) {
+			return queryVersion(ctx, cfg.Env, mod, version)
+		},
 	}
 }
 
 func (v VersionResolver) ResolveVersion(ctx context.Context, intent binny.VersionIntent) (string, error) {
-	log.FromContext(ctx).WithFields("module", v.config.Module, "version", intent.Want).Trace("resolving version from go proxy")
-	if internal.IsSemver(intent.Want) {
+	log.FromContext(ctx).WithFields("module", v.config.Module, "version", intent.Want).Trace("resolving version with the go command")
+	if internal.IsVersion(intent.Want) {
 		return intent.Want, nil
 	}
 
-	if intent.Want == latest && !v.config.AllowUnresolvedVersion {
-		return v.findLatestVersion(ctx, "", intent.Cooldown)
+	if v.config.AllowUnresolvedVersion {
+		// pass through as-is, `go install` accepts both "latest" and git refs directly
+		return intent.Want, nil
 	}
 
-	// TODO: dunno
+	if intent.Want == latest {
+		return v.latestVersion(ctx, "", intent.Cooldown)
+	}
 
-	return intent.Want, nil
+	return v.resolveRef(ctx, intent)
+}
+
+// resolveRef asks the go command what a git ref (branch, tag, or commit sha) currently points to. The answer is the
+// canonical version, which is a pseudo-version for anything that isn't a tagged release. Note that the result is a
+// module version, not a git ref, so consumers that talk to git need to map it back (see module.PseudoVersionRev).
+func (v VersionResolver) resolveRef(ctx context.Context, intent binny.VersionIntent) (string, error) {
+	lgr := log.FromContext(ctx)
+	ref := intent.Want
+
+	if err := internal.CheckRefConstraint(ref, intent.Constraint); err != nil {
+		return "", err
+	}
+
+	info, err := v.versionInfoFetcher(ctx, v.config.Module, ref)
+	if err != nil {
+		return "", fmt.Errorf("unable to resolve ref %q for module %q: %w (set 'allow-unresolved-version: true' to pass it to go install as-is)", ref, v.config.Module, err)
+	}
+
+	// the answer (from a proxy or VCS host) ends up in go/git command lines and templated ldflags, so it must be a
+	// valid module version
+	if err := module.Check(v.config.Module, info.Version); err != nil {
+		return "", fmt.Errorf("got an invalid version for ref %q of module %q: %w", ref, v.config.Module, err)
+	}
+
+	// note: a ref has no older candidate to fall back to, so cooldown only warns. Enforce via CooldownError if
+	// that turns out to be wanted.
+	if intent.Cooldown > 0 && info.Time.After(time.Now().Add(-intent.Cooldown)) {
+		lgr.WithFields("module", v.config.Module, "ref", ref, "version", info.Version, "published", info.Time, "cooldown", intent.Cooldown).
+			Warn("ref points to a commit newer than the configured cooldown (cooldown is not enforced for git refs)")
+	}
+
+	lgr.WithFields("module", v.config.Module, "ref", ref, "version", info.Version).Trace("resolved ref")
+	return info.Version, nil
 }
 
 func (v VersionResolver) UpdateVersion(ctx context.Context, intent binny.VersionIntent) (string, error) {
@@ -71,26 +111,48 @@ func (v VersionResolver) UpdateVersion(ctx context.Context, intent binny.Version
 		return intent.Want, nil
 	}
 
-	if internal.IsSemver(intent.Want) {
-		return v.findLatestVersion(ctx, intent.Constraint, intent.Cooldown)
+	if internal.IsVersion(intent.Want) {
+		return v.latestVersion(ctx, intent.Constraint, intent.Cooldown)
 	}
 
-	// TODO: dunno
+	if err := internal.CheckRefConstraint(intent.Want, intent.Constraint); err != nil {
+		return "", err
+	}
 
+	// a git ref is kept as the intent (like "latest"). Where it points to now is picked up by ResolveVersion
+	// during install and check.
 	return intent.Want, nil
+}
+
+// latestVersion returns the newest version allowed by the constraint and cooldown. Without either it is whatever
+// `go install mod@latest` would install: a release over a prerelease, retracted versions skipped, and a pseudo-version
+// for a module with no tags. The version list (and picking from it) is only needed to apply a constraint or cooldown.
+func (v VersionResolver) latestVersion(ctx context.Context, versionConstraint string, cooldown time.Duration) (string, error) {
+	if versionConstraint != "" || cooldown > 0 {
+		return v.findLatestVersion(ctx, versionConstraint, cooldown)
+	}
+
+	info, err := v.versionInfoFetcher(ctx, v.config.Module, latest)
+	if err != nil {
+		return "", fmt.Errorf("could not resolve latest version for module %q: %w", v.config.Module, err)
+	}
+	if err := module.Check(v.config.Module, info.Version); err != nil {
+		return "", fmt.Errorf("got an invalid latest version for module %q: %w", v.config.Module, err)
+	}
+
+	log.FromContext(ctx).WithFields(latest, info.Version, "module", v.config.Module).Trace("found latest version")
+	return info.Version, nil
 }
 
 func (v VersionResolver) findLatestVersion(ctx context.Context, versionConstraint string, cooldown time.Duration) (string, error) {
 	lgr := log.FromContext(ctx)
 
-	// ask the go proxy for the latest version
-	url := "https://proxy.golang.org/" + v.config.Module + "/@v/list"
-	versions, err := v.availableVersionsFetcher(ctx, url)
+	versions, err := v.availableVersionsFetcher(ctx, v.config.Module)
 	if err != nil {
-		return "", fmt.Errorf("failed to get available versions from go proxy: %v", err)
+		return "", fmt.Errorf("failed to get available versions for module %q: %w", v.config.Module, err)
 	}
 
-	// when cooldown is active, we need to check publish dates via the /@v/{version}.info endpoint
+	// when cooldown is active, we need each candidate's publish date, which the go command reports per version
 	if cooldown > 0 {
 		return v.findLatestVersionWithCooldown(ctx, versions, versionConstraint, cooldown)
 	}
@@ -102,14 +164,14 @@ func (v VersionResolver) findLatestVersion(ctx context.Context, versionConstrain
 
 	if latestVersion != "" {
 		lgr.WithFields(latest, latestVersion, "module", v.config.Module).
-			Trace("found latest version from the go proxy")
+			Trace("found latest version with the go command")
 	} else {
-		lgr.WithFields("module", v.config.Module).Trace("could not resolve latest version from go proxy")
+		lgr.WithFields("module", v.config.Module).Trace("could not resolve latest version with the go command")
 	}
 
 	if latestVersion == "" {
 		if v.config.AllowUnresolvedVersion {
-			// this can happen if the source repo has no tags, the proxy then won't know about it.
+			// this can happen if the source repo has no tags, so the go command finds no versions.
 			lgr.WithFields("module", v.config.Module).Trace("using 'latest' as the version")
 			return latest, nil
 		}
@@ -120,8 +182,8 @@ func (v VersionResolver) findLatestVersion(ctx context.Context, versionConstrain
 }
 
 // findLatestVersionWithCooldown checks version candidates in descending order, fetching their publish
-// dates from the go proxy info endpoint. It returns the first version that passes the cooldown check.
-// To avoid excessive API calls, it only checks the top candidates (up to maxCooldownCandidates).
+// dates from the go command (go list -m). It returns the first version that passes the cooldown check.
+// To avoid a go command call per version, it only checks the top candidates (up to maxCooldownCandidates).
 const maxCooldownCandidates = 10
 
 type versionCandidate struct {
@@ -142,7 +204,7 @@ func (v VersionResolver) findLatestVersionWithCooldown(ctx context.Context, vers
 
 	if result.foundVersion != "" {
 		lgr.WithFields(latest, result.foundVersion, "module", v.config.Module, "published", result.foundDate).
-			Trace("found version from go proxy that passes cooldown")
+			Trace("found version that passes cooldown")
 		return result.foundVersion, nil
 	}
 
@@ -248,69 +310,4 @@ func (v VersionResolver) checkCandidatesForCooldown(ctx context.Context, candida
 	}
 
 	return result
-}
-
-func availableVersionsFetcher(ctx context.Context, url string) ([]string, error) {
-	// TODO: honor GOPROXY env vars
-	lgr := log.FromContext(ctx)
-	client := internalhttp.ClientFromContext(ctx)
-
-	lgr.WithFields("url", url).Trace("requesting latest version")
-
-	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to get available versions from go proxy: %s", resp.Status)
-	}
-
-	// get the last entry in a newline delimited list
-	contents, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	lines := strings.Split(string(contents), "\n")
-	return lines, nil
-}
-
-// fetchVersionInfo retrieves the publish timestamp for a specific version from the go proxy.
-func fetchVersionInfo(ctx context.Context, module, version string) (*versionInfo, error) {
-	client := internalhttp.ClientFromContext(ctx)
-
-	url := fmt.Sprintf("https://proxy.golang.org/%s/@v/%s.info", module, version)
-	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to get version info from go proxy: %s", resp.Status)
-	}
-
-	contents, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var info versionInfo
-	if err := json.Unmarshal(contents, &info); err != nil {
-		return nil, fmt.Errorf("failed to parse version info: %w", err)
-	}
-
-	return &info, nil
 }

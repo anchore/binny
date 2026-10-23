@@ -223,10 +223,25 @@ In addition to these variables, [sprig functions](http://masterminds.github.io/s
 
 - `git` (default): Clones the repository using git. For GitHub modules, the repository URL is automatically
   derived from the module path. For other hosts, use the `repo-url` option to specify the git URL explicitly.
+  A `want` that is a git ref is resolved against the repository itself (`git ls-remote`), whatever version method
+  is configured, so the tool is rebuilt when the ref moves. The recorded version (and `{{ .Version }}`) is the full
+  commit sha the ref points at. Accepted refs:
+  - a branch or tag, including ones with `/` (e.g. `main`, `feature/x`); tags win over a branch of the same name
+  - a PR / MR head: `pull/123` (GitHub) or `merge-requests/45` (GitLab), or spelled out as `pull/123/head`
+  - any full ref name, e.g. `refs/pull/123/head`
+  - `HEAD`, the repository's default branch
+  - a commit sha (kept as written, full or short: it can't move; a full sha is never looked up, so a branch or tag
+    named after it can't redirect the build)
+
+  A name shaped like a prefixed version (e.g. `bun-v1.4.3`, `release-1.30`) is tracked when the repo says it's a
+  branch, and treated as a version (left to the version method) when it's a tag. To build a branch from a fork, point
+  `repo-url` at the fork and set `want` to the branch. Refs that can't be resolved fail, unless the version method is
+  `go-proxy` with `allow-unresolved-version: true`, which passes the ref through as-is.
 
 - `go-proxy`: Downloads the source via `go mod download`. This uses the Go module proxy cache and may be
   faster for publicly available modules, but does not support private repositories without proper GOPRIVATE
-  configuration.
+  configuration. A `want` that is a git ref is resolved by the go command the same way as for `go-install` (see
+  `go-proxy` under version methods), so the recorded version is a pseudo-version.
 
 **Example configurations:**
 
@@ -348,12 +363,46 @@ prefix (e.g. a monorepo releasing `cli/v2.0.0` and `lib/v1.0.0`).
 
 #### `go-proxy`
 
-The `go-proxy` version method reaches out to `proxy.golang.org` to determine the latest version of a Go module. It requires the following configuration options:
+The `go-proxy` version method asks the go command (`go list -m`) to determine the latest version of a Go module, so it
+follows the same `GOPROXY`, `GOPRIVATE`/`GONOPROXY`, `GOSUMDB` and auth settings that `go install` does, including any
+set in the tool's `env` (templated entries, any containing `{{`, are left out of the lookup). It requires the following
+configuration options:
 
 | Option | Description                                                                                                                              |
 |--------|------------------------------------------------------------------------------------------------------------------------------------------|
 | `module` | The FQDN to the Go module (e.g. `github.com/anchore/syft`)                                                                             |
-| `allow-unresolved-version` | If the latest version cannot be found by the proxy allow for "latest" as a valid value (which `go install` supports) | 
+| `allow-unresolved-version` | Skip resolving `latest` or a git ref and pass it to `go install` as-is | 
 
 The `version.want` option allows a special entry:
-- `latest`: don't pin to a version, use the latest available
+- `latest`: don't pin to a version, use whatever `go install <module>@latest` would install (the newest release over
+  a prerelease, skipping retracted versions, or a pseudo-version for a module with no tags)
+- a git ref (branch, tag, or commit sha): track that ref, e.g. to try an unreleased fix
+
+```yaml
+tools:
+  - name: grype
+    version:
+      want: main
+    method: go-install
+    with:
+      module: github.com/anchore/grype
+      entrypoint: cmd/grype
+```
+
+A ref is resolved by the go command to the version it points at right now (a pseudo-version like
+`v0.0.0-20261015120000-abcdef123456` for a branch or commit), and that exact version is what gets installed and
+recorded (it is also what `{{ .Version }}` renders as in `ldflags`, `args`, and `env`). Once the branch moves,
+`binny check` fails for the tool (it no longer matches what is installed) and `binny install` picks up the new commit,
+while `binny update` leaves `want: main` alone. This means `check` needs network access for ref-pinned tools, the
+same as for `latest`. A module proxy caches branch lookups for a while, so a commit pushed moments ago may not show
+up right away.
+
+Some things to know about refs:
+- refs the go command can't resolve (typos, deleted branches, modules it can't reach) fail with its error rather than
+  falling back to the literal ref, set `allow-unresolved-version: true` to pass the ref through instead
+- refs containing `/` (e.g. `feature/x`, `pull/123`) aren't valid module versions, use the `go-build` method (git
+  source) for those
+- a version `constraint` can't be combined with a ref
+- `cooldown` isn't enforced for refs (there is no older version to fall back to), binny warns when the ref points at
+  a commit newer than the cooldown
+- `go-build` with the default `git` source resolves refs against the repository instead (see `go-build` above)

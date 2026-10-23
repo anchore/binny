@@ -187,3 +187,21 @@ func TestCopyDir_Symlinks(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "subdir", target)
 }
+
+func Test_gitRev(t *testing.T) {
+	tests := []struct {
+		version string
+		want    string
+	}{
+		{version: "v0.0.0-20261015120000-abcdef123456", want: "abcdef123456"},
+		{version: "v1.2.4-0.20261015120000-abcdef123456", want: "abcdef123456"},
+		{version: "v1.2.3", want: "v1.2.3"},
+		{version: "main", want: "main"},
+		{version: "abcdef1234567890", want: "abcdef1234567890"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.version, func(t *testing.T) {
+			require.Equal(t, tt.want, gitRev(tt.version))
+		})
+	}
+}

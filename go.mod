@@ -39,6 +39,7 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/wagoodman/go-partybus v0.0.0-20230516145632-8ccac152c651
 	github.com/wagoodman/go-progress v0.0.0-20230911172108-cf810b7e365c
+	golang.org/x/mod v0.41.0
 	golang.org/x/net v0.61.0
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sync v0.24.0
