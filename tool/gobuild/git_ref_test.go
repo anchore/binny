@@ -173,6 +173,35 @@ func TestRefResolver_refWithCooldown(t *testing.T) {
 	assert.Equal(t, head, got)
 }
 
+func TestRefResolver_HEAD(t *testing.T) {
+	// a remote's HEAD is its default branch; go-install resolves `want: HEAD` (go list -m mod@HEAD), and go-build
+	// used to build it (the full clone fallback ran `git checkout HEAD`), so it should resolve here too
+	repo := newGitRepo(t)
+	head := repo.commit("one")
+
+	r := WithRefResolution(InstallerParameters{Module: "example.com/tool", RepoURL: repo.url()}, &delegate{}, false)
+	got, err := r.ResolveVersion(context.Background(), binny.VersionIntent{Want: "HEAD"})
+	require.NoError(t, err, "want: HEAD should resolve to the remote's default branch")
+	assert.Equal(t, head, got)
+}
+
+func TestRefResolver_fullSHASkipsLsRemote(t *testing.T) {
+	// a full commit sha can't move, so there is nothing to ask the remote
+	sha := strings.Repeat("ab", 20)
+	r := refResolver{
+		VersionResolver: &delegate{},
+		module:          "example.com/tool",
+		repoURL:         "https://example.com/tool.git",
+		lsRemote: func(context.Context, string, string) (gitRef, error) {
+			t.Errorf("ls-remote was called for a full sha")
+			return gitRef{}, nil
+		},
+	}
+	got, err := r.ResolveVersion(context.Background(), binny.VersionIntent{Want: sha})
+	require.NoError(t, err)
+	assert.Equal(t, sha, got)
+}
+
 func Test_lsRemote_failsInsteadOfPrompting(t *testing.T) {
 	// a remote that wants credentials should make lsRemote fail rather than wait on a prompt. Without a terminal git
 	// fails either way, but it only says "terminal prompts disabled" when GIT_TERMINAL_PROMPT=0 is what stopped it
@@ -192,8 +221,14 @@ func Test_lsRemote_failsInsteadOfPrompting(t *testing.T) {
 	assert.Contains(t, err.Error(), "terminal prompts disabled")
 }
 
-// captureAllLogs makes the global logger and the context's logger write to separate files, and returns a context
-// carrying the latter and funcs that read what each got.
+// captureLogs makes the global logger and the context's logger write to separate files, and returns a context
+// carrying the latter and a func that reads what it got.
+func captureLogs(t *testing.T) (context.Context, func() string) {
+	ctx, ctxLog, _ := captureAllLogs(t)
+	return ctx, ctxLog
+}
+
+// captureAllLogs is captureLogs that can also read what the global logger got.
 func captureAllLogs(t *testing.T) (context.Context, func() string, func() string) {
 	t.Helper()
 	newLogger := func(path string) logger.Logger {
@@ -219,6 +254,42 @@ func captureAllLogs(t *testing.T) (context.Context, func() string, func() string
 		}
 	}
 	return log.WithLogger(context.Background(), newLogger(ctxLog)), read(ctxLog), read(globalLog)
+}
+
+func Test_lsRemote_logsThroughContext(t *testing.T) {
+	// lsRemote is given the caller's context, so its trace line should go to the context's logger (which carries
+	// the tool=module@version field the installer attaches), not the global one
+	ctx, ctxLog := captureLogs(t)
+	repo := newGitRepo(t)
+	repo.commit("one")
+
+	_, err := lsRemote(ctx, repo.url(), "main")
+	require.NoError(t, err)
+	assert.Contains(t, ctxLog(), "ls-remote", "expected the git command to be traced on the context's logger")
+}
+
+func Test_fetchCommit_logsThroughContext(t *testing.T) {
+	// same for fetchCommit, which cloneSource calls with its context
+	ctx, ctxLog := captureLogs(t)
+	repo := newGitRepo(t)
+	sha := repo.commit("one")
+
+	require.NoError(t, fetchCommit(ctx, repo.url(), sha, t.TempDir()))
+	assert.Contains(t, ctxLog(), "fetch", "expected the git commands to be traced on the context's logger")
+}
+
+func TestCloneSource_logsWhichAttemptFailed(t *testing.T) {
+	// a full sha is fetched by commit, not shallow cloned, so when that fails the log should say so
+	ctx, ctxLog := captureLogs(t)
+	repo := newGitRepo(t)
+	repo.commit("one")
+	missing := strings.Repeat("0123456789", 4) // a full sha that isn't in the repo
+
+	_, _, err := cloneSource(ctx, "example.com/tool", missing, repo.url())
+	require.Error(t, err)
+	assert.Contains(t, ctxLog(), "trying full clone", "the fallback should still be logged")
+	assert.Contains(t, ctxLog(), "fetch by commit", "the log should name the attempt that failed")
+	assert.NotContains(t, ctxLog(), "shallow clone failed", "the attempt that failed was the fetch by commit")
 }
 
 func TestCloneSource_doesNotLeakCredentials(t *testing.T) {
@@ -270,6 +341,27 @@ func TestCloneSource_fallbackIsAPartialClone(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(cleanup)
 	assertPartialCloneOf(t, dir, first)
+}
+
+func TestCloneSource_fallbackOnServerThatRefusesShaFetches(t *testing.T) {
+	// the fallback is there for servers that refuse to fetch a commit by sha (source.go's comment says so). A partial
+	// clone fetches blobs by id at checkout, which such a server also refuses, so the fallback has to still work
+	// there, e.g. by retrying without --filter
+	repo, first := filteringRepo(t)
+	for _, setting := range []string{"allowReachableSHA1InWant", "allowAnySHA1InWant", "allowTipSHA1InWant"} {
+		repo.git("config", "uploadpack."+setting, "false")
+	}
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "protocol.version")
+	t.Setenv("GIT_CONFIG_VALUE_0", "0")
+
+	dir, cleanup, err := cloneSource(context.Background(), "example.com/tool", first, repo.url())
+	require.NoError(t, err, "the full clone fallback should work against a server that refuses sha fetches")
+	t.Cleanup(cleanup)
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").Output()
+	require.NoError(t, err)
+	assert.Equal(t, first, strings.TrimSpace(string(out)))
+	assert.FileExists(t, filepath.Join(dir, "main.go"))
 }
 
 func TestRefResolver_updateRejectsConstraint(t *testing.T) {
@@ -480,6 +572,49 @@ func TestCloneSource_fetchByCommitRefused(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "expected the full clone fallback, not a shallow fetch")
 }
 
+func TestCloneSource_keepsFirstAttemptError(t *testing.T) {
+	// when both the fetch by commit and the full clone fallback fail, the error should say why the first attempt
+	// failed too, not only the fallback's reason
+	repo := newGitRepo(t)
+	repo.commit("one")
+	missing := strings.Repeat("0123456789", 4) // a full sha that isn't in the repo
+
+	_, _, err := cloneSource(context.Background(), "example.com/tool", missing, repo.url())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "git checkout failed", "the fallback's error")
+	assert.Contains(t, err.Error(), "git fetch failed", "the fetch by commit's error was dropped")
+}
+
+func TestCloneSource_repoURLIsNotAnOption(t *testing.T) {
+	// a repo-url that starts with "-" should reach git as a repository, the way lsRemote and fetchCommit already pass
+	// it after "--", not be parsed as a clone option
+	marker := filepath.Join(t.TempDir(), "ran")
+	repoURL := "--upload-pack=touch " + marker
+
+	_, _, err := cloneSource(context.Background(), "example.com/tool", "main", repoURL)
+	require.Error(t, err)
+	assert.NoFileExists(t, marker)
+	assert.Contains(t, err.Error(), "--upload-pack", "git should report repo-url as the repository it couldn't read")
+}
+
+func Test_shallowClone_repoURLIsNotAnOption(t *testing.T) {
+	// cloneSource only reaches shallowClone for a branch or tag, so check it on its own too
+	marker := filepath.Join(t.TempDir(), "ran")
+	err := shallowClone(context.Background(), "--upload-pack=touch "+marker, "main", t.TempDir())
+	require.Error(t, err)
+	assert.NoFileExists(t, marker)
+	assert.Contains(t, err.Error(), "--upload-pack", "git should report repo-url as the repository it couldn't read")
+}
+
+func Test_fullCloneAndCheckout_repoURLIsNotAnOption(t *testing.T) {
+	// the fallback clone on its own: cloneSource's error may already carry the first attempt's output
+	marker := filepath.Join(t.TempDir(), "ran")
+	err := fullCloneAndCheckout(context.Background(), "--upload-pack=touch "+marker, "main", t.TempDir())
+	require.Error(t, err)
+	assert.NoFileExists(t, marker)
+	assert.Contains(t, err.Error(), "--upload-pack", "git should report repo-url as the repository it couldn't read")
+}
+
 func Test_redactCredentials(t *testing.T) {
 	tests := []struct {
 		name, repoURL, in, want string
@@ -489,12 +624,20 @@ func Test_redactCredentials(t *testing.T) {
 		{name: "echoed in another form", repoURL: "https://bot:s3cr3t@git.corp/o/r", in: "remote: bot:s3cr3t@git.corp", want: "remote: git.corp"},
 		{name: "no credentials", repoURL: "https://github.com/o/r", in: "clone https://github.com/o/r", want: "clone https://github.com/o/r"},
 		{name: "scp-style is left alone", repoURL: "git@github.com:o/r.git", in: "git@github.com:o/r.git", want: "git@github.com:o/r.git"},
+		{name: "unparseable URL still has its token removed", repoURL: "https://ghp_TOK@h/o/r%zz", in: "clone https://ghp_TOK@h/o/r%zz failed", want: "clone https://h/o/r%zz failed"},
+		{name: "short password doesn't mangle other text", repoURL: "https://bot:x@h/o/r", in: "text with x", want: "text with x"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, redactCredentials(tt.in, tt.repoURL))
 		})
 	}
+}
+
+func Test_redactCredentials_escapedTokenEchoedDecoded(t *testing.T) {
+	// a token-as-username with an escape (%2F) can come back decoded in git's output
+	got := redactCredentials("auth failed for tok/x", "https://tok%2Fx@h/o/r")
+	assert.NotContains(t, got, "tok/x")
 }
 
 func TestRefResolver_doesNotLeakCredentials(t *testing.T) {
