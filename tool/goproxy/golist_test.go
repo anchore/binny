@@ -102,3 +102,42 @@ func Test_quoteOutput(t *testing.T) {
 	}
 	assert.Less(t, len(quoteOutput(long)), maxErrorSize+10)
 }
+
+func TestVersionResolver_goList_toolEnvOverridesProcessEnv(t *testing.T) {
+	// a process-level GOPROXY=off would block every lookup, the tool's own GOPROXY (fileProxy) should win
+	t.Setenv("GOPROXY", "off")
+	v := NewVersionResolver(VersionResolutionParameters{Module: "example.com/tool", Env: fileProxy(t)})
+	got, err := v.ResolveVersion(context.Background(), binny.VersionIntent{Want: "main"})
+	require.NoError(t, err)
+	assert.Equal(t, "v1.1.1-0.20261015120000-abcdef123456", got)
+}
+
+func TestVersionResolver_goList_ignoresCurrentModuleAndWorkspace(t *testing.T) {
+	// lookups run outside any module or workspace: a go.mod needing a go we don't have in the current
+	// directory, or a GOWORK that doesn't exist, must not affect them
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/here\n\ngo 9.99\n"), 0o600))
+	t.Chdir(dir)
+	t.Setenv("GOWORK", filepath.Join(dir, "does-not-exist.work"))
+
+	v := NewVersionResolver(VersionResolutionParameters{Module: "example.com/tool", Env: fileProxy(t)})
+	got, err := v.ResolveVersion(context.Background(), binny.VersionIntent{Want: "main"})
+	require.NoError(t, err)
+	assert.Equal(t, "v1.1.1-0.20261015120000-abcdef123456", got)
+}
+
+func TestVersionResolver_goList_skipsRetractedLatest(t *testing.T) {
+	// go list -m honours retractions: v1.1.0 retracts itself, so latest is v1.0.0 (the old proxy list lookup didn't)
+	env := fileProxy(t)
+	root := strings.TrimPrefix(strings.TrimPrefix(env[0], "GOPROXY=file://"), "/")
+	if !filepath.IsAbs(root) {
+		root = "/" + root
+	}
+	mod := filepath.Join(filepath.FromSlash(root), "example.com", "tool", "@v", "v1.1.0.mod")
+	require.NoError(t, os.WriteFile(mod, []byte("module example.com/tool\n\nretract v1.1.0\n"), 0o600))
+
+	v := NewVersionResolver(VersionResolutionParameters{Module: "example.com/tool", Env: env})
+	got, err := v.ResolveVersion(context.Background(), binny.VersionIntent{Want: "latest"})
+	require.NoError(t, err)
+	assert.Equal(t, "v1.0.0", got)
+}

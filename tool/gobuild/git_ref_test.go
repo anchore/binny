@@ -3,16 +3,22 @@ package gobuild
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/anchore/binny"
+	"github.com/anchore/binny/internal/log"
+	"github.com/anchore/go-logger"
+	"github.com/anchore/go-logger/adapter/logrus"
 )
 
 // gitRepo is a local repo used as the "remote" in these tests.
@@ -155,6 +161,173 @@ func TestRefResolver(t *testing.T) {
 	assert.False(t, versionTag("nightly-2024-01-01", gitRef{}, nil))
 }
 
+func TestRefResolver_refWithCooldown(t *testing.T) {
+	// a cooldown can't be enforced for a ref (there's no older candidate), so a just-made commit resolves anyway
+	// rather than failing with a CooldownError
+	repo := newGitRepo(t)
+	head := repo.commit("just now")
+
+	r := WithRefResolution(InstallerParameters{Module: "example.com/tool", RepoURL: repo.url()}, &delegate{}, false)
+	got, err := r.ResolveVersion(context.Background(), binny.VersionIntent{Want: "main", Cooldown: 24 * time.Hour})
+	require.NoError(t, err)
+	assert.Equal(t, head, got)
+}
+
+func Test_lsRemote_failsInsteadOfPrompting(t *testing.T) {
+	// a remote that wants credentials should make lsRemote fail rather than wait on a prompt. Without a terminal git
+	// fails either way, but it only says "terminal prompts disabled" when GIT_TERMINAL_PROMPT=0 is what stopped it
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Basic realm="test"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(srv.Close)
+	// keep the user's credential helpers and askpass programs out of it
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_ASKPASS", "")
+	t.Setenv("SSH_ASKPASS", "")
+
+	_, err := lsRemote(context.Background(), srv.URL+"/o/r.git", "main")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "terminal prompts disabled")
+}
+
+// captureAllLogs makes the global logger and the context's logger write to separate files, and returns a context
+// carrying the latter and funcs that read what each got.
+func captureAllLogs(t *testing.T) (context.Context, func() string, func() string) {
+	t.Helper()
+	newLogger := func(path string) logger.Logger {
+		l, err := logrus.New(logrus.Config{FileLocation: path, Level: logger.TraceLevel})
+		require.NoError(t, err)
+		return l
+	}
+	dir := t.TempDir()
+	ctxLog, globalLog := filepath.Join(dir, "ctx.log"), filepath.Join(dir, "global.log")
+
+	prev := log.Get()
+	log.Set(newLogger(globalLog))
+	t.Cleanup(func() { log.Set(prev) })
+
+	read := func(path string) func() string {
+		return func() string {
+			got, err := os.ReadFile(path)
+			if os.IsNotExist(err) {
+				return ""
+			}
+			require.NoError(t, err)
+			return string(got)
+		}
+	}
+	return log.WithLogger(context.Background(), newLogger(ctxLog)), read(ctxLog), read(globalLog)
+}
+
+func TestCloneSource_doesNotLeakCredentials(t *testing.T) {
+	// nothing listens on port 1, so every git call fails fast; whichever path runs (fetch by commit, shallow clone,
+	// full clone), the token must not show up in the error or in either logger
+	const repoURL = "https://bot:s3cr3t@127.0.0.1:1/o/r.git"
+	for _, version := range []string{strings.Repeat("ab", 20), "main"} {
+		t.Run(version, func(t *testing.T) {
+			ctx, ctxLog, globalLog := captureAllLogs(t)
+			_, _, err := cloneSource(ctx, "example.com/tool", version, repoURL)
+			require.Error(t, err)
+			assert.NotContains(t, err.Error(), "s3cr3t")
+			assert.Contains(t, ctxLog()+globalLog(), "127.0.0.1:1", "expected the git calls to be logged")
+			assert.NotContains(t, ctxLog(), "s3cr3t")
+			assert.NotContains(t, globalLog(), "s3cr3t")
+		})
+	}
+}
+
+// filteringRepo is a remote with a real file that allows partial clones (uploadpack.allowFilter), as forges do.
+func filteringRepo(t *testing.T) (*gitRepo, string) {
+	t.Helper()
+	repo := newGitRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(repo.dir, "main.go"), []byte("package main\n"), 0o600))
+	repo.git("add", "main.go")
+	first := repo.commit("one")
+	repo.commit("two")
+	repo.git("config", "uploadpack.allowFilter", "true")
+	return repo, first
+}
+
+func assertPartialCloneOf(t *testing.T, dir, commit string) {
+	t.Helper()
+	out, err := exec.Command("git", "-C", dir, "config", "remote.origin.partialclonefilter").Output()
+	require.NoError(t, err, "expected a partial clone")
+	assert.Equal(t, "blob:none", strings.TrimSpace(string(out)))
+	out, err = exec.Command("git", "-C", dir, "rev-parse", "HEAD").Output()
+	require.NoError(t, err)
+	assert.Equal(t, commit, strings.TrimSpace(string(out)))
+	assert.FileExists(t, filepath.Join(dir, "main.go"))
+}
+
+func TestCloneSource_fallbackIsAPartialClone(t *testing.T) {
+	// a short sha can't be fetched on its own, so the full clone fallback runs, and only fetches the blobs of the
+	// commit it checks out (--filter=blob:none)
+	repo, first := filteringRepo(t)
+
+	dir, cleanup, err := cloneSource(context.Background(), "example.com/tool", first[:12], repo.url())
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	assertPartialCloneOf(t, dir, first)
+}
+
+func TestRefResolver_updateRejectsConstraint(t *testing.T) {
+	r := WithRefResolution(InstallerParameters{Module: "example.com/tool", RepoURL: "https://example.com/tool.git"}, &delegate{}, false)
+	_, err := r.UpdateVersion(context.Background(), binny.VersionIntent{Want: "main", Constraint: "< 2.0"})
+	require.ErrorContains(t, err, "cannot specify a version constraint")
+}
+
+func TestRefResolver_derivesRepoURL(t *testing.T) {
+	// with no repo-url, a github module's repo is derived from the module path
+	var asked string
+	r := refResolver{
+		VersionResolver: &delegate{},
+		module:          "github.com/o/r/v2",
+		lsRemote: func(_ context.Context, repoURL, _ string) (gitRef, error) {
+			asked = repoURL
+			return gitRef{name: "refs/heads/main", sha: strings.Repeat("ab", 20)}, nil
+		},
+	}
+	_, err := r.ResolveVersion(context.Background(), binny.VersionIntent{Want: "main"})
+	require.NoError(t, err)
+	want, err := DeriveRepoURL("github.com/o/r/v2")
+	require.NoError(t, err)
+	assert.Equal(t, want, asked)
+	assert.Contains(t, asked, "github.com/o/r")
+}
+
+func TestRefResolver_mergeRequestHead(t *testing.T) {
+	// GitLab publishes merge requests as refs/merge-requests/<n>/head; the merge-requests/<n> shorthand finds it
+	repo := newGitRepo(t)
+	base := repo.commit("one")
+	mr := repo.git("commit-tree", "-m", "mr", "-p", base, base+"^{tree}")
+	repo.git("update-ref", "refs/merge-requests/45/head", mr)
+
+	r := WithRefResolution(InstallerParameters{Module: "example.com/tool", RepoURL: repo.url()}, &delegate{}, false)
+	for _, want := range []string{"merge-requests/45", "merge-requests/45/head", "refs/merge-requests/45/head"} {
+		got, err := r.ResolveVersion(context.Background(), binny.VersionIntent{Want: want})
+		require.NoError(t, err, want)
+		assert.Equal(t, mr, got, want)
+	}
+}
+
+func TestRefResolver_tagBeatsBranch(t *testing.T) {
+	// a name that is both a tag and a branch means the tag, the order git itself uses
+	repo := newGitRepo(t)
+	tagged := repo.commit("one")
+	repo.git("tag", "x")
+	repo.git("branch", "x")
+	repo.git("checkout", "-q", "x")
+	branchHead := repo.commit("two")
+	require.NotEqual(t, tagged, branchHead)
+
+	r := WithRefResolution(InstallerParameters{Module: "example.com/tool", RepoURL: repo.url()}, &delegate{}, false)
+	got, err := r.ResolveVersion(context.Background(), binny.VersionIntent{Want: "x"})
+	require.NoError(t, err)
+	assert.Equal(t, tagged, got)
+}
+
 func TestRefResolver_fullSHAIsNotRedirected(t *testing.T) {
 	ctx := context.Background()
 	repo := newGitRepo(t)
@@ -280,6 +453,33 @@ func TestCloneSource_commits(t *testing.T) {
 	}
 }
 
+func TestCloneSource_fetchByCommitRefused(t *testing.T) {
+	ctx := context.Background()
+	repo := newGitRepo(t)
+	first := repo.commit("one")
+	repo.commit("two")
+
+	// a server that only serves advertised refs, spoken to over protocol v0 (where that setting is enforced), refuses
+	// to fetch a commit that isn't a ref tip, so the fallback full clone has to take over in the dir git init used
+	for _, setting := range []string{"allowReachableSHA1InWant", "allowAnySHA1InWant", "allowTipSHA1InWant"} {
+		repo.git("config", "uploadpack."+setting, "false")
+	}
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "protocol.version")
+	t.Setenv("GIT_CONFIG_VALUE_0", "0")
+
+	dir, cleanup, err := cloneSource(ctx, "example.com/tool", first, repo.url())
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").Output()
+	require.NoError(t, err)
+	assert.Equal(t, first, strings.TrimSpace(string(out)))
+
+	_, err = os.Stat(filepath.Join(dir, ".git", "shallow"))
+	assert.True(t, os.IsNotExist(err), "expected the full clone fallback, not a shallow fetch")
+}
+
 func Test_redactCredentials(t *testing.T) {
 	tests := []struct {
 		name, repoURL, in, want string
@@ -304,4 +504,63 @@ func TestRefResolver_doesNotLeakCredentials(t *testing.T) {
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "s3cr3t")
 	assert.Contains(t, err.Error(), "https://127.0.0.1:1/o/r.git")
+}
+
+func Test_redactCredentials_usernameAlsoInPath(t *testing.T) {
+	// some hosts put the account name in both the userinfo and the path (Azure DevOps clone URLs look like
+	// https://myorg@dev.azure.com/myorg/proj/_git/repo); the path is not a secret and should survive redaction
+	for _, tt := range []struct{ repoURL, want string }{
+		{repoURL: "https://myorg@dev.azure.com/myorg/proj/_git/repo", want: "https://dev.azure.com/myorg/proj/_git/repo"},
+		{repoURL: "https://deploy@git.corp/team/deploy-tools", want: "https://git.corp/team/deploy-tools"},
+	} {
+		assert.Equal(t, "clone "+tt.want+" failed", redactCredentials("clone "+tt.repoURL+" failed", tt.repoURL))
+	}
+}
+
+func TestCloneSource_badShaIsNotClonedTwice(t *testing.T) {
+	// a sha that isn't in the repo fails the full clone's checkout; that is not a reason to clone the repo again.
+	// git's trace2 events record each git process, so count the top-level clones
+	events := filepath.Join(t.TempDir(), "trace2.json")
+	t.Setenv("GIT_TRACE2_EVENT", events)
+	repo := newGitRepo(t)
+	repo.commit("one")
+
+	_, _, err := cloneSource(context.Background(), "example.com/tool", strings.Repeat("0123456789", 4), repo.url())
+	require.Error(t, err)
+
+	trace, err := os.ReadFile(events)
+	require.NoError(t, err)
+	assert.Equal(t, 1, strings.Count(string(trace), `"hierarchy":"clone"`), "a missing commit should be cloned only once")
+}
+
+func TestRefResolver_fullSHAStillNeedsRepoURL(t *testing.T) {
+	// a full sha needs no lookup, but a module whose repo can't be derived (and has no repo-url) still can't be
+	// built, so check should say so rather than pass
+	r := refResolver{
+		VersionResolver: &delegate{},
+		module:          "example.com/tool",
+		lsRemote: func(context.Context, string, string) (gitRef, error) {
+			return gitRef{}, nil
+		},
+	}
+	_, err := r.ResolveVersion(context.Background(), binny.VersionIntent{Want: strings.Repeat("ab", 20)})
+	require.ErrorContains(t, err, "failed to derive repo URL")
+}
+
+func Test_lsRemote_repoURLIsNotAnOption(t *testing.T) {
+	// lsRemote passes repo-url after "--", so one starting with "-" can't become an ls-remote option
+	marker := filepath.Join(t.TempDir(), "ran")
+	_, err := lsRemote(context.Background(), "--upload-pack=touch "+marker, "main")
+	require.Error(t, err)
+	assert.NoFileExists(t, marker)
+	assert.Contains(t, err.Error(), "--upload-pack", "git should report repo-url as the repository it couldn't read")
+}
+
+func Test_fetchCommit_repoURLIsNotAnOption(t *testing.T) {
+	// same for fetchCommit's git fetch
+	marker := filepath.Join(t.TempDir(), "ran")
+	err := fetchCommit(context.Background(), "--upload-pack=touch "+marker, strings.Repeat("ab", 20), t.TempDir())
+	require.Error(t, err)
+	assert.NoFileExists(t, marker)
+	assert.Contains(t, err.Error(), "--upload-pack", "git should report repo-url as the repository it couldn't read")
 }

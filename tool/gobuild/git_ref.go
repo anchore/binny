@@ -86,7 +86,11 @@ func (r refResolver) ResolveVersion(ctx context.Context, intent binny.VersionInt
 func (r refResolver) resolveFromGit(ctx context.Context, intent binny.VersionIntent) (string, error) {
 	want := intent.Want
 	if fullSHAPattern.MatchString(want) {
-		// a full commit can't move. It isn't looked up, so a branch or tag named after it can't redirect the build
+		// a full commit can't move. It isn't looked up, so a branch or tag named after it can't redirect the build,
+		// but the repo still has to be known or install would fail where check passed
+		if _, err := r.url(); err != nil {
+			return "", err
+		}
 		return want, nil
 	}
 
@@ -157,14 +161,23 @@ func versionTag(want string, ref gitRef, lookupErr error) bool {
 	return lookupErr != nil || ref.name == "" || strings.HasPrefix(ref.name, "refs/tags/")
 }
 
+// url is the configured repo-url, or the one derived from the module path.
+func (r refResolver) url() (string, error) {
+	if r.repoURL != "" {
+		return r.repoURL, nil
+	}
+	repoURL, err := DeriveRepoURL(r.module)
+	if err != nil {
+		return "", fmt.Errorf("failed to derive repo URL: %w", err)
+	}
+	return repoURL, nil
+}
+
 // lookup finds want in the repo, also returning the repo URL (credentials redacted) for messages.
 func (r refResolver) lookup(ctx context.Context, want string) (gitRef, string, error) {
-	repoURL := r.repoURL
-	if repoURL == "" {
-		var err error
-		if repoURL, err = DeriveRepoURL(r.module); err != nil {
-			return gitRef{}, "", fmt.Errorf("failed to derive repo URL: %w", err)
-		}
+	repoURL, err := r.url()
+	if err != nil {
+		return gitRef{}, "", err
 	}
 	repo := redactCredentials(repoURL, repoURL)
 

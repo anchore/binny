@@ -3,6 +3,9 @@ package tool
 import (
 	"context"
 	"fmt"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -55,4 +58,50 @@ func TestNew_goBuildFromProxyTracksRefs(t *testing.T) {
 
 	_, err = tl.ResolveVersion(context.Background(), binny.VersionIntent{Want: "main"})
 	require.ErrorContains(t, err, "GOPROXY=off", "the ref should reach the go command, not be passed through")
+}
+
+func TestNew_goProxyLookupsUseToolEnv(t *testing.T) {
+	// the tool's env reaches the go command that resolves its version, so GOPROXY=off there means no lookup. The
+	// process env points at a dead proxy, so the error can only say GOPROXY=off if the tool's env got through
+	t.Setenv("GOPROXY", "http://127.0.0.1:1")
+	tl, err := New(Config{
+		Name: "tool",
+		InstallerConfig: DetailConfig{
+			Method:     goinstall.InstallMethod,
+			Parameters: goinstall.InstallerParameters{Module: "github.com/anchore/binny", Env: []string{"GOPROXY=off"}},
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = tl.ResolveVersion(context.Background(), binny.VersionIntent{Want: "main"})
+	require.ErrorContains(t, err, "GOPROXY=off")
+}
+
+func TestNew_goBuildResolvesRefsAgainstTheRepo(t *testing.T) {
+	// go-build from git resolves a branch to the commit the repo says it points at, whatever the version method
+	// (this checks the behaviour TestNew_goBuildTracksGitRefs checks by type name)
+	dir := t.TempDir()
+	git := func(args ...string) string {
+		cmd := exec.Command("git", append([]string{"-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false"}, args...)...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, string(out))
+		return strings.TrimSpace(string(out))
+	}
+	git("init", "-q", "-b", "main")
+	git("commit", "-q", "--allow-empty", "-m", "one")
+	head := git("rev-parse", "HEAD")
+
+	tl, err := New(Config{
+		Name: "tool",
+		InstallerConfig: DetailConfig{
+			Method:     gobuild.InstallMethod,
+			Parameters: gobuild.InstallerParameters{Module: "example.com/tool", RepoURL: "file://" + filepath.ToSlash(dir)},
+		},
+	})
+	require.NoError(t, err)
+
+	got, err := tl.ResolveVersion(context.Background(), binny.VersionIntent{Want: "main"})
+	require.NoError(t, err)
+	assert.Equal(t, head, got)
 }

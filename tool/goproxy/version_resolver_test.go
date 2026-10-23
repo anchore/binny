@@ -497,3 +497,17 @@ func TestVersionResolver_UpdateVersion_refWithConstraint(t *testing.T) {
 	_, err := v.UpdateVersion(context.Background(), binny.VersionIntent{Want: "main", Constraint: "< 2.0"})
 	require.ErrorContains(t, err, "cannot specify a version constraint")
 }
+
+func TestVersionResolver_ResolveVersion_refWithCooldown(t *testing.T) {
+	// a ref has no older candidate to fall back to, so a cooldown only warns: a commit newer than the cooldown still
+	// resolves, rather than failing with a CooldownError
+	v := NewVersionResolver(VersionResolutionParameters{Module: "github.com/anchore/binny"})
+	v.versionInfoFetcher = func(_ context.Context, _, ref string) (*versionInfo, error) {
+		require.Equal(t, "main", ref)
+		return &versionInfo{Version: "v0.0.0-20261015120000-222222222222", Time: time.Now().Add(-time.Hour)}, nil
+	}
+
+	got, err := v.ResolveVersion(context.Background(), binny.VersionIntent{Want: "main", Cooldown: 7 * 24 * time.Hour})
+	require.NoError(t, err)
+	assert.Equal(t, "v0.0.0-20261015120000-222222222222", got)
+}
