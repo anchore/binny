@@ -9,6 +9,7 @@ import (
 
 	"github.com/anchore/binny"
 	"github.com/anchore/binny/tool"
+	"github.com/anchore/binny/tool/git"
 	"github.com/anchore/binny/tool/githubrelease"
 	"github.com/anchore/binny/tool/gobuild"
 	"github.com/anchore/binny/tool/goinstall"
@@ -167,6 +168,12 @@ func deriveVersionResolveParameters(resolveMethod string, versionParameters map[
 
 	case goproxy.IsResolveMethod(resolveMethod):
 		var params goproxy.VersionResolutionParameters
+		if err := mapstructure.Decode(versionParameters, &params); err != nil {
+			return resolveMethod, nil, err
+		}
+		return resolveMethod, params, nil
+	case git.IsResolveMethod(resolveMethod):
+		var params git.VersionResolutionParameters
 		if err := mapstructure.Decode(versionParameters, &params); err != nil {
 			return resolveMethod, nil, err
 		}

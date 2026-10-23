@@ -3,6 +3,8 @@ package gobuild
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -54,95 +56,6 @@ func TestIsLocalModule(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := IsLocalModule(tt.module)
-			require.Equal(t, tt.want, got)
-		})
-	}
-}
-
-func TestDeriveBinaryName(t *testing.T) {
-	tests := []struct {
-		name       string
-		module     string
-		entrypoint string
-		want       string
-	}{
-		{
-			name:       "simple module",
-			module:     "github.com/owner/repo",
-			entrypoint: "",
-			want:       "repo",
-		},
-		{
-			name:       "module with entrypoint",
-			module:     "github.com/owner/repo",
-			entrypoint: "cmd/mytool",
-			want:       "mytool",
-		},
-		{
-			name:       "module with v2 suffix",
-			module:     "github.com/owner/repo/v2",
-			entrypoint: "",
-			want:       "repo",
-		},
-		{
-			name:       "module with v3 suffix and entrypoint",
-			module:     "github.com/owner/repo/v3",
-			entrypoint: "cmd/tool",
-			want:       "tool",
-		},
-		{
-			name:       "deep entrypoint path",
-			module:     "github.com/owner/repo",
-			entrypoint: "internal/cmd/service/main",
-			want:       "main",
-		},
-		{
-			name:       "single segment entrypoint",
-			module:     "github.com/owner/repo",
-			entrypoint: "tool",
-			want:       "tool",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := deriveBinaryName(tt.module, tt.entrypoint)
-			require.Equal(t, tt.want, got)
-		})
-	}
-}
-
-func TestStripVersionSuffix(t *testing.T) {
-	tests := []struct {
-		name   string
-		module string
-		want   string
-	}{
-		{
-			name:   "no version suffix",
-			module: "github.com/owner/repo",
-			want:   "github.com/owner/repo",
-		},
-		{
-			name:   "v2 suffix",
-			module: "github.com/owner/repo/v2",
-			want:   "github.com/owner/repo",
-		},
-		{
-			name:   "v10 suffix",
-			module: "github.com/owner/repo/v10",
-			want:   "github.com/owner/repo",
-		},
-		{
-			name:   "subpackage looks like version but isn't",
-			module: "github.com/owner/repo/vars",
-			want:   "github.com/owner/repo/vars",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := stripVersionSuffix(tt.module)
 			require.Equal(t, tt.want, got)
 		})
 	}
@@ -241,12 +154,10 @@ func TestInstaller_InstallTo(t *testing.T) {
 		name           string
 		config         InstallerParameters
 		version        string
-		wantBinName    string
 		wantEntrypoint string
 		wantLdflags    string
 		wantArgs       []string
 		wantEnv        []string
-		wantWorkDir    string // if empty, defaults to "/tmp/test-source" (mock remote source)
 		wantErr        require.ErrorAssertionFunc
 	}{
 		{
@@ -256,7 +167,6 @@ func TestInstaller_InstallTo(t *testing.T) {
 				Entrypoint: "cmd/mytool",
 			},
 			version:        "v1.0.0",
-			wantBinName:    "mytool",
 			wantEntrypoint: "cmd/mytool",
 			wantArgs:       []string{},
 			wantEnv:        []string{},
@@ -269,19 +179,17 @@ func TestInstaller_InstallTo(t *testing.T) {
 				LDFlags:    []string{"-X main.version={{ .Version }}"},
 			},
 			version:        "v1.2.3",
-			wantBinName:    "mytool",
 			wantEntrypoint: "cmd/mytool",
 			wantLdflags:    "-X main.version=v1.2.3",
 			wantArgs:       []string{},
 			wantEnv:        []string{},
 		},
 		{
-			name: "no entrypoint uses module name",
+			name: "no entrypoint builds the module root",
 			config: InstallerParameters{
 				Module: "github.com/owner/mytool",
 			},
 			version:        "v1.0.0",
-			wantBinName:    "mytool",
 			wantEntrypoint: "",
 			wantArgs:       []string{},
 			wantEnv:        []string{},
@@ -295,36 +203,9 @@ func TestInstaller_InstallTo(t *testing.T) {
 				Env:        []string{"CGO_ENABLED=0"},
 			},
 			version:        "v1.0.0",
-			wantBinName:    "mytool",
 			wantEntrypoint: "cmd/mytool",
 			wantArgs:       []string{"-trimpath"},
 			wantEnv:        []string{"CGO_ENABLED=0"},
-		},
-		{
-			name: "local module uses module path as workdir",
-			config: InstallerParameters{
-				Module:     ".",
-				Entrypoint: "cmd/mytool",
-			},
-			version:        "v1.0.0",
-			wantBinName:    "mytool",
-			wantEntrypoint: "cmd/mytool",
-			wantArgs:       []string{},
-			wantEnv:        []string{},
-			wantWorkDir:    ".", // local module uses module path directly
-		},
-		{
-			name: "local module with relative path",
-			config: InstallerParameters{
-				Module:     "./subdir",
-				Entrypoint: "cmd/tool",
-			},
-			version:        "v1.0.0",
-			wantBinName:    "tool",
-			wantEntrypoint: "cmd/tool",
-			wantArgs:       []string{},
-			wantEnv:        []string{},
-			wantWorkDir:    "./subdir",
 		},
 	}
 
@@ -367,28 +248,18 @@ func TestInstaller_InstallTo(t *testing.T) {
 				return
 			}
 
-			// construct expected path the same way the code does
-			expectedBinName := tt.wantBinName
+			expectedPath := filepath.Join(destDir, stagingBinName)
 			if runtime.GOOS == "windows" {
-				expectedBinName += ".exe"
+				expectedPath += ".exe"
 			}
-			expectedPath := filepath.Join(destDir, expectedBinName)
 
 			require.Equal(t, expectedPath, binPath)
 			require.Equal(t, expectedPath, capturedOutputPath)
 			require.Equal(t, tt.wantEntrypoint, capturedEntrypoint)
 			require.Equal(t, tt.wantLdflags, capturedLdflags)
 
-			// check workDir - for local modules it should be the module path,
-			// for remote modules it should be the mock source path
-			expectedWorkDir := tt.wantWorkDir
-			if expectedWorkDir == "" {
-				expectedWorkDir = "/tmp/test-source"
-				require.True(t, sourceGetterCalled, "sourceGetter should be called for remote modules")
-			} else {
-				require.False(t, sourceGetterCalled, "sourceGetter should not be called for local modules")
-			}
-			require.Equal(t, expectedWorkDir, capturedWorkDir)
+			require.True(t, sourceGetterCalled, "sourceGetter should be called for remote modules")
+			require.Equal(t, "/tmp/test-source", capturedWorkDir)
 
 			if d := cmp.Diff(tt.wantArgs, capturedArgs); d != "" {
 				t.Errorf("args mismatch (-want +got):\n%s", d)
@@ -424,4 +295,107 @@ func TestInstaller_InstallTo_SourceGetterError(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to get source")
 	require.Contains(t, err.Error(), "simulated source getter error")
+}
+
+func TestInstaller_InstallTo_localModule(t *testing.T) {
+	// resolve symlinks (e.g. /var -> /private/var on macOS) so paths compare equal after chdir
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	mod := filepath.Join(root, "mod")
+	require.NoError(t, os.MkdirAll(filepath.Join(mod, "cmd", "hello"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(mod, "go.mod"), []byte("module example.com/hello\n"), 0o644))
+	elsewhere := filepath.Join(root, "elsewhere")
+	require.NoError(t, os.MkdirAll(elsewhere, 0o755))
+	aFile := filepath.Join(root, "file")
+	require.NoError(t, os.WriteFile(aFile, nil, 0o644))
+
+	tests := []struct {
+		name       string
+		cwd        string
+		module     string
+		entrypoint string
+		wantDir    string
+		wantErr    string
+	}{
+		{
+			name:       "absolute module outside the working directory",
+			cwd:        elsewhere,
+			module:     mod,
+			entrypoint: "cmd/hello",
+			wantDir:    mod,
+		},
+		{
+			name:       "relative module resolves against the working directory",
+			cwd:        elsewhere,
+			module:     "../mod",
+			entrypoint: "cmd/hello",
+			wantDir:    mod,
+		},
+		{
+			name:    "module is the working directory",
+			cwd:     mod,
+			module:  ".",
+			wantDir: mod,
+		},
+		{
+			name:    "module is the parent directory",
+			cwd:     filepath.Join(mod, "cmd"),
+			module:  "..",
+			wantDir: mod,
+		},
+		{
+			name:    "module is a package directory within a module",
+			cwd:     mod,
+			module:  "./cmd/hello",
+			wantDir: filepath.Join(mod, "cmd", "hello"),
+		},
+		{
+			name:       "package directory within a module with an entrypoint",
+			cwd:        mod,
+			module:     "./cmd",
+			entrypoint: "hello",
+			wantDir:    filepath.Join(mod, "cmd"),
+		},
+		{
+			name:    "missing directory",
+			cwd:     elsewhere,
+			module:  "../missing",
+			wantErr: fmt.Sprintf("%q does not exist", filepath.Join(root, "missing")),
+		},
+		{
+			name:    "module is a file",
+			cwd:     elsewhere,
+			module:  aFile,
+			wantErr: "is not a directory",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Chdir(tt.cwd)
+			destDir := t.TempDir()
+			var gotDir, gotOutput string
+			i := Installer{
+				config: InstallerParameters{Module: tt.module, Entrypoint: tt.entrypoint},
+				goBuildRunner: func(_ context.Context, workDir, outputPath, _, _ string, _, _ []string) error {
+					gotDir, gotOutput = workDir, outputPath
+					return nil
+				},
+				sourceGetter: func(context.Context, string, string, string, SourceMode) (string, func(), error) {
+					t.Fatal("sourceGetter should not be called for local modules")
+					return "", nil, nil
+				},
+			}
+
+			binPath, err := i.InstallTo(context.Background(), "v1.0.0", destDir)
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+
+			require.Equal(t, tt.wantDir, gotDir)
+			require.Equal(t, destDir, filepath.Dir(binPath))
+			require.Equal(t, binPath, gotOutput)
+		})
+	}
 }

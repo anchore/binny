@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/anchore/binny/tool/git"
+	"github.com/anchore/binny/tool/gobuild"
 	"github.com/anchore/binny/tool/goproxy"
 )
 
@@ -24,12 +24,9 @@ func DefaultVersionResolverConfig(installParams any) (string, any, error) {
 		return "", nil, fmt.Errorf("invalid go install parameters")
 	}
 
-	if strings.HasPrefix(params.Module, ".") || strings.HasPrefix(params.Module, "/") {
-		// this is a path to a local repo, version updating should be disabled and the version should be
-		// set to the current vcs value
-		return git.ResolveMethod, git.VersionResolutionParameters{
-			Path: params.Module,
-		}, nil
+	if gobuild.IsLocalModule(params.Module) {
+		// local modules are built by go-build, so resolve their version the same way (from the git repo)
+		return gobuild.DefaultVersionResolverConfig(gobuild.InstallerParameters{Module: params.Module})
 	}
 
 	return goproxy.ResolveMethod, goproxy.VersionResolutionParameters{

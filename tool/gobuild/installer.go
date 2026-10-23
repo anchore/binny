@@ -2,7 +2,9 @@ package gobuild
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +17,9 @@ import (
 )
 
 var _ binny.Installer = (*Installer)(nil)
+
+// stagingBinName is the file go build writes into destDir.
+const stagingBinName = "go-build-output"
 
 // SourceMode indicates how to obtain the source code for building.
 type SourceMode string
@@ -61,8 +66,9 @@ func NewInstaller(cfg InstallerParameters) Installer {
 func (i Installer) InstallTo(ctx context.Context, version, destDir string) (string, error) {
 	ctx, lgr := log.WithNested(ctx, "tool", fmt.Sprintf("%s@%s", i.config.Module, version))
 
-	// derive binary name from module/entrypoint
-	binName := deriveBinaryName(i.config.Module, i.config.Entrypoint)
+	// we choose the output path and the store renames it to the tool name, so the name only has to be
+	// stable within destDir (not derived from config)
+	binName := stagingBinName
 	if runtime.GOOS == "windows" {
 		binName += ".exe"
 	}
@@ -73,16 +79,19 @@ func (i Installer) InstallTo(ctx context.Context, version, destDir string) (stri
 
 	var workDir string
 	var cleanup func()
+	var err error
 
 	if isLocal {
-		lgr.WithFields("module", i.config.Module, "version", version).Debug("building go module from local source")
-		// for local modules, use the module path directly as the working directory
-		workDir = i.config.Module
+		// go resolves the main module from the working directory, so the build runs inside the module
+		workDir, err = resolveLocalModule(i.config.Module)
+		if err != nil {
+			return "", err
+		}
+		lgr.WithFields("module", i.config.Module, "dir", workDir, "version", version).Debug("building go module from local source")
 		cleanup = func() {} // no cleanup needed for local modules
 	} else {
 		lgr.WithFields("module", i.config.Module, "version", version, "source", string(i.config.Source)).Debug("building go module from source")
 		// get source code for remote modules
-		var err error
 		workDir, cleanup, err = i.sourceGetter(ctx, i.config.Module, version, i.config.RepoURL, i.config.Source)
 		if err != nil {
 			return "", fmt.Errorf("failed to get source: %w", err)
@@ -125,35 +134,29 @@ func (i Installer) InstallTo(ctx context.Context, version, destDir string) (stri
 
 // IsLocalModule returns true if the module path refers to a local filesystem path.
 func IsLocalModule(module string) bool {
-	return strings.HasPrefix(module, ".") || strings.HasPrefix(module, "/")
+	// filepath.IsAbs covers windows paths like C:\foo, the "/" prefix keeps rooted paths local everywhere
+	return strings.HasPrefix(module, ".") || strings.HasPrefix(module, "/") || filepath.IsAbs(module)
 }
 
-// deriveBinaryName extracts the binary name from the module path or entrypoint.
-// If entrypoint is provided, uses the last segment of the entrypoint path.
-// Otherwise, uses the last segment of the module path (stripping /v2, /v3, etc.).
-func deriveBinaryName(module, entrypoint string) string {
-	if entrypoint != "" {
-		// use the last path segment of the entrypoint
-		fields := strings.Split(entrypoint, "/")
-		return fields[len(fields)-1]
+// resolveLocalModule returns the absolute directory of a local module. Relative paths are taken
+// from the working directory, the same as every other path in the binny config.
+func resolveLocalModule(module string) (string, error) {
+	dir, err := filepath.Abs(module)
+	if err != nil {
+		return "", fmt.Errorf("unable to resolve local module %q: %w", module, err)
 	}
-
-	// use the last segment of the module, but strip /vN suffix first
-	module = stripVersionSuffix(module)
-	fields := strings.Split(module, "/")
-	return fields[len(fields)-1]
-}
-
-// stripVersionSuffix removes /v2, /v3, etc. from module paths.
-func stripVersionSuffix(module string) string {
-	fields := strings.Split(module, "/")
-	if len(fields) > 0 {
-		last := fields[len(fields)-1]
-		if len(last) >= 2 && last[0] == 'v' && last[1] >= '0' && last[1] <= '9' {
-			return strings.Join(fields[:len(fields)-1], "/")
-		}
+	fi, err := os.Stat(dir)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return "", fmt.Errorf("local module directory %q does not exist (from module %q)", dir, module)
+	case err != nil:
+		return "", fmt.Errorf("unable to read local module directory %q (from module %q): %w", dir, module, err)
+	case !fi.IsDir():
+		return "", fmt.Errorf("local module %q is not a directory (from module %q)", dir, module)
 	}
-	return module
+	// no go.mod check here: the module may be a package dir within a module, or a go.work root, and go
+	// reports a missing main module better than we can guess at it
+	return dir, nil
 }
 
 func runGoBuild(ctx context.Context, workDir, outputPath, entrypoint, ldflags string, userArgs, userEnv []string) error {
