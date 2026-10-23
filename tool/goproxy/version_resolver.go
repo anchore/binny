@@ -54,7 +54,7 @@ func NewVersionResolver(cfg VersionResolutionParameters) *VersionResolver {
 
 func (v VersionResolver) ResolveVersion(ctx context.Context, intent binny.VersionIntent) (string, error) {
 	log.FromContext(ctx).WithFields("module", v.config.Module, "version", intent.Want).Trace("resolving version with the go command")
-	if internal.IsSemver(intent.Want) {
+	if internal.IsVersion(intent.Want) {
 		return intent.Want, nil
 	}
 
@@ -111,7 +111,7 @@ func (v VersionResolver) UpdateVersion(ctx context.Context, intent binny.Version
 		return intent.Want, nil
 	}
 
-	if internal.IsSemver(intent.Want) {
+	if internal.IsVersion(intent.Want) {
 		return v.latestVersion(ctx, intent.Constraint, intent.Cooldown)
 	}
 

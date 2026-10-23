@@ -1,6 +1,7 @@
 package gobuild
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
@@ -221,7 +222,7 @@ func Test_lsRemote_failsInsteadOfPrompting(t *testing.T) {
 	assert.Contains(t, err.Error(), "terminal prompts disabled")
 }
 
-// captureLogs makes the global logger and the context's logger write to separate files, and returns a context
+// captureLogs makes the global logger and the context's logger write to separate buffers, and returns a context
 // carrying the latter and a func that reads what it got.
 func captureLogs(t *testing.T) (context.Context, func() string) {
 	ctx, ctxLog, _ := captureAllLogs(t)
@@ -231,29 +232,20 @@ func captureLogs(t *testing.T) (context.Context, func() string) {
 // captureAllLogs is captureLogs that can also read what the global logger got.
 func captureAllLogs(t *testing.T) (context.Context, func() string, func() string) {
 	t.Helper()
-	newLogger := func(path string) logger.Logger {
-		l, err := logrus.New(logrus.Config{FileLocation: path, Level: logger.TraceLevel})
+	newLogger := func(buf *bytes.Buffer) logger.Logger {
+		l, err := logrus.New(logrus.Config{Level: logger.TraceLevel})
 		require.NoError(t, err)
+		// in memory: a log file left open keeps windows from removing the test's temp dir
+		l.(logger.Controller).SetOutput(buf)
 		return l
 	}
-	dir := t.TempDir()
-	ctxLog, globalLog := filepath.Join(dir, "ctx.log"), filepath.Join(dir, "global.log")
+	var ctxLog, globalLog bytes.Buffer
 
 	prev := log.Get()
-	log.Set(newLogger(globalLog))
+	log.Set(newLogger(&globalLog))
 	t.Cleanup(func() { log.Set(prev) })
 
-	read := func(path string) func() string {
-		return func() string {
-			got, err := os.ReadFile(path)
-			if os.IsNotExist(err) {
-				return ""
-			}
-			require.NoError(t, err)
-			return string(got)
-		}
-	}
-	return log.WithLogger(context.Background(), newLogger(ctxLog)), read(ctxLog), read(globalLog)
+	return log.WithLogger(context.Background(), newLogger(&ctxLog)), ctxLog.String, globalLog.String
 }
 
 func Test_lsRemote_logsThroughContext(t *testing.T) {
