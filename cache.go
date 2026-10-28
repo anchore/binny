@@ -245,6 +245,77 @@ func (c *Cache) List() ([]CacheEntry, error) {
 	return entries, nil
 }
 
+// CacheRef selects cache entries by tool name, and by version when one is given.
+type CacheRef struct {
+	Name    string
+	Version string
+}
+
+func (r CacheRef) String() string {
+	if r.Version == "" {
+		return r.Name
+	}
+	return r.Name + "@" + r.Version
+}
+
+func (r CacheRef) path(root string) string {
+	if r.Version == "" {
+		return filepath.Join(root, r.Name)
+	}
+	return filepath.Join(root, r.Name, url.PathEscape(r.Version))
+}
+
+// Delete removes every entry the refs select. A ref that selects nothing is an error, and then nothing is removed.
+func (c *Cache) Delete(refs ...CacheRef) error {
+	for _, r := range refs {
+		parts := []string{r.Name}
+		if r.Version != "" {
+			parts = append(parts, url.PathEscape(r.Version))
+		}
+		if err := validateCacheKey(parts...); err != nil {
+			return err
+		}
+		if _, err := os.Stat(r.path(c.root)); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("no cached tool matches %q", r.String())
+			}
+			return err
+		}
+	}
+
+	for _, r := range refs {
+		log.WithFields("tool", r.String()).Debug("deleting from cache")
+		if err := os.RemoveAll(r.path(c.root)); err != nil {
+			return err
+		}
+		// removing the last version of a tool removes the tool dir too
+		nameDir := filepath.Join(c.root, r.Name)
+		if versions, err := os.ReadDir(nameDir); err == nil && len(versions) == 0 {
+			if err := os.Remove(nameDir); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// DeleteAll removes everything in the cache, including staging dirs left by installs that did not finish.
+func (c *Cache) DeleteAll() error {
+	des, err := os.ReadDir(c.root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, de := range des {
+		if err := os.RemoveAll(filepath.Join(c.root, de.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // readDirNames returns the names of the dirs within dir, and nothing when dir does not exist.
 func readDirNames(dir string) ([]string, error) {
 	des, err := os.ReadDir(dir)

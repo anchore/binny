@@ -90,6 +90,32 @@ func TestInstallCmd(t *testing.T) {
 						assertStdoutEquals(&cacheListOutput),
 					},
 				},
+				{
+					name: "delete without args",
+					args: []string{"cache", "delete"},
+					assertions: []traitAssertion{
+						assertFailingReturnCode,
+					},
+				},
+				{
+					name: "delete all",
+					root: "store-a",
+					args: []string{"cache", "delete", "--all"},
+					assertions: []traitAssertion{
+						assertSuccessfulReturnCode,
+						assertDirEntryCount(filepath.Join("..", "cache"), 0),
+					},
+				},
+				{
+					name: "reinstall",
+					root: "store-a",
+					args: []string{"install", "-c", "testdata/go-install-method.yaml"},
+					assertions: []traitAssertion{
+						assertSuccessfulReturnCode,
+						assertManagedToolOutput("binny", []string{"--version"}, "binny v0.7.0\n"),
+						assertDirEntryCount(filepath.Join("..", "cache", "binny", "v0.7.0"), 1),
+					},
+				},
 			},
 		},
 	}

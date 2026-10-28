@@ -93,3 +93,61 @@ func TestCache_linkProbe(t *testing.T) {
 		assert.Empty(t, staged(t, cache))
 	})
 }
+
+func TestCache_Delete(t *testing.T) {
+	setup := func(t *testing.T) *Cache {
+		t.Helper()
+		cache, err := NewCache(t.TempDir())
+		require.NoError(t, err)
+		addCacheEntryForTest(t, cache, "binny", "v1", "aaaa")
+		addCacheEntryForTest(t, cache, "binny", "v1", "bbbb")
+		addCacheEntryForTest(t, cache, "binny", "v2", "aaaa")
+		addCacheEntryForTest(t, cache, "tsc", "v1", "aaaa")
+		return cache
+	}
+	listed := func(t *testing.T, cache *Cache) []string {
+		t.Helper()
+		entries, err := cache.List()
+		require.NoError(t, err)
+		var got []string
+		for _, e := range entries {
+			got = append(got, e.Name+"@"+e.Version+"/"+e.Fingerprint)
+		}
+		return got
+	}
+
+	t.Run("by name", func(t *testing.T) {
+		cache := setup(t)
+		require.NoError(t, cache.Delete(CacheRef{Name: "binny"}))
+		assert.Equal(t, []string{"tsc@v1/aaaa"}, listed(t, cache))
+		assert.NoDirExists(t, filepath.Join(cache.Root(), "binny"))
+	})
+
+	t.Run("by name and version", func(t *testing.T) {
+		cache := setup(t)
+		require.NoError(t, cache.Delete(CacheRef{Name: "binny", Version: "v1"}))
+		assert.Equal(t, []string{"binny@v2/aaaa", "tsc@v1/aaaa"}, listed(t, cache))
+
+		// removing the last version of a name removes the name too
+		require.NoError(t, cache.Delete(CacheRef{Name: "binny", Version: "v2"}))
+		assert.NoDirExists(t, filepath.Join(cache.Root(), "binny"))
+	})
+
+	t.Run("no match", func(t *testing.T) {
+		cache := setup(t)
+		for _, missing := range []CacheRef{{Name: "grype"}, {Name: "binny", Version: "v3"}} {
+			err := cache.Delete(CacheRef{Name: "tsc"}, missing)
+			require.ErrorContains(t, err, missing.String())
+		}
+		assert.Len(t, listed(t, cache), 4, "nothing is removed when any ref matches nothing")
+	})
+
+	t.Run("all", func(t *testing.T) {
+		cache := setup(t)
+		require.NoError(t, os.MkdirAll(filepath.Join(cache.StagingRoot(), "binny-install-tsc-1"), 0o755))
+		require.NoError(t, cache.DeleteAll())
+		des, err := os.ReadDir(cache.Root())
+		require.NoError(t, err)
+		assert.Empty(t, des)
+	})
+}

@@ -1,7 +1,9 @@
 package command
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jedib0t/go-pretty/table"
 	"github.com/spf13/cobra"
@@ -21,6 +23,7 @@ func Cache(app clio.Application) *cobra.Command {
 
 	cmd.AddCommand(
 		CacheList(app),
+		CacheDelete(app),
 	)
 
 	return cmd
@@ -137,4 +140,57 @@ func formatSize(size int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %ciB", float64(size)/float64(div), "KMGTPE"[exp])
+}
+
+type CacheDeleteConfig struct {
+	Cache              option.Cache `json:"cache" yaml:"cache" mapstructure:"cache"`
+	option.CacheDelete `json:"" yaml:",inline" mapstructure:",squash"`
+}
+
+func CacheDelete(app clio.Application) *cobra.Command {
+	cfg := &CacheDeleteConfig{
+		Cache: option.DefaultCache(),
+	}
+
+	var refs []binny.CacheRef
+
+	return app.SetupCommand(&cobra.Command{
+		Use:   "delete [NAME[@VERSION]...]",
+		Short: "Delete tools from the cache",
+		Long: "Delete every cached entry of a tool by NAME, or only those at one version with NAME@VERSION. Stores " +
+			"that linked to a deleted entry install it again on their next `binny install`.",
+		PreRunE: func(_ *cobra.Command, args []string) error {
+			switch {
+			case cfg.All && len(args) > 0:
+				return errors.New("--all cannot be used with tool names")
+			case !cfg.All && len(args) == 0:
+				return errors.New("give at least one tool to delete, or --all")
+			}
+			var err error
+			refs, err = parseCacheRefs(args)
+			return err
+		},
+		RunE: func(_ *cobra.Command, _ []string) error {
+			cache, err := binny.NewCache(cfg.Cache.Root)
+			if err != nil {
+				return err
+			}
+			if cfg.All {
+				return cache.DeleteAll()
+			}
+			return cache.Delete(refs...)
+		},
+	}, cfg)
+}
+
+func parseCacheRefs(args []string) ([]binny.CacheRef, error) {
+	refs := make([]binny.CacheRef, 0, len(args))
+	for _, arg := range args {
+		name, version, hasVersion := strings.Cut(arg, "@")
+		if name == "" || (hasVersion && version == "") {
+			return nil, fmt.Errorf("invalid tool %q, expected NAME or NAME@VERSION", arg)
+		}
+		refs = append(refs, binny.CacheRef{Name: name, Version: version})
+	}
+	return refs, nil
 }
