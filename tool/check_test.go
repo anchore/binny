@@ -81,3 +81,15 @@ func Test_check_cacheLinkOtherFingerprint(t *testing.T) {
 	// same name and version, but the config changed: the link points at another entry
 	require.ErrorContains(t, Check(store, cache, fakeTool{name: "tsc", param: "b"}, "v1", cfg), `"tsc"`)
 }
+
+func Test_check_cacheCopy(t *testing.T) {
+	cache := newCacheForTest(t)
+	store := newStoreForTest(t)
+	cfg := VerifyConfig{VerifySHA256Digest: true}
+
+	require.NoError(t, Install(context.Background(), fakeTool{name: "tsc"}, binny.VersionIntent{Want: "v1"}, store, nil, cfg))
+
+	err := Check(store, cache, fakeTool{name: "tsc"}, "v1", cfg)
+	require.ErrorContains(t, err, `"tsc"`)
+	require.ErrorContains(t, err, "copy")
+}

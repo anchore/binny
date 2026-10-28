@@ -25,7 +25,7 @@ func Check(store *binny.Store, cache *binny.Cache, t binny.Tool, resolvedVersion
 		return fmt.Errorf("tool %q not installed", toolName)
 	}
 
-	linked, err := checkCacheLink(cache, t, entry, resolvedVersion)
+	linked, err := checkCacheLayout(cache, t, entry, resolvedVersion)
 	if err != nil {
 		return err
 	}
@@ -48,20 +48,27 @@ func keepsArchiveFiles(t binny.Tool) bool {
 	return ok && k.KeepArchiveFiles()
 }
 
-// checkCacheLink reports whether the store entry is a link to the tool's current cache entry. A link to any other
-// entry (another fingerprint of the same name and version) is an error, so the next install relinks it.
-func checkCacheLink(cache *binny.Cache, t binny.Tool, entry *binny.StoreEntry, resolvedVersion string) (bool, error) {
-	fingerprint, ok := cacheFingerprint(cache, t)
-	if !ok {
+// checkCacheLayout reports whether the store entry is a link to the tool's current cache entry. An entry whose layout
+// does not match the cache setting is an error, so the next install converts it: a copy while the cache is used, a
+// link into the cache while it is not, or a link to another fingerprint's entry of the same name and version.
+func checkCacheLayout(cache *binny.Cache, t binny.Tool, entry *binny.StoreEntry, resolvedVersion string) (bool, error) {
+	fi, err := os.Lstat(entry.Path())
+	if err != nil {
+		return false, fmt.Errorf("failed to validate tool %q: %w", t.Name(), err)
+	}
+	// keep-archive-files links stay within the store (DirInRoot), any other link is into the cache
+	linkedOut := fi.Mode()&os.ModeSymlink != 0 && entry.DirInRoot == ""
+
+	fingerprint, useCache := cacheFingerprint(cache, t)
+	if !useCache {
+		if linkedOut {
+			return false, fmt.Errorf("tool %q is linked into the cache, which is not used for it", t.Name())
+		}
 		return false, nil
 	}
 
-	fi, err := os.Lstat(entry.Path())
-	if err != nil {
-		return false, err
-	}
-	if fi.Mode()&os.ModeSymlink == 0 {
-		return false, nil
+	if !linkedOut {
+		return false, fmt.Errorf("tool %q is installed as a copy in the store, not linked into the cache", t.Name())
 	}
 
 	target, err := os.Readlink(entry.Path())

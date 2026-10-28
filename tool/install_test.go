@@ -307,3 +307,59 @@ func TestInstall_cacheRootNotWritable(t *testing.T) {
 	err = Install(context.Background(), fakeTool{name: "tsc"}, binny.VersionIntent{Want: "v1"}, newStoreForTest(t), cache, VerifyConfig{})
 	require.ErrorContains(t, err, cache.Root())
 }
+
+func TestInstall_cacheConvertsCopy(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires symlinks")
+	}
+	cache := newCacheForTest(t)
+	store := newStoreForTest(t)
+	tl := fakeTool{name: "tsc"}
+	intent := binny.VersionIntent{Want: "v1"}
+	cfg := VerifyConfig{VerifySHA256Digest: true}
+
+	require.NoError(t, Install(context.Background(), tl, intent, store, nil, cfg))
+
+	// enabling the cache turns the copy into a link on the next install
+	require.NoError(t, Install(context.Background(), tl, intent, store, cache, cfg))
+	requireLinkedIntoCache(t, store, cache, tl, "v1", "tsc")
+}
+
+func TestInstall_cacheDisabledConvertsLink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires symlinks")
+	}
+	cache := newCacheForTest(t)
+	store := newStoreForTest(t)
+	tl := fakeTool{name: "tsc"}
+	intent := binny.VersionIntent{Want: "v1"}
+	cfg := VerifyConfig{VerifySHA256Digest: true}
+
+	require.NoError(t, Install(context.Background(), tl, intent, store, cache, cfg))
+
+	// disabling the cache turns the link into a copy, and leaves the entry for other stores
+	require.NoError(t, Install(context.Background(), tl, intent, store, nil, cfg))
+	fi, err := os.Lstat(filepath.Join(store.Root(), "tsc"))
+	require.NoError(t, err)
+	assert.True(t, fi.Mode().IsRegular())
+	assert.FileExists(t, filepath.Join(cache.EntryDir("tsc", "v1", tl.Fingerprint()), "tsc"))
+}
+
+func TestInstall_cacheRepairsDanglingLink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires symlinks")
+	}
+	cache := newCacheForTest(t)
+	store := newStoreForTest(t)
+	tl := fakeTool{name: "tsc", installs: &atomic.Int32{}}
+	intent := binny.VersionIntent{Want: "v1"}
+	cfg := VerifyConfig{VerifySHA256Digest: true}
+
+	require.NoError(t, Install(context.Background(), tl, intent, store, cache, cfg))
+	require.NoError(t, os.RemoveAll(cache.EntryDir("tsc", "v1", tl.Fingerprint())))
+
+	require.Error(t, Check(store, cache, tl, "v1", cfg))
+	require.NoError(t, Install(context.Background(), tl, intent, store, cache, cfg))
+	assert.EqualValues(t, 2, tl.installs.Load())
+	requireLinkedIntoCache(t, store, cache, tl, "v1", "tsc")
+}
