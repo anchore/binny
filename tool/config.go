@@ -156,6 +156,20 @@ func (c compositeTool) KeepArchiveFiles() bool {
 	return ok && k.KeepArchiveFiles()
 }
 
+// Fingerprint hashes the install method and its parameters (before templating), which is what decides the installed
+// bytes. The name and the resolved version are not included, they are part of the cache entry path already.
+func (c compositeTool) Fingerprint() string {
+	f, err := hashstructure.Hash(c.config.InstallerConfig, hashstructure.FormatV2, &hashstructure.HashOptions{
+		ZeroNil:      true,
+		SlicesAsSets: true,
+	})
+	if err != nil {
+		panic(fmt.Sprintf("could not hash tool install config: %+v", err))
+	}
+
+	return fmt.Sprintf("%016x", f)
+}
+
 func (c compositeTool) ID() string {
 	f, err := hashstructure.Hash(c.config, hashstructure.FormatV2, &hashstructure.HashOptions{
 		ZeroNil:      true,

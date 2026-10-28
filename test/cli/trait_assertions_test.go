@@ -122,6 +122,16 @@ func assertFileInStoreExists(file string) traitAssertion {
 	}
 }
 
+// assertDirEntryCount checks the number of entries in a dir given relative to the store root.
+func assertDirEntryCount(dir string, count int) traitAssertion {
+	return func(tb testing.TB, storeRoot, _, _ string, _ int) {
+		tb.Helper()
+		entries, err := os.ReadDir(filepath.Join(storeRoot, dir))
+		require.NoError(tb, err)
+		require.Len(tb, entries, count)
+	}
+}
+
 func assertManagedToolOutput(tool string, args []string, expectedStdout string) traitAssertion {
 	return func(tb testing.TB, storeRoot, _, _ string, _ int) {
 		tb.Helper()

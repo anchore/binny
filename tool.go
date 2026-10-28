@@ -21,6 +21,12 @@ type ArchiveFileKeeper interface {
 	KeepArchiveFiles() bool
 }
 
+// Fingerprinter is optionally implemented by a Tool to identify its install method and parameters, so cache entries
+// of the same name and version built from a different config are kept apart.
+type Fingerprinter interface {
+	Fingerprint() string
+}
+
 type VersionResolver interface {
 	ResolveVersion(ctx context.Context, intent VersionIntent) (string, error)
 	UpdateVersion(ctx context.Context, intent VersionIntent) (string, error)

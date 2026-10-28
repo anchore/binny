@@ -237,7 +237,7 @@ func (s *Store) AddToolDir(toolName string, resolvedVersion, dirOutsideRoot, bin
 	targetPath := filepath.Join(s.root, toolName)
 	tmpLink := targetPath + ".binny-link"
 	_ = os.Remove(tmpLink)
-	if err := os.Symlink(filepath.Join(toolDirsName, toolName, binInDir), tmpLink); err != nil {
+	if err := internal.Symlink(filepath.Join(toolDirsName, toolName, binInDir), tmpLink); err != nil {
 		return fmt.Errorf("failed to link %q: %w", targetPath, err)
 	}
 	if err := os.Rename(tmpLink, targetPath); err != nil {
@@ -251,6 +251,53 @@ func (s *Store) AddToolDir(toolName string, resolvedVersion, dirOutsideRoot, bin
 		Digests:          digests,
 		PathInRoot:       toolName,
 		DirInRoot:        filepath.Join(toolDirsName, toolName),
+	}, sha256Hash)
+}
+
+// LinkCacheEntry points root/<name> at the binary of a cache entry by absolute path, so the store keeps working when the
+// checkout moves. It is recorded in the state the same way a copy is.
+func (s *Store) LinkCacheEntry(entry CacheEntry) error {
+	log.WithFields("tool", entry.Name, "entry", entry.Dir).Trace("linking tool to cache entry")
+
+	if err := validateToolName(entry.Name); err != nil {
+		return err
+	}
+
+	if err := s.loadState(); err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(s.root, 0755); err != nil {
+		return err
+	}
+
+	sha256Hash, ok := entry.Digests[internal.SHA256Algorithm]
+	if !ok {
+		return fmt.Errorf("no sha256 digest found for cache entry %q", entry.Dir)
+	}
+
+	// create the link aside and rename it over root/<name> so the replacement is atomic
+	targetPath := filepath.Join(s.root, entry.Name)
+	tmpLink := targetPath + ".binny-link"
+	_ = os.Remove(tmpLink)
+	if err := internal.Symlink(entry.BinPath(), tmpLink); err != nil {
+		return fmt.Errorf("failed to link %q: %w", targetPath, err)
+	}
+	if err := os.Rename(tmpLink, targetPath); err != nil {
+		return err
+	}
+
+	// a previous install may have kept a whole directory for this tool
+	if err := os.RemoveAll(toolDirPath(s.root, entry.Name)); err != nil {
+		return fmt.Errorf("failed to remove previous install dir for %q: %w", entry.Name, err)
+	}
+
+	return s.upsert(StoreEntry{
+		root:             s.root,
+		Name:             entry.Name,
+		InstalledVersion: entry.Version,
+		Digests:          entry.Digests,
+		PathInRoot:       entry.Name,
 	}, sha256Hash)
 }
 
