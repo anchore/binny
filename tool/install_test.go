@@ -24,11 +24,15 @@ type fakeTool struct {
 	param string
 	// installs counts InstallTo calls when set
 	installs *atomic.Int32
+	// local acts like a tool built from a local module
+	local bool
 }
 
 func (f fakeTool) Name() string { return f.name }
 
 func (f fakeTool) KeepArchiveFiles() bool { return f.keep }
+
+func (f fakeTool) BypassesCache() bool { return f.local }
 
 func (f fakeTool) Fingerprint() string { return fmt.Sprintf("keep-%t-%s", f.keep, f.param) }
 
@@ -362,4 +366,21 @@ func TestInstall_cacheRepairsDanglingLink(t *testing.T) {
 	require.NoError(t, Install(context.Background(), tl, intent, store, cache, cfg))
 	assert.EqualValues(t, 2, tl.installs.Load())
 	requireLinkedIntoCache(t, store, cache, tl, "v1", "tsc")
+}
+
+func TestInstall_cacheSkipsLocalModule(t *testing.T) {
+	cache := newCacheForTest(t)
+	store := newStoreForTest(t)
+	tl := fakeTool{name: "tsc", local: true}
+	intent := binny.VersionIntent{Want: "v1"}
+	cfg := VerifyConfig{VerifySHA256Digest: true}
+
+	require.NoError(t, Install(context.Background(), tl, intent, store, cache, cfg))
+
+	assert.NoDirExists(t, filepath.Join(cache.Root(), "tsc"))
+	fi, err := os.Lstat(filepath.Join(store.Root(), "tsc"))
+	require.NoError(t, err)
+	assert.True(t, fi.Mode().IsRegular())
+
+	require.ErrorIs(t, Install(context.Background(), tl, intent, store, cache, cfg), ErrAlreadyInstalled)
 }

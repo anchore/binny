@@ -105,3 +105,23 @@ func TestNew_goBuildResolvesRefsAgainstTheRepo(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, head, got)
 }
+
+func Test_compositeTool_BypassesCache(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		params any
+		want   bool
+	}{
+		{name: "go-install local module", method: goinstall.InstallMethod, params: goinstall.InstallerParameters{Module: "."}, want: true},
+		{name: "go-install remote module", method: goinstall.InstallMethod, params: goinstall.InstallerParameters{Module: "github.com/anchore/binny"}},
+		{name: "go-build local module", method: gobuild.InstallMethod, params: gobuild.InstallerParameters{Module: "."}, want: true},
+		{name: "go-build remote module", method: gobuild.InstallMethod, params: gobuild.InstallerParameters{Module: "github.com/anchore/binny"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tl := compositeTool{config: Config{Name: "binny", InstallerConfig: DetailConfig{Method: tt.method, Parameters: tt.params}}}
+			assert.Equal(t, tt.want, tl.BypassesCache())
+		})
+	}
+}

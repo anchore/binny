@@ -140,6 +140,9 @@ func cacheFingerprint(cache *binny.Cache, t binny.Tool) (string, bool) {
 	if cache == nil {
 		return "", false
 	}
+	if b, ok := t.(binny.CacheBypasser); ok && b.BypassesCache() {
+		return "", false
+	}
 	f, ok := t.(binny.Fingerprinter)
 	if !ok {
 		return "", false

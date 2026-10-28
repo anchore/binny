@@ -27,6 +27,12 @@ type Fingerprinter interface {
 	Fingerprint() string
 }
 
+// CacheBypasser is optionally implemented by a Tool that installs into the store even when the cache is enabled, such
+// as one built from a local module, whose every commit would otherwise add a cache entry nothing else reuses.
+type CacheBypasser interface {
+	BypassesCache() bool
+}
+
 type VersionResolver interface {
 	ResolveVersion(ctx context.Context, intent VersionIntent) (string, error)
 	UpdateVersion(ctx context.Context, intent VersionIntent) (string, error)

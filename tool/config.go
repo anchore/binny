@@ -156,6 +156,17 @@ func (c compositeTool) KeepArchiveFiles() bool {
 	return ok && k.KeepArchiveFiles()
 }
 
+// BypassesCache is true for tools built from a local module (module: .), which resolve to the checkout's commit.
+func (c compositeTool) BypassesCache() bool {
+	switch p := c.config.InstallerConfig.Parameters.(type) {
+	case goinstall.InstallerParameters:
+		return gobuild.IsLocalModule(p.Module)
+	case gobuild.InstallerParameters:
+		return gobuild.IsLocalModule(p.Module)
+	}
+	return false
+}
+
 // Fingerprint hashes the install method and its parameters (before templating), which is what decides the installed
 // bytes. The name and the resolved version are not included, they are part of the cache entry path already.
 func (c compositeTool) Fingerprint() string {
