@@ -101,6 +101,17 @@ func TestInstallCmd(t *testing.T) {
 					},
 				},
 				{
+					// --all is a cobra flag only, so the env var must not satisfy it
+					name: "delete without args ignores BINNY_ALL",
+					root: "store-a",
+					env:  map[string]string{"BINNY_ALL": "true"},
+					args: []string{"cache", "delete"},
+					assertions: []traitAssertion{
+						assertFailingReturnCode,
+						assertDirEntryCount(filepath.Join("..", "cache", "binny", "v0.7.0"), 1),
+					},
+				},
+				{
 					name: "delete all",
 					root: "store-a",
 					args: []string{"cache", "delete", "--all"},
