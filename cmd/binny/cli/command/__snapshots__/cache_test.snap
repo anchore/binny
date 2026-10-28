@@ -1,0 +1,48 @@
+
+[Test_renderCacheListJSON/empty - 1]
+{
+  "entries": []
+}
+
+---
+
+[Test_renderCacheListJSON/entries - 1]
+{
+  "entries": [
+    {
+      "name": "binny",
+      "version": "v0.7.0",
+      "fingerprint": "0123456789abcdef",
+      "size": 12345678,
+      "path": "/cache/binny/binny/v0.7.0/0123456789abcdef"
+    },
+    {
+      "name": "binny",
+      "version": "v0.8.0",
+      "fingerprint": "0123456789abcdef",
+      "size": 900,
+      "path": "/cache/binny/binny/v0.8.0/0123456789abcdef"
+    },
+    {
+      "name": "tsc",
+      "version": "v5.0.0",
+      "fingerprint": "fedcba9876543210",
+      "size": 2048,
+      "path": "/cache/binny/tsc/v5.0.0/fedcba9876543210"
+    }
+  ]
+}
+
+---
+
+[Test_renderCacheListTable/empty - 1]
+no cached tools
+---
+
+[Test_renderCacheListTable/entries - 1]
+ NAME   VERSION  FINGERPRINT       SIZE      PATH                                       
+────────────────────────────────────────────────────────────────────────────────────────
+ binny  v0.7.0   0123456789abcdef  11.8 MiB  /cache/binny/binny/v0.7.0/0123456789abcdef 
+ binny  v0.8.0   0123456789abcdef  900 B     /cache/binny/binny/v0.8.0/0123456789abcdef 
+ tsc    v5.0.0   fedcba9876543210  2.0 KiB   /cache/binny/tsc/v5.0.0/fedcba9876543210   
+---

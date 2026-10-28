@@ -298,13 +298,16 @@ func renderListJSON(statuses []toolStatus, updatesOnly bool, jqCommand string) (
 		statuses = filterToolsWithoutUpdates(statuses)
 	}
 
-	doc := make(map[string]any)
 	if statuses == nil {
 		// always allocate collections
 		statuses = make([]toolStatus, 0)
 	}
-	doc["tools"] = statuses
 
+	return renderJSON(map[string]any{"tools": statuses}, jqCommand)
+}
+
+// renderJSON encodes doc, applying the jq command to it when one is given.
+func renderJSON(doc map[string]any, jqCommand string) (string, error) {
 	buf := bytes.Buffer{}
 	enc := json.NewEncoder(&buf)
 	enc.SetIndent("", "  ")

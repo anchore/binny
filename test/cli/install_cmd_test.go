@@ -16,6 +16,9 @@ func TestInstallCmd(t *testing.T) {
 		assertions []traitAssertion
 	}
 
+	// output of one step compared against a later one
+	var cacheListOutput string
+
 	tests := []struct {
 		name string
 		// cache enables the cache for every step, rooted at "cache" within the test dir
@@ -67,6 +70,24 @@ func TestInstallCmd(t *testing.T) {
 						assertSuccessfulReturnCode,
 						assertManagedToolOutput("binny", []string{"--version"}, "binny v0.7.0\n"),
 						assertDirEntryCount(filepath.Join("..", "cache", "binny", "v0.7.0"), 1),
+					},
+				},
+				{
+					name: "list cache",
+					args: []string{"cache", "list", "-o", "json"},
+					assertions: []traitAssertion{
+						assertSuccessfulReturnCode,
+						assertJson,
+						assertCacheListHasOneEntry("binny", "v0.7.0"),
+						captureStdout(&cacheListOutput),
+					},
+				},
+				{
+					name: "list cache with alias",
+					args: []string{"cache", "ls", "-o", "json"},
+					assertions: []traitAssertion{
+						assertSuccessfulReturnCode,
+						assertStdoutEquals(&cacheListOutput),
 					},
 				},
 			},

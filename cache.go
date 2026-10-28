@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/anchore/binny/internal/log"
@@ -163,6 +164,87 @@ func (c Cache) Add(name, version, fingerprint, stagedDir, binPath string, keepAr
 	}
 
 	return c.Get(name, version, fingerprint)
+}
+
+// List returns every entry in the cache sorted by name then version, without verifying them. A cache root that does
+// not exist has no entries.
+func (c Cache) List() ([]CacheEntry, error) {
+	var entries []CacheEntry
+	names, err := readDirNames(c.root)
+	if err != nil {
+		return nil, err
+	}
+	for _, name := range names {
+		if name == cacheStagingDirName {
+			continue
+		}
+		versions, err := readDirNames(filepath.Join(c.root, name))
+		if err != nil {
+			return nil, err
+		}
+		for _, escapedVersion := range versions {
+			version, err := url.PathUnescape(escapedVersion)
+			if err != nil {
+				return nil, fmt.Errorf("unexpected version dir %q in the cache: %w", escapedVersion, err)
+			}
+			fingerprints, err := readDirNames(filepath.Join(c.root, name, escapedVersion))
+			if err != nil {
+				return nil, err
+			}
+			for _, fingerprint := range fingerprints {
+				entries = append(entries, CacheEntry{
+					Name:        name,
+					Version:     version,
+					Fingerprint: fingerprint,
+					Dir:         c.EntryDir(name, version, fingerprint),
+				})
+			}
+		}
+	}
+
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].Name != entries[j].Name {
+			return entries[i].Name < entries[j].Name
+		}
+		return entries[i].Version < entries[j].Version
+	})
+
+	return entries, nil
+}
+
+// readDirNames returns the names of the dirs within dir, and nothing when dir does not exist.
+func readDirNames(dir string) ([]string, error) {
+	des, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, de := range des {
+		if de.IsDir() {
+			names = append(names, de.Name())
+		}
+	}
+	return names, nil
+}
+
+// Size is the sum of the sizes of the files in the entry.
+func (e CacheEntry) Size() (int64, error) {
+	var size int64
+	err := filepath.WalkDir(e.Dir, func(_ string, d os.DirEntry, err error) error {
+		if err != nil || !d.Type().IsRegular() {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		size += info.Size()
+		return nil
+	})
+	return size, err
 }
 
 func writeCacheEntryMetadata(entryDir, binInDir string, keepArchiveFiles bool) error {
