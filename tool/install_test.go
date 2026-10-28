@@ -2,6 +2,8 @@ package tool
 
 import (
 	"context"
+	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,11 +11,13 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/anchore/binny"
+	"github.com/anchore/binny/internal"
 )
 
 // fakeTool installs an archive-like tree with the binary next to a file it reads relative to itself
@@ -383,4 +387,66 @@ func TestInstall_cacheSkipsLocalModule(t *testing.T) {
 	assert.True(t, fi.Mode().IsRegular())
 
 	require.ErrorIs(t, Install(context.Background(), tl, intent, store, cache, cfg), ErrAlreadyInstalled)
+}
+
+var errLinkRefused = errors.New("symlinks refused")
+
+// refuseLinks makes every symlink binny creates fail, the way windows does without developer mode.
+func refuseLinks(t *testing.T) {
+	t.Helper()
+	orig := internal.Symlink
+	internal.Symlink = func(string, string) error { return errLinkRefused }
+	t.Cleanup(func() { internal.Symlink = orig })
+}
+
+func TestInstall_cacheLinkFailsCopies(t *testing.T) {
+	refuseLinks(t)
+	cache := newCacheForTest(t)
+	store := newStoreForTest(t)
+	tl := fakeTool{name: "tsc", installs: &atomic.Int32{}}
+
+	require.NoError(t, Install(context.Background(), tl, binny.VersionIntent{Want: "v1"}, store, cache, VerifyConfig{VerifySHA256Digest: true}))
+	assert.EqualValues(t, 1, tl.installs.Load())
+
+	path := filepath.Join(store.Root(), "tsc")
+	fi, err := os.Lstat(path)
+	require.NoError(t, err)
+	require.True(t, fi.Mode().IsRegular())
+
+	entry, err := cache.Get("tsc", "v1", tl.Fingerprint())
+	require.NoError(t, err)
+	require.NotNil(t, entry)
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, entry.Digests["sha256"], fmt.Sprintf("%x", sha256.Sum256(got)))
+}
+
+func TestInstall_cacheLinkFailsKeepsCopy(t *testing.T) {
+	refuseLinks(t)
+	cache := newCacheForTest(t)
+	store := newStoreForTest(t)
+	tl := fakeTool{name: "tsc", installs: &atomic.Int32{}}
+	intent := binny.VersionIntent{Want: "v1"}
+	cfg := VerifyConfig{VerifySHA256Digest: true}
+
+	require.NoError(t, Install(context.Background(), tl, intent, store, cache, cfg))
+
+	// backdate the copy so a rewrite would show in its mtime
+	path := filepath.Join(store.Root(), "tsc")
+	past := time.Now().Add(-time.Hour).Truncate(time.Second)
+	require.NoError(t, os.Chtimes(path, past, past))
+
+	require.ErrorIs(t, Install(context.Background(), tl, intent, store, cache, cfg), ErrAlreadyInstalled)
+	fi, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, past, fi.ModTime())
+	assert.EqualValues(t, 1, tl.installs.Load())
+}
+
+func TestInstall_cacheLinkFailsKeepArchiveFiles(t *testing.T) {
+	refuseLinks(t)
+	cache := newCacheForTest(t)
+
+	err := Install(context.Background(), fakeTool{name: "tsc", keep: true}, binny.VersionIntent{Want: "v1"}, newStoreForTest(t), cache, VerifyConfig{})
+	require.ErrorIs(t, err, errLinkRefused)
 }

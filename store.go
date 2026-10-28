@@ -281,7 +281,12 @@ func (s *Store) LinkCacheEntry(entry CacheEntry) error {
 	tmpLink := targetPath + ".binny-link"
 	_ = os.Remove(tmpLink)
 	if err := internal.Symlink(entry.BinPath(), tmpLink); err != nil {
-		return fmt.Errorf("failed to link %q: %w", targetPath, err)
+		// a tool that reads files beside itself has no working layout without the link
+		if entry.KeepArchiveFiles {
+			return fmt.Errorf("failed to link %q: %w", targetPath, err)
+		}
+		log.WithFields("tool", entry.Name, "error", err).Debug("unable to link to the cache, copying instead")
+		return s.copyCacheEntry(entry)
 	}
 	if err := os.Rename(tmpLink, targetPath); err != nil {
 		return err
@@ -299,6 +304,32 @@ func (s *Store) LinkCacheEntry(entry CacheEntry) error {
 		Digests:          entry.Digests,
 		PathInRoot:       entry.Name,
 	}, sha256Hash)
+}
+
+// copyCacheEntry puts a copy of the entry's binary at root/<name>, for systems that refuse symlinks.
+func (s *Store) copyCacheEntry(entry CacheEntry) error {
+	src, err := os.Open(entry.BinPath())
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+
+	// stage the copy within the store so moving it into place is atomic
+	dst, err := os.CreateTemp(s.root, fmt.Sprintf(".binny-copy-%s-", entry.Name))
+	if err != nil {
+		return err
+	}
+	defer os.Remove(dst.Name())
+
+	if _, err := io.Copy(dst, src); err != nil {
+		dst.Close()
+		return fmt.Errorf("failed to copy %q: %w", entry.BinPath(), err)
+	}
+	if err := dst.Close(); err != nil {
+		return err
+	}
+
+	return s.AddTool(entry.Name, entry.Version, dst.Name())
 }
 
 // kept install dirs live under their own dir in the store so they can never collide with a tool's binary path

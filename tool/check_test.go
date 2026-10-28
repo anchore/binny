@@ -93,3 +93,30 @@ func Test_check_cacheCopy(t *testing.T) {
 	require.ErrorContains(t, err, `"tsc"`)
 	require.ErrorContains(t, err, "copy")
 }
+
+func Test_check_cacheFallbackCopy(t *testing.T) {
+	cacheRoot := t.TempDir()
+	newCache := func() *binny.Cache {
+		cache, err := binny.NewCache(cacheRoot)
+		require.NoError(t, err)
+		return cache
+	}
+	store := newStoreForTest(t)
+	tl := fakeTool{name: "tsc"}
+	cfg := VerifyConfig{VerifySHA256Digest: true}
+
+	t.Run("links fail", func(t *testing.T) {
+		refuseLinks(t)
+		require.NoError(t, Install(context.Background(), tl, binny.VersionIntent{Want: "v1"}, store, newCache(), cfg))
+		require.NoError(t, Check(store, newCache(), tl, "v1", cfg))
+	})
+
+	t.Run("links work", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("requires symlinks")
+		}
+		err := Check(store, newCache(), tl, "v1", cfg)
+		require.ErrorContains(t, err, `"tsc"`)
+		require.ErrorContains(t, err, "copy")
+	})
+}

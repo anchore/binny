@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/anchore/binny"
+	"github.com/anchore/binny/internal"
 )
 
 type VerifyConfig struct {
@@ -68,6 +69,10 @@ func checkCacheLayout(cache *binny.Cache, t binny.Tool, entry *binny.StoreEntry,
 	}
 
 	if !linkedOut {
+		// where symlinks are refused, a copy of the current entry is what the install leaves
+		if entry.DirInRoot == "" && !cache.LinksWork() && isCopyOfCacheEntry(cache, entry, resolvedVersion, fingerprint) {
+			return false, nil
+		}
 		return false, fmt.Errorf("tool %q is installed as a copy in the store, not linked into the cache", t.Name())
 	}
 
@@ -83,4 +88,15 @@ func checkCacheLayout(cache *binny.Cache, t binny.Tool, entry *binny.StoreEntry,
 	}
 
 	return true, nil
+}
+
+// isCopyOfCacheEntry reports whether the store entry's file has the xxh64 of the cache entry at the fingerprint.
+func isCopyOfCacheEntry(cache *binny.Cache, entry *binny.StoreEntry, resolvedVersion, fingerprint string) bool {
+	cached, err := cache.Get(entry.Name, resolvedVersion, fingerprint)
+	if err != nil || cached == nil {
+		return false
+	}
+	want, ok := cached.Digests[internal.XXH64Algorithm]
+	// the recorded digest has to match the cache entry's, and the file has to match the recorded digest
+	return ok && entry.Digests[internal.XXH64Algorithm] == want && entry.Verify(true, false) == nil
 }

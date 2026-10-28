@@ -10,7 +10,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
+	"github.com/anchore/binny/internal"
 	"github.com/anchore/binny/internal/log"
 )
 
@@ -18,7 +20,9 @@ import (
 // machine instead of once per checkout. Each entry lives at <root>/<name>/<version>/<fingerprint>/ and is never
 // changed once it is in place: installs stage under <root>/.tmp/ and rename into place, and the first rename wins.
 type Cache struct {
-	root string
+	root      string
+	probeOnce sync.Once
+	linksWork bool
 }
 
 // CacheEntry is one installed tool in the cache.
@@ -53,17 +57,17 @@ func NewCache(root string) (*Cache, error) {
 	return &Cache{root: abs}, nil
 }
 
-func (c Cache) Root() string {
+func (c *Cache) Root() string {
 	return c.root
 }
 
 // StagingRoot is where installs are staged, on the same filesystem as the entries so the final rename is atomic.
-func (c Cache) StagingRoot() string {
+func (c *Cache) StagingRoot() string {
 	return filepath.Join(c.root, cacheStagingDirName)
 }
 
 // EntryDir is the absolute path an entry for the given tool, version and fingerprint lives at, whether or not it exists.
-func (c Cache) EntryDir(name, version, fingerprint string) string {
+func (c *Cache) EntryDir(name, version, fingerprint string) string {
 	// a resolved version can be a git ref with a slash in it (cli/v2.0.0), which must stay one path element
 	return filepath.Join(c.root, name, url.PathEscape(version), fingerprint)
 }
@@ -75,7 +79,7 @@ func (e CacheEntry) BinPath() string {
 
 // Get returns the entry for the given tool, version and fingerprint, or nil when there is none. An entry whose binary
 // does not match its recorded digests is an error and is left in place: only `binny cache delete` removes entries.
-func (c Cache) Get(name, version, fingerprint string) (*CacheEntry, error) {
+func (c *Cache) Get(name, version, fingerprint string) (*CacheEntry, error) {
 	if err := validateCacheKey(name, url.PathEscape(version), fingerprint); err != nil {
 		return nil, err
 	}
@@ -116,7 +120,7 @@ func (e *CacheEntry) verify() error {
 // Add moves an install staged under StagingRoot into the cache as an entry and returns it. With keepArchiveFiles the
 // whole staged dir becomes the entry, otherwise only the binary does. If another install put the same entry in place
 // first, that entry is returned and the staged copy is left for the caller to clean up.
-func (c Cache) Add(name, version, fingerprint, stagedDir, binPath string, keepArchiveFiles bool) (*CacheEntry, error) {
+func (c *Cache) Add(name, version, fingerprint, stagedDir, binPath string, keepArchiveFiles bool) (*CacheEntry, error) {
 	log.WithFields("tool", name, "version", version, "fingerprint", fingerprint).Trace("adding tool to cache")
 
 	if err := validateCacheKey(name, url.PathEscape(version), fingerprint); err != nil {
@@ -166,9 +170,38 @@ func (c Cache) Add(name, version, fingerprint, stagedDir, binPath string, keepAr
 	return c.Get(name, version, fingerprint)
 }
 
+// LinksWork reports whether symlinks can be created here, by creating and removing one under the staging root. The
+// probe runs once per Cache value.
+func (c *Cache) LinksWork() bool {
+	c.probeOnce.Do(func() {
+		c.linksWork = c.probeLinks()
+	})
+	return c.linksWork
+}
+
+func (c *Cache) probeLinks() bool {
+	if err := os.MkdirAll(c.StagingRoot(), 0755); err != nil {
+		// unknown, and an install will fail on the same dir anyway
+		log.WithFields("error", err).Debug("unable to probe for symlink support")
+		return true
+	}
+	dir, err := os.MkdirTemp(c.StagingRoot(), "link-probe-")
+	if err != nil {
+		log.WithFields("error", err).Debug("unable to probe for symlink support")
+		return true
+	}
+	defer os.RemoveAll(dir)
+
+	err = internal.Symlink(dir, filepath.Join(dir, "link"))
+	if err != nil {
+		log.WithFields("error", err).Debug("symlinks are not supported, tools are copied from the cache")
+	}
+	return err == nil
+}
+
 // List returns every entry in the cache sorted by name then version, without verifying them. A cache root that does
 // not exist has no entries.
-func (c Cache) List() ([]CacheEntry, error) {
+func (c *Cache) List() ([]CacheEntry, error) {
 	var entries []CacheEntry
 	names, err := readDirNames(c.root)
 	if err != nil {

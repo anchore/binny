@@ -1,12 +1,16 @@
 package binny
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/anchore/binny/internal"
 )
 
 // addCacheEntryForTest puts a single-binary entry in the cache the way an install does.
@@ -57,5 +61,35 @@ func TestCache_List(t *testing.T) {
 			assert.Positive(t, size)
 		}
 		assert.Equal(t, []string{"binny@cli/v1/aaaa", "binny@v1/aaaa", "binny@v2/aaaa", "tsc@v1/bbbb"}, got)
+	})
+}
+
+func TestCache_linkProbe(t *testing.T) {
+	staged := func(t *testing.T, cache *Cache) []os.DirEntry {
+		t.Helper()
+		des, err := os.ReadDir(cache.StagingRoot())
+		require.NoError(t, err)
+		return des
+	}
+
+	t.Run("links work", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("requires symlinks")
+		}
+		cache, err := NewCache(t.TempDir())
+		require.NoError(t, err)
+		assert.True(t, cache.LinksWork())
+		assert.Empty(t, staged(t, cache))
+	})
+
+	t.Run("links fail", func(t *testing.T) {
+		orig := internal.Symlink
+		internal.Symlink = func(string, string) error { return errors.New("symlinks refused") }
+		t.Cleanup(func() { internal.Symlink = orig })
+
+		cache, err := NewCache(t.TempDir())
+		require.NoError(t, err)
+		assert.False(t, cache.LinksWork())
+		assert.Empty(t, staged(t, cache))
 	})
 }
