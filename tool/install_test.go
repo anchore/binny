@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -135,7 +136,7 @@ func requireLinkedIntoCache(t *testing.T, store *binny.Store, cache *binny.Cache
 
 	target, err := os.Readlink(path)
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(cache.Root(), tl.name, version, tl.Fingerprint(), binInEntry), target)
+	assert.Equal(t, filepath.Join(cache.EntryDir(tl.name, version, tl.Fingerprint()), binInEntry), target)
 
 	resolved, err := filepath.EvalSymlinks(path)
 	require.NoError(t, err)
@@ -200,8 +201,11 @@ func TestInstall_cacheConcurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := range stores {
 		stores[i] = newStoreForTest(t)
+		// each checkout runs its own binny process, with its own Cache value over the shared root
+		own, err := binny.NewCache(cache.Root())
+		require.NoError(t, err)
 		wg.Go(func() {
-			errs[i] = Install(context.Background(), tl, binny.VersionIntent{Want: "v1"}, stores[i], cache, cfg)
+			errs[i] = Install(context.Background(), tl, binny.VersionIntent{Want: "v1"}, stores[i], own, cfg)
 		})
 	}
 	wg.Wait()
@@ -275,6 +279,7 @@ func TestInstall_cacheCorruptEntryFails(t *testing.T) {
 
 	entryDir := filepath.Join(cache.Root(), "tsc", "v1", tl.Fingerprint())
 	bin := filepath.Join(entryDir, "tsc")
+	require.NoError(t, os.Chmod(bin, 0o755))
 	require.NoError(t, os.WriteFile(bin, []byte("tampered"), 0o755))
 
 	err := Install(context.Background(), tl, intent, newStoreForTest(t), cache, cfg)
@@ -287,12 +292,11 @@ func TestInstall_cacheCorruptEntryFails(t *testing.T) {
 }
 
 func TestInstall_cacheDisabled(t *testing.T) {
-	cacheRoot := filepath.Join(t.TempDir(), "cache")
 	store := newStoreForTest(t)
 
+	// a disabled cache is nil (option.Cache.Build), so nothing here can touch a cache root
 	require.NoError(t, Install(context.Background(), fakeTool{name: "tsc"}, binny.VersionIntent{Want: "v1"}, store, nil, VerifyConfig{}))
 
-	assert.NoDirExists(t, cacheRoot)
 	fi, err := os.Lstat(filepath.Join(store.Root(), "tsc"))
 	require.NoError(t, err)
 	assert.True(t, fi.Mode().IsRegular())
@@ -331,6 +335,48 @@ func TestInstall_cacheConvertsCopy(t *testing.T) {
 	// enabling the cache turns the copy into a link on the next install
 	require.NoError(t, Install(context.Background(), tl, intent, store, cache, cfg))
 	requireLinkedIntoCache(t, store, cache, tl, "v1", "tsc")
+}
+
+func TestInstall_cacheConvertsKeptDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires symlinks")
+	}
+	cache := newCacheForTest(t)
+	store := newStoreForTest(t)
+	keeper := fakeTool{name: "tsc", keep: true}
+	intent := binny.VersionIntent{Want: "v1"}
+	cfg := VerifyConfig{VerifySHA256Digest: true}
+	keptDir := filepath.Join(store.Root(), ".binny-dirs", "tsc")
+
+	require.NoError(t, Install(context.Background(), keeper, intent, store, nil, cfg))
+	require.DirExists(t, keptDir)
+
+	// enabling the cache moves the tool into the cache and removes the store's kept dir
+	require.NoError(t, Install(context.Background(), keeper, intent, store, cache, cfg))
+	resolved := requireLinkedIntoCache(t, store, cache, keeper, "v1", filepath.Join("package", "lib", "tsc"))
+	assert.FileExists(t, filepath.Join(filepath.Dir(resolved), "lib.d.ts"))
+	assert.NoDirExists(t, keptDir)
+	require.ErrorIs(t, Install(context.Background(), keeper, intent, store, cache, cfg), ErrAlreadyInstalled)
+}
+
+func TestInstall_cacheVersionWithSlash(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires symlinks")
+	}
+	cache := newCacheForTest(t)
+	store := newStoreForTest(t)
+	tl := fakeTool{name: "tsc", installs: &atomic.Int32{}}
+	intent := binny.VersionIntent{Want: "cli/v2.0.0"}
+	cfg := VerifyConfig{VerifySHA256Digest: true}
+
+	require.NoError(t, Install(context.Background(), tl, intent, store, cache, cfg))
+	requireLinkedIntoCache(t, store, cache, tl, "cli/v2.0.0", "tsc")
+	require.NoError(t, Check(store, cache, tl, "cli/v2.0.0", cfg))
+	require.ErrorIs(t, Install(context.Background(), tl, intent, store, cache, cfg), ErrAlreadyInstalled)
+
+	// and a second store reuses the entry
+	require.NoError(t, Install(context.Background(), tl, intent, newStoreForTest(t), cache, cfg))
+	assert.EqualValues(t, 1, tl.installs.Load())
 }
 
 func TestInstall_cacheDisabledConvertsLink(t *testing.T) {
@@ -441,6 +487,35 @@ func TestInstall_cacheLinkFailsKeepsCopy(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, past, fi.ModTime())
 	assert.EqualValues(t, 1, tl.installs.Load())
+}
+
+func TestInstall_cacheLinkFailsOnlyInStore(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires symlinks")
+	}
+	cache := newCacheForTest(t)
+	store := newStoreForTest(t)
+	tl := fakeTool{name: "tsc", installs: &atomic.Int32{}}
+	intent := binny.VersionIntent{Want: "v1"}
+	cfg := VerifyConfig{VerifySHA256Digest: true}
+
+	// symlink support is per filesystem: the store's refuses them (exFAT, SMB) while the cache's allows them
+	orig := internal.Symlink
+	internal.Symlink = func(oldname, newname string) error {
+		if strings.HasPrefix(newname, store.Root()) {
+			return errLinkRefused
+		}
+		return orig(oldname, newname)
+	}
+	t.Cleanup(func() { internal.Symlink = orig })
+
+	require.NoError(t, Install(context.Background(), tl, intent, store, cache, cfg))
+
+	// a later binny run accepts the copy instead of copying again
+	reopened, err := binny.NewStore(store.Root())
+	require.NoError(t, err)
+	require.NoError(t, Check(reopened, cache, tl, "v1", cfg))
+	require.ErrorIs(t, Install(context.Background(), tl, intent, reopened, cache, cfg), ErrAlreadyInstalled)
 }
 
 func TestInstall_cacheLinkFailsKeepArchiveFiles(t *testing.T) {

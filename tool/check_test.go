@@ -91,7 +91,24 @@ func Test_check_cacheCopy(t *testing.T) {
 
 	err := Check(store, cache, fakeTool{name: "tsc"}, "v1", cfg)
 	require.ErrorContains(t, err, `"tsc"`)
-	require.ErrorContains(t, err, "copy")
+	require.ErrorContains(t, err, "not linked into the cache")
+}
+
+func Test_check_cacheStoreKeptDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires symlinks")
+	}
+	cache := newCacheForTest(t)
+	store := newStoreForTest(t)
+	keeper := fakeTool{name: "tsc", keep: true}
+	cfg := VerifyConfig{VerifySHA256Digest: true}
+
+	// a keep-archive-files install without the cache links into the store's own kept dir, not into the cache
+	require.NoError(t, Install(context.Background(), keeper, binny.VersionIntent{Want: "v1"}, store, nil, cfg))
+
+	err := Check(store, cache, keeper, "v1", cfg)
+	require.ErrorContains(t, err, `"tsc"`)
+	require.ErrorContains(t, err, "not linked into the cache")
 }
 
 func Test_check_cacheFallbackCopy(t *testing.T) {
@@ -115,8 +132,11 @@ func Test_check_cacheFallbackCopy(t *testing.T) {
 		if runtime.GOOS == "windows" {
 			t.Skip("requires symlinks")
 		}
-		err := Check(store, newCache(), tl, "v1", cfg)
+		// a later binny run probes the store again
+		reopened, err := binny.NewStore(store.Root())
+		require.NoError(t, err)
+		err = Check(reopened, newCache(), tl, "v1", cfg)
 		require.ErrorContains(t, err, `"tsc"`)
-		require.ErrorContains(t, err, "copy")
+		require.ErrorContains(t, err, "not linked into the cache")
 	})
 }

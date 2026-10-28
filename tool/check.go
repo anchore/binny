@@ -26,7 +26,7 @@ func Check(store *binny.Store, cache *binny.Cache, t binny.Tool, resolvedVersion
 		return fmt.Errorf("tool %q not installed", toolName)
 	}
 
-	linked, err := checkCacheLayout(cache, t, entry, resolvedVersion)
+	linked, err := checkCacheLayout(store, cache, t, entry, resolvedVersion)
 	if err != nil {
 		return err
 	}
@@ -52,7 +52,7 @@ func keepsArchiveFiles(t binny.Tool) bool {
 // checkCacheLayout reports whether the store entry is a link to the tool's current cache entry. An entry whose layout
 // does not match the cache setting is an error, so the next install converts it: a copy while the cache is used, a
 // link into the cache while it is not, or a link to another fingerprint's entry of the same name and version.
-func checkCacheLayout(cache *binny.Cache, t binny.Tool, entry *binny.StoreEntry, resolvedVersion string) (bool, error) {
+func checkCacheLayout(store *binny.Store, cache *binny.Cache, t binny.Tool, entry *binny.StoreEntry, resolvedVersion string) (bool, error) {
 	fi, err := os.Lstat(entry.Path())
 	if err != nil {
 		return false, fmt.Errorf("failed to validate tool %q: %w", t.Name(), err)
@@ -69,11 +69,13 @@ func checkCacheLayout(cache *binny.Cache, t binny.Tool, entry *binny.StoreEntry,
 	}
 
 	if !linkedOut {
-		// where symlinks are refused, a copy of the current entry is what the install leaves
-		if entry.DirInRoot == "" && !cache.LinksWork() && isCopyOfCacheEntry(cache, entry, resolvedVersion, fingerprint) {
+		// where symlinks are refused, a copy of the current entry is what the install leaves. The probe makes and
+		// removes a temp dir in the store root, so even `binny check` and `binny list` write there once, but only for
+		// a copy that matches the cache entry.
+		if entry.DirInRoot == "" && isCopyOfCacheEntry(cache, entry, resolvedVersion, fingerprint) && !store.LinksWork() {
 			return false, nil
 		}
-		return false, fmt.Errorf("tool %q is installed as a copy in the store, not linked into the cache", t.Name())
+		return false, fmt.Errorf("tool %q is installed in the store, not linked into the cache", t.Name())
 	}
 
 	target, err := os.Readlink(entry.Path())
@@ -81,22 +83,23 @@ func checkCacheLayout(cache *binny.Cache, t binny.Tool, entry *binny.StoreEntry,
 		return false, err
 	}
 
-	// the install writes the absolute entry path, so this is a string comparison without resolving symlinks
+	// the install writes the absolute entry path, so this is a string comparison without resolving symlinks. The target
+	// is cleaned first, so one that climbs back out of the entry with .. does not match.
 	entryDir := cache.EntryDir(t.Name(), resolvedVersion, fingerprint)
-	if !strings.HasPrefix(target, entryDir+string(filepath.Separator)) {
+	if !strings.HasPrefix(filepath.Clean(target), entryDir+string(filepath.Separator)) {
 		return false, fmt.Errorf("tool %q is linked to %q, not to the cache entry for its current config %q", t.Name(), target, entryDir)
 	}
 
 	return true, nil
 }
 
-// isCopyOfCacheEntry reports whether the store entry's file has the xxh64 of the cache entry at the fingerprint.
+// isCopyOfCacheEntry reports whether the store entry recorded the same xxh64 as the cache entry at the fingerprint. It
+// compares recorded digests only: Check hashes the store file right after.
 func isCopyOfCacheEntry(cache *binny.Cache, entry *binny.StoreEntry, resolvedVersion, fingerprint string) bool {
 	cached, err := cache.Get(entry.Name, resolvedVersion, fingerprint)
 	if err != nil || cached == nil {
 		return false
 	}
 	want, ok := cached.Digests[internal.XXH64Algorithm]
-	// the recorded digest has to match the cache entry's, and the file has to match the recorded digest
-	return ok && entry.Digests[internal.XXH64Algorithm] == want && entry.Verify(true, false) == nil
+	return ok && entry.Digests[internal.XXH64Algorithm] == want
 }

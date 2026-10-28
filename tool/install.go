@@ -96,10 +96,16 @@ func installThroughCache(ctx context.Context, tool binny.Tool, resolvedVersion, 
 		return err
 	}
 
-	if entry == nil {
+	if entry != nil {
+		log.WithFields("tool", tool.Name(), "version", resolvedVersion, "entry", entry.Dir).Debug("using cached install")
+		stage.Set("verifying")
+		if err := entry.Verify(); err != nil {
+			return err
+		}
+	} else {
 		log.WithFields("tool", tool.Name(), "version", resolvedVersion).Info("installing")
 
-		tmpdir, cleanup, err := makeStagingArea(cache.StagingRoot(), tool.Name())
+		tmpdir, cleanup, err := cache.Stage(tool.Name())
 		defer cleanup()
 		if err != nil {
 			return err
@@ -116,12 +122,11 @@ func installThroughCache(ctx context.Context, tool binny.Tool, resolvedVersion, 
 
 		stage.Set("caching")
 
+		// a fresh entry needs no verify, its digests were just computed from these bytes
 		entry, err = cache.Add(tool.Name(), resolvedVersion, fingerprint, tmpdir, binPath, keepsArchiveFiles(tool))
 		if err != nil {
 			return err
 		}
-	} else {
-		log.WithFields("tool", tool.Name(), "version", resolvedVersion, "entry", entry.Dir).Debug("using cached install")
 	}
 
 	stage.Set("linking")
@@ -145,14 +150,14 @@ func cacheFingerprint(cache *binny.Cache, t binny.Tool) (string, bool) {
 	}
 	f, ok := t.(binny.Fingerprinter)
 	if !ok {
+		log.WithFields("tool", t.Name()).Debug("tool has no fingerprint, the cache is not used for it")
 		return "", false
 	}
 	return f.Fingerprint(), true
 }
 
-// makeStagingArea creates a temporary directory within the given root (the store root, or the cache's staging root)
-// to stage the installation of a tool. A valid function should always be returned for cleanup, even if an error is
-// returned.
+// makeStagingArea creates a temporary directory within the store root to stage the installation of a tool. A valid
+// function should always be returned for cleanup, even if an error is returned.
 func makeStagingArea(root string, toolName string) (string, func(), error) {
 	cleanup := func() {}
 	// note: we choose a staging directory that is within the store to ensure the final move is atomic

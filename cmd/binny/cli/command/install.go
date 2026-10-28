@@ -66,7 +66,7 @@ func runInstall(ctx context.Context, cmdCfg InstallConfig, names []string) error
 		return err
 	}
 
-	cache, err := cmdCfg.Cache.Get()
+	cache, err := cmdCfg.Cache.Build()
 	if err != nil {
 		return err
 	}

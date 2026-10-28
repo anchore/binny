@@ -10,6 +10,7 @@ import (
 
 	"github.com/anchore/binny"
 	"github.com/anchore/binny/cmd/binny/cli/option"
+	"github.com/anchore/binny/internal/log"
 	"github.com/anchore/clio"
 )
 
@@ -51,10 +52,7 @@ func CacheList(app clio.Application) *cobra.Command {
 		},
 		Args: cobra.NoArgs,
 		PreRunE: func(_ *cobra.Command, _ []string) error {
-			if cfg.JQCommand != "" && cfg.Output != formatJSON {
-				return fmt.Errorf("--jq can only be used when --output format is 'json'")
-			}
-			return nil
+			return cfg.CheckJQ()
 		},
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runCacheList(*cfg)
@@ -66,8 +64,9 @@ type cacheEntryInfo struct {
 	Name        string `json:"name"`
 	Version     string `json:"version"`
 	Fingerprint string `json:"fingerprint"`
-	Size        int64  `json:"size"` // in bytes
-	Path        string `json:"path"`
+	// Size is in bytes
+	Size int64  `json:"size"`
+	Path string `json:"path"`
 }
 
 func runCacheList(cfg CacheListConfig) error {
@@ -85,7 +84,9 @@ func runCacheList(cfg CacheListConfig) error {
 	for _, e := range entries {
 		size, err := e.Size()
 		if err != nil {
-			return err
+			// like an entry whose metadata cannot be read, so one entry cannot hide every other
+			log.WithFields("entry", e.Dir, "error", err).Warn("skipping cache entry whose size cannot be read")
+			continue
 		}
 		infos = append(infos, cacheEntryInfo{
 			Name:        e.Name,
@@ -120,7 +121,7 @@ func renderCacheListTable(entries []cacheEntryInfo) string {
 	t.Style().Options.DrawBorder = false
 	t.Style().Options.SeparateColumns = false
 
-	t.AppendHeader(table.Row{"Name", "Version", "Fingerprint", "Size", "Path"})
+	t.AppendHeader(table.Row{columnTool, "Version", "Fingerprint", "Size", "Path"})
 	for _, e := range entries {
 		t.AppendRow(table.Row{e.Name, e.Version, e.Fingerprint, formatSize(e.Size), e.Path})
 	}
@@ -143,8 +144,7 @@ func formatSize(size int64) string {
 }
 
 type CacheDeleteConfig struct {
-	Cache              option.Cache `json:"cache" yaml:"cache" mapstructure:"cache"`
-	option.CacheDelete `json:"" yaml:",inline" mapstructure:",squash"`
+	Cache option.Cache `json:"cache" yaml:"cache" mapstructure:"cache"`
 }
 
 func CacheDelete(app clio.Application) *cobra.Command {
@@ -152,18 +152,23 @@ func CacheDelete(app clio.Application) *cobra.Command {
 		Cache: option.DefaultCache(),
 	}
 
-	var refs []binny.CacheRef
+	var (
+		refs []binny.CacheRef
+		// a plain flag rather than config, so no env var or config file can turn a delete into deleting everything
+		all bool
+	)
 
-	return app.SetupCommand(&cobra.Command{
+	cmd := app.SetupCommand(&cobra.Command{
 		Use:   "delete [NAME[@VERSION]...]",
 		Short: "Delete tools from the cache",
-		Long: "Delete every cached entry of a tool by NAME, or only those at one version with NAME@VERSION. Stores " +
-			"that linked to a deleted entry install it again on their next `binny install`.",
+		Long: "Delete every cached entry of a tool by NAME, or only those at one version with NAME@VERSION. A store " +
+			"that linked to a deleted entry is left with a dangling link until its next `binny install` installs the " +
+			"tool again. Only entries binny created are removed, so nothing else under cache.root is touched.",
 		PreRunE: func(_ *cobra.Command, args []string) error {
 			switch {
-			case cfg.All && len(args) > 0:
+			case all && len(args) > 0:
 				return errors.New("--all cannot be used with tool names")
-			case !cfg.All && len(args) == 0:
+			case !all && len(args) == 0:
 				return errors.New("give at least one tool to delete, or --all")
 			}
 			var err error
@@ -175,12 +180,16 @@ func CacheDelete(app clio.Application) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if cfg.All {
+			if all {
 				return cache.DeleteAll()
 			}
 			return cache.Delete(refs...)
 		},
 	}, cfg)
+
+	cmd.Flags().BoolVar(&all, "all", false, "Delete every tool in the cache, and any staging dirs left by installs that did not finish")
+
+	return cmd
 }
 
 func parseCacheRefs(args []string) ([]binny.CacheRef, error) {

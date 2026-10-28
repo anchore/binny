@@ -22,7 +22,8 @@ type ArchiveFileKeeper interface {
 }
 
 // Fingerprinter is optionally implemented by a Tool to identify its install method and parameters, so cache entries
-// of the same name and version built from a different config are kept apart.
+// of the same name and version built from a different config are kept apart. A tool that does not implement it is
+// installed into the store even when the cache is enabled.
 type Fingerprinter interface {
 	Fingerprint() string
 }

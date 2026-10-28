@@ -2,6 +2,7 @@ package tool
 
 import (
 	"fmt"
+	"runtime"
 
 	"github.com/mitchellh/hashstructure/v2"
 
@@ -167,10 +168,26 @@ func (c compositeTool) BypassesCache() bool {
 	return false
 }
 
-// Fingerprint hashes the install method and its parameters (before templating), which is what decides the installed
-// bytes. The name and the resolved version are not included, they are part of the cache entry path already.
+// fingerprintVersion is folded into every fingerprint. Bump it when what the fingerprint covers changes on purpose,
+// which re-keys every cache entry.
+const fingerprintVersion = 1
+
+// Fingerprint hashes the install method and its parameters (before templating) and the platform, which is what decides
+// the installed bytes. The name and the resolved version are not included, they are part of the cache entry path
+// already.
 func (c compositeTool) Fingerprint() string {
-	f, err := hashstructure.Hash(c.config.InstallerConfig, hashstructure.FormatV2, &hashstructure.HashOptions{
+	return fingerprint(c.config.InstallerConfig, runtime.GOOS, runtime.GOARCH)
+}
+
+// fingerprint hashes the install config with hashstructure, so a new, renamed or removed field in any installer's
+// parameters changes it and re-keys that method's cache entries. Test_fingerprint pins the values.
+func fingerprint(installer DetailConfig, goos, goarch string) string {
+	f, err := hashstructure.Hash(struct {
+		Version   int
+		GOOS      string
+		GOARCH    string
+		Installer DetailConfig
+	}{fingerprintVersion, goos, goarch, installer}, hashstructure.FormatV2, &hashstructure.HashOptions{
 		ZeroNil:      true,
 		SlicesAsSets: true,
 	})

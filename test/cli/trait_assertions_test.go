@@ -132,6 +132,16 @@ func assertDirEntryCount(dir string, count int) traitAssertion {
 	}
 }
 
+// assertLinkedInStore checks that the tool in the store is a symlink, as an install through the cache leaves it.
+func assertLinkedInStore(tool string) traitAssertion {
+	return func(tb testing.TB, storeRoot, _, _ string, _ int) {
+		tb.Helper()
+		fi, err := os.Lstat(filepath.Join(storeRoot, tool))
+		require.NoError(tb, err)
+		require.NotZero(tb, fi.Mode()&os.ModeSymlink, "%q should be linked into the cache", tool)
+	}
+}
+
 // assertCacheListHasOneEntry checks `binny cache list -o json` output for exactly one entry of the tool, at the version.
 func assertCacheListHasOneEntry(name, version string) traitAssertion {
 	return func(tb testing.TB, _, stdout, _ string, _ int) {

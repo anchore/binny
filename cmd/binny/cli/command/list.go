@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"sort"
 	"strings"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/anchore/binny"
 	"github.com/anchore/binny/cmd/binny/cli/option"
 	"github.com/anchore/binny/internal/bus"
+	"github.com/anchore/binny/internal/log"
 	"github.com/anchore/binny/tool"
 	"github.com/anchore/clio"
 )
@@ -24,6 +26,8 @@ import (
 const (
 	formatTable = "table"
 	formatJSON  = "json"
+	// columnTool heads the tool name column in every table
+	columnTool = "Tool"
 )
 
 type ListConfig struct {
@@ -58,8 +62,8 @@ func List(app clio.Application) *cobra.Command {
 		},
 		Args: cobra.ArbitraryArgs,
 		PreRunE: func(_ *cobra.Command, args []string) error {
-			if cfg.JQCommand != "" && cfg.Output != formatJSON {
-				return fmt.Errorf("--jq can only be used when --output format is 'json'")
+			if err := cfg.CheckJQ(); err != nil {
+				return err
 			}
 			cfg.IncludeFilter = args
 			return nil
@@ -88,7 +92,12 @@ func runList(ctx context.Context, cmdCfg ListConfig) error {
 		return err
 	}
 
-	allStatuses := getAllStatuses(ctx, cmdCfg, store, cmdCfg.toolOptions())
+	cache, err := cmdCfg.Cache.Build()
+	if err != nil {
+		return err
+	}
+
+	allStatuses := getAllStatuses(ctx, cmdCfg, store, cache, cmdCfg.toolOptions())
 
 	// look for items in the store root that cannot be accounted for
 	// TODO
@@ -159,7 +168,7 @@ func filterToolsWithoutUpdates(statuses []toolStatus) []toolStatus {
 	return updates
 }
 
-func getAllStatuses(ctx context.Context, cmdCfg ListConfig, store *binny.Store, opts option.ToolOptions) []toolStatus {
+func getAllStatuses(ctx context.Context, cmdCfg ListConfig, store *binny.Store, cache *binny.Cache, opts option.ToolOptions) []toolStatus {
 	var (
 		failedTools = make(map[string]error)
 		allStatus   []toolStatus
@@ -170,7 +179,7 @@ func getAllStatuses(ctx context.Context, cmdCfg ListConfig, store *binny.Store, 
 	storedEntries := store.Entries()
 
 	for _, opt := range toolOpts {
-		status, entry, err := getStatus(ctx, store, opt, opts)
+		status, entry, err := getStatus(ctx, store, cache, opt, opts)
 		if err != nil {
 			failedTools[opt.Name] = err
 			continue
@@ -221,7 +230,7 @@ func getAllStatuses(ctx context.Context, cmdCfg ListConfig, store *binny.Store, 
 	return allStatus
 }
 
-func getStatus(ctx context.Context, store *binny.Store, opt option.Tool, opts option.ToolOptions) (*toolStatus, *binny.StoreEntry, error) {
+func getStatus(ctx context.Context, store *binny.Store, cache *binny.Cache, opt option.Tool, opts option.ToolOptions) (*toolStatus, *binny.StoreEntry, error) {
 	t, intent, err := opt.ToTool(opts)
 	if err != nil {
 		return nil, nil, err
@@ -242,10 +251,11 @@ func getStatus(ctx context.Context, store *binny.Store, opt option.Tool, opts op
 	if isInstalled {
 		entry = &entries[0]
 
-		installedVersion, isHashValid, err = getInstallationStatus(*entry)
+		installedVersion, isHashValid, err = installedStatus(store, cache, t, *entry)
 		if err != nil {
 			return nil, nil, err
 		}
+		isInstalled = installedVersion != ""
 	}
 
 	resolvedVersion, err := tool.ResolveVersion(ctx, t, *intent)
@@ -262,6 +272,28 @@ func getStatus(ctx context.Context, store *binny.Store, opt option.Tool, opts op
 		HashIsValid:      isHashValid,
 		InstalledVersion: installedVersion,
 	}, entry, nil
+}
+
+// installedStatus returns the version the store entry has installed, or "" when it is not a usable install of the tool:
+// a link left dangling by `binny cache delete`, or an install in the wrong layout (a copy while the cache is on, a link
+// into the cache while it is off, or a keep-archive-files mismatch). Check fails and install replaces both, so they are
+// not installed here either.
+func installedStatus(store *binny.Store, cache *binny.Cache, t binny.Tool, entry binny.StoreEntry) (installedVersion string, isHashValid bool, err error) {
+	installedVersion, isHashValid, err = getInstallationStatus(entry)
+	if errors.Is(err, fs.ErrNotExist) {
+		log.WithFields("tool", t.Name(), "reason", err).Debug("installed tool is missing")
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+
+	// no digests are verified here, getInstallationStatus already did
+	if layoutErr := tool.Check(store, cache, t, installedVersion, tool.VerifyConfig{}); layoutErr != nil {
+		log.WithFields("tool", t.Name(), "reason", layoutErr).Debug("installed tool does not match its configured layout")
+		return "", isHashValid, nil
+	}
+	return installedVersion, isHashValid, nil
 }
 
 func getInstallationStatus(entry binny.StoreEntry) (installedVersion string, isHashValid bool, err error) {
@@ -365,7 +397,7 @@ func renderListUpdatesTable(statuses []toolStatus) string {
 	t.Style().Options.SeparateColumns = false
 
 	titles := []string{
-		"Tool", "Update",
+		columnTool, "Update",
 	}
 
 	var header table.Row
@@ -462,7 +494,7 @@ func renderListTable(statuses []toolStatus) string {
 	}
 
 	titles := []string{
-		"Tool", "Desired Version", "Constraint", "",
+		columnTool, "Desired Version", "Constraint", "",
 	}
 
 	var header table.Row

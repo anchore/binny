@@ -60,6 +60,7 @@ func TestInstallCmd(t *testing.T) {
 					assertions: []traitAssertion{
 						assertSuccessfulReturnCode,
 						assertManagedToolOutput("binny", []string{"--version"}, "binny v0.7.0\n"),
+						assertLinkedInStore("binny"),
 					},
 				},
 				{
@@ -69,7 +70,9 @@ func TestInstallCmd(t *testing.T) {
 					assertions: []traitAssertion{
 						assertSuccessfulReturnCode,
 						assertManagedToolOutput("binny", []string{"--version"}, "binny v0.7.0\n"),
+						// one entry and both stores linked to it, so the second store did not build its own
 						assertDirEntryCount(filepath.Join("..", "cache", "binny", "v0.7.0"), 1),
+						assertLinkedInStore("binny"),
 					},
 				},
 				{

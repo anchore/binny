@@ -66,7 +66,7 @@ func runCheck(ctx context.Context, cmdCfg CheckConfig, names []string) (errs err
 		return err
 	}
 
-	cache, err := cmdCfg.Cache.Get()
+	cache, err := cmdCfg.Cache.Build()
 	if err != nil {
 		return err
 	}

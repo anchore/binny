@@ -40,7 +40,7 @@ no cached tools
 ---
 
 [Test_renderCacheListTable/entries - 1]
- NAME   VERSION  FINGERPRINT       SIZE      PATH                                       
+ TOOL   VERSION  FINGERPRINT       SIZE      PATH                                       
 ────────────────────────────────────────────────────────────────────────────────────────
  binny  v0.7.0   0123456789abcdef  11.8 MiB  /cache/binny/binny/v0.7.0/0123456789abcdef 
  binny  v0.8.0   0123456789abcdef  900 B     /cache/binny/binny/v0.8.0/0123456789abcdef 

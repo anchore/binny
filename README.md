@@ -54,8 +54,39 @@ Then you can run:
   - `binny check` to verify all configured tools are installed, return exit code 1 if any are missing or inconsistent
   - `binny update [name...]` to update any pinned versions in the configuration with the latest available versions (and within any given constraints)
   - `binny list` to list all tools in the configuration and the installed store
+  - `binny cache list` and `binny cache delete` to see and remove what the shared cache holds (see [Shared cache](#shared-cache))
 
 By default, tools are installed in a `.tool` directory in the current working directory. This can be configured via the `store.root` option (e.g., to use `~/.tool` for a user-wide install).
+
+### Shared cache
+
+Every checkout (including every git worktree) has its own `.tool`, so by default every checkout downloads or builds every tool again. With the shared cache enabled, `binny install` installs each tool once per machine into a per-user cache, and `.tool/<name>` becomes a symlink to it. Another checkout that wants the same tool, version and install config links to the existing entry without downloading or building it.
+
+```bash
+export BINNY_CACHE_ENABLED=true
+```
+
+The cache is off by default. Enable it with the env var rather than `~/.binny.yaml`, since a repo's own `.binny.yaml` takes precedence over the one in your home directory.
+
+- `cache.root` (`BINNY_CACHE_ROOT`) sets where the cache lives. It defaults to `binny` under your user cache dir (`$XDG_CACHE_HOME`, `~/.cache`, `~/Library/Caches` or `%LOCALAPPDATA%`). On unix, binny refuses a root owned by another user or writable by its group or every user, since it runs what it finds there. On windows there is no such check: the default root is protected by your profile, and a root outside it has to be locked down by hand.
+- Entries live at `<cache.root>/<name>/<version>/<fingerprint>/`. The fingerprint covers the install method, its `with:` options and the platform, so two configs of one tool at one version get separate entries.
+- Tools built from a local module (`module: .`) still install as copies in `.tool`, since every commit would add an entry nothing else reuses.
+- Where symlinks cannot be made (windows without developer mode, some network or exFAT volumes), a single-binary tool is copied from the cache into `.tool`. A `keep-archive-files` tool fails with the link error, as it does without the cache.
+- Turning the cache on or off reinstalls each tool on the next `binny install`, from the cache when it already has the tool.
+- `rm -rf .tool` removes only the links, so it no longer frees disk. Nothing removes cache entries except `binny cache delete`.
+- A CI cache that saves `.tool` (such as `actions/cache`) saves only dangling links while the shared cache is on, so it saves nothing. Cache `cache.root` instead, or leave the shared cache off in CI.
+- Entry binaries are read-only, so writing to `.tool/<name>` fails rather than changing the binary every checkout shares.
+
+To see and remove what the cache holds (both work whether or not the cache is enabled):
+
+```bash
+binny cache list                  # alias: ls, add -o json for {"entries": [...]}
+binny cache delete <name>         # every entry of a tool
+binny cache delete <name>@<version>
+binny cache delete --all          # every entry, plus staging dirs left by installs that did not finish
+```
+
+Deleting an entry that a checkout still links to leaves a dangling `.tool/<name>` until that checkout's next `binny install` installs the tool again. Delete only removes entries binny created, so a `cache.root` pointed at the wrong directory loses nothing else.
 
 Use `--ignore-cooldown` with `install` or `update` to bypass the release cooldown check.
 
@@ -77,6 +108,8 @@ Top-level options that apply to all tools:
 
 | Option     | Description                                                                                                                                                                     |
 |------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `cache.enabled` | Install tools once per machine into a shared cache and link `.tool/<name>` to it (env `BINNY_CACHE_ENABLED`, default `false`). See [Shared cache](#shared-cache). |
+| `cache.root` | Where the shared cache lives (env `BINNY_CACHE_ROOT`, default `binny` under the user cache dir). |
 | `cooldown` | A duration to wait after a version is published before it can be installed (e.g. `7d`, `168h`). This is a supply chain security measure that gives time for malicious versions to be detected and pulled. Individual tools can override this value. Only applies to `install` and `update` commands, and only with `github-release` and `go-proxy` version resolvers (the `git` resolver does not support cooldown). |
 
 
@@ -131,7 +164,7 @@ The `github-release` install method uses the GitHub Releases API to download the
 |--------|-------------------------------------------------------------------------------------------------|
 | `repo` | The GitHub repository to reference releases from. This should be in the format `<owner>/<repo>` |
 | `assets` (optional) | Regex pattern(s) to filter release assets. Can be a single string or array of strings for priority matching |
-| `keep-archive-files` (optional) | Keep the whole extracted archive (at `.tool/.binny-dirs/<name>/`) and link `.tool/<name>` to the binary inside it. Useful for tools that read files next to their own binary (e.g. `tsc` and its `lib/*.d.ts`) |
+| `keep-archive-files` (optional) | Keep the whole extracted archive (at `.tool/.binny-dirs/<name>/`, or in the cache entry when the [shared cache](#shared-cache) is enabled) and link `.tool/<name>` to the binary inside it. Useful for tools that read files next to their own binary (e.g. `tsc` and its `lib/*.d.ts`) |
 
 When multiple assets match the OS/architecture, the `assets` field allows you to specify which one to select:
 
