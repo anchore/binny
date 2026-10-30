@@ -1,20 +1,28 @@
 package cli
 
 import (
+	"path/filepath"
 	"testing"
 )
 
 func TestInstallCmd(t *testing.T) {
 
 	type step struct {
-		name       string
+		name string
+		// root is the store dir within the test dir, so steps can install into more than one store
+		root       string
 		args       []string
 		env        map[string]string
 		assertions []traitAssertion
 	}
 
+	// output of one step compared against a later one
+	var cacheListOutput string
+
 	tests := []struct {
-		name  string
+		name string
+		// cache enables the cache for every step, rooted at "cache" within the test dir
+		cache bool
 		steps []step
 	}{
 		{
@@ -41,6 +49,89 @@ func TestInstallCmd(t *testing.T) {
 				},
 			},
 		},
+		{
+			name:  "use shared cache",
+			cache: true,
+			steps: []step{
+				{
+					name: "install into first store",
+					root: "store-a",
+					args: []string{"install", "-c", "testdata/go-install-method.yaml"},
+					assertions: []traitAssertion{
+						assertSuccessfulReturnCode,
+						assertManagedToolOutput("binny", []string{"--version"}, "binny v0.7.0\n"),
+						assertLinkedInStore("binny"),
+					},
+				},
+				{
+					name: "install into second store",
+					root: "store-b",
+					args: []string{"install", "-c", "testdata/go-install-method.yaml"},
+					assertions: []traitAssertion{
+						assertSuccessfulReturnCode,
+						assertManagedToolOutput("binny", []string{"--version"}, "binny v0.7.0\n"),
+						// one entry and both stores linked to it, so the second store did not build its own
+						assertDirEntryCount(filepath.Join("..", "cache", "binny", "v0.7.0"), 1),
+						assertLinkedInStore("binny"),
+					},
+				},
+				{
+					name: "list cache",
+					args: []string{"cache", "list", "-o", "json"},
+					assertions: []traitAssertion{
+						assertSuccessfulReturnCode,
+						assertJson,
+						assertCacheListHasOneEntry("binny", "v0.7.0"),
+						captureStdout(&cacheListOutput),
+					},
+				},
+				{
+					name: "list cache with alias",
+					args: []string{"cache", "ls", "-o", "json"},
+					assertions: []traitAssertion{
+						assertSuccessfulReturnCode,
+						assertStdoutEquals(&cacheListOutput),
+					},
+				},
+				{
+					name: "delete without args",
+					args: []string{"cache", "delete"},
+					assertions: []traitAssertion{
+						assertFailingReturnCode,
+					},
+				},
+				{
+					// --all is a cobra flag only, so the env var must not satisfy it
+					name: "delete without args ignores BINNY_ALL",
+					root: "store-a",
+					env:  map[string]string{"BINNY_ALL": "true"},
+					args: []string{"cache", "delete"},
+					assertions: []traitAssertion{
+						assertFailingReturnCode,
+						assertDirEntryCount(filepath.Join("..", "cache", "binny", "v0.7.0"), 1),
+					},
+				},
+				{
+					name: "delete all",
+					root: "store-a",
+					args: []string{"cache", "delete", "--all"},
+					assertions: []traitAssertion{
+						assertSuccessfulReturnCode,
+						assertDirEntryCount(filepath.Join("..", "cache"), 0),
+					},
+				},
+				{
+					name: "reinstall",
+					root: "store-a",
+					args: []string{"install", "-c", "testdata/go-install-method.yaml"},
+					assertions: []traitAssertion{
+						assertSuccessfulReturnCode,
+						assertManagedToolOutput("binny", []string{"--version"}, "binny v0.7.0\n"),
+						assertDirEntryCount(filepath.Join("..", "cache", "binny", "v0.7.0"), 1),
+					},
+				},
+			},
+		},
 	}
 
 	for _, test := range tests {
@@ -53,11 +144,16 @@ func TestInstallCmd(t *testing.T) {
 					if s.env == nil {
 						s.env = make(map[string]string)
 					}
-					s.env["BINNY_ROOT"] = d
+					root := filepath.Join(d, s.root)
+					s.env["BINNY_ROOT"] = root
+					if test.cache {
+						s.env["BINNY_CACHE_ENABLED"] = "true"
+						s.env["BINNY_CACHE_ROOT"] = filepath.Join(d, "cache")
+					}
 
 					cmd, stdout, stderr := runBinny(t, s.env, s.args...)
 					for _, traitFn := range s.assertions {
-						traitFn(t, d, stdout, stderr, cmd.ProcessState.ExitCode())
+						traitFn(t, root, stdout, stderr, cmd.ProcessState.ExitCode())
 					}
 
 					logOutputOnFailure(t, cmd, stdout, stderr)

@@ -66,6 +66,11 @@ func runCheck(ctx context.Context, cmdCfg CheckConfig, names []string) (errs err
 		return err
 	}
 
+	cache, err := cmdCfg.Cache.Build()
+	if err != nil {
+		return err
+	}
+
 	monitor := bus.PublishTask(
 		event.Title{
 			Default:      "Verify installed tools",
@@ -90,7 +95,7 @@ func runCheck(ctx context.Context, cmdCfg CheckConfig, names []string) (errs err
 		monitor.Increment()
 		monitor.AtomicStage.Set(opt.Name)
 
-		resolvedVersion, err := checkTool(ctx, store, opt, cmdCfg.toolOptions(), cmdCfg.VerifySHA256Digest)
+		resolvedVersion, err := checkTool(ctx, store, cache, opt, cmdCfg.toolOptions(), cmdCfg.VerifySHA256Digest)
 		if err != nil {
 			failedTools = append(failedTools, opt.Name)
 			errs = multierror.Append(errs, fmt.Errorf("failed to check tool %q: %w", opt.Name, err))
@@ -112,7 +117,7 @@ func runCheck(ctx context.Context, cmdCfg CheckConfig, names []string) (errs err
 	return nil
 }
 
-func checkTool(ctx context.Context, store *binny.Store, opt option.Tool, opts option.ToolOptions, verifySha256Digest bool) (string, error) {
+func checkTool(ctx context.Context, store *binny.Store, cache *binny.Cache, opt option.Tool, opts option.ToolOptions, verifySha256Digest bool) (string, error) {
 	t, intent, err := opt.ToTool(opts)
 	if err != nil {
 		return "", err
@@ -124,7 +129,7 @@ func checkTool(ctx context.Context, store *binny.Store, opt option.Tool, opts op
 	}
 
 	// otherwise continue to install the tool
-	err = tool.Check(store, t, resolvedVersion, tool.VerifyConfig{
+	err = tool.Check(store, cache, t, resolvedVersion, tool.VerifyConfig{
 		VerifyXXH64Digest:  true,
 		VerifySHA256Digest: verifySha256Digest,
 	})

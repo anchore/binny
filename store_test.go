@@ -1,6 +1,7 @@
 package binny
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -8,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/anchore/binny/internal"
 )
 
 func TestStore_GetByName(t *testing.T) {
@@ -496,4 +499,54 @@ func TestStore_AddToolDir_movedStore(t *testing.T) {
 	got, err := os.ReadFile(filepath.Join(moved, "tsc"))
 	require.NoError(t, err)
 	assert.Equal(t, "v1", string(got))
+}
+
+func TestStore_LinksWork(t *testing.T) {
+	storeEntries := func(t *testing.T, store *Store) []os.DirEntry {
+		t.Helper()
+		des, err := os.ReadDir(store.Root())
+		require.NoError(t, err)
+		return des
+	}
+
+	t.Run("links work", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("requires symlinks")
+		}
+		store, err := NewStore(t.TempDir())
+		require.NoError(t, err)
+		assert.True(t, store.LinksWork())
+		assert.Empty(t, storeEntries(t, store), "the probe cleans up after itself")
+	})
+
+	t.Run("links fail", func(t *testing.T) {
+		orig := internal.Symlink
+		internal.Symlink = func(string, string) error { return errors.New("symlinks refused") }
+		t.Cleanup(func() { internal.Symlink = orig })
+
+		store, err := NewStore(t.TempDir())
+		require.NoError(t, err)
+		assert.False(t, store.LinksWork())
+		assert.Empty(t, storeEntries(t, store))
+	})
+
+	t.Run("probe cannot run", func(t *testing.T) {
+		store, err := NewStore(filepath.Join(t.TempDir(), "missing"))
+		require.NoError(t, err)
+		// unknown counts as refused, so a fallback copy is accepted rather than reinstalled on every run
+		assert.False(t, store.LinksWork())
+	})
+}
+
+func TestStore_LinkCacheEntry_rejectsInvalidEntry(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	require.NoError(t, err)
+
+	// the fields can be set by any caller, after the entry was read and checked
+	entry := addCacheEntryForTest(t, newTestCache(t), "tsc", "v1", "aaaa")
+	entry.PathInDir = "../../../../../../usr/bin/env"
+
+	require.ErrorContains(t, store.LinkCacheEntry(*entry), "not within the entry")
+	_, err = os.Lstat(filepath.Join(store.Root(), "tsc"))
+	assert.ErrorIs(t, err, os.ErrNotExist)
 }

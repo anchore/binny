@@ -66,6 +66,11 @@ func runInstall(ctx context.Context, cmdCfg InstallConfig, names []string) error
 		return err
 	}
 
+	cache, err := cmdCfg.Cache.Build()
+	if err != nil {
+		return err
+	}
+
 	var (
 		errs                  error
 		failedTools           []string
@@ -96,7 +101,7 @@ func runInstall(ctx context.Context, cmdCfg InstallConfig, names []string) error
 		opt := toolOpts[i]
 
 		g.Go(func() error {
-			err := installTool(ctx, store, cmdCfg, opt)
+			err := installTool(ctx, store, cache, cmdCfg, opt)
 			if err != nil {
 				lock.Lock()
 				if errors.Is(err, tool.ErrAlreadyInstalled) {
@@ -159,14 +164,14 @@ func trackInstallCmd(toolNames []string) (*progress.Manual, *progress.AtomicStag
 	return prog, stage
 }
 
-func installTool(ctx context.Context, store *binny.Store, cfg InstallConfig, opt option.Tool) error {
+func installTool(ctx context.Context, store *binny.Store, cache *binny.Cache, cfg InstallConfig, opt option.Tool) error {
 	t, intent, err := opt.ToTool(cfg.toolOptions())
 	if err != nil {
 		return fmt.Errorf("failed to resolve tool config %q: %w", opt.Name, err)
 	}
 
 	// otherwise continue to install the tool
-	if err := tool.Install(ctx, t, *intent, store, tool.VerifyConfig{
+	if err := tool.Install(ctx, t, *intent, store, cache, tool.VerifyConfig{
 		VerifyXXH64Digest:  true,
 		VerifySHA256Digest: cfg.VerifySHA256Digest,
 	}); err != nil {

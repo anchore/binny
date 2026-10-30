@@ -122,6 +122,65 @@ func assertFileInStoreExists(file string) traitAssertion {
 	}
 }
 
+// assertDirEntryCount checks the number of entries in a dir given relative to the store root.
+func assertDirEntryCount(dir string, count int) traitAssertion {
+	return func(tb testing.TB, storeRoot, _, _ string, _ int) {
+		tb.Helper()
+		entries, err := os.ReadDir(filepath.Join(storeRoot, dir))
+		require.NoError(tb, err)
+		require.Len(tb, entries, count)
+	}
+}
+
+// assertLinkedInStore checks that the tool in the store is a symlink, as an install through the cache leaves it.
+func assertLinkedInStore(tool string) traitAssertion {
+	return func(tb testing.TB, storeRoot, _, _ string, _ int) {
+		tb.Helper()
+		fi, err := os.Lstat(filepath.Join(storeRoot, tool))
+		require.NoError(tb, err)
+		require.NotZero(tb, fi.Mode()&os.ModeSymlink, "%q should be linked into the cache", tool)
+	}
+}
+
+// assertCacheListHasOneEntry checks `binny cache list -o json` output for exactly one entry of the tool, at the version.
+func assertCacheListHasOneEntry(name, version string) traitAssertion {
+	return func(tb testing.TB, _, stdout, _ string, _ int) {
+		tb.Helper()
+		var doc struct {
+			Entries []struct {
+				Name    string `json:"name"`
+				Version string `json:"version"`
+			} `json:"entries"`
+		}
+		require.NoError(tb, json.Unmarshal([]byte(stdout), &doc))
+
+		var versions []string
+		for _, e := range doc.Entries {
+			if e.Name == name {
+				versions = append(versions, e.Version)
+			}
+		}
+		require.Equal(tb, []string{version}, versions)
+	}
+}
+
+// captureStdout keeps a step's stdout for a later step to compare with assertStdoutEquals.
+func captureStdout(out *string) traitAssertion {
+	return func(_ testing.TB, _, stdout, _ string, _ int) {
+		*out = stdout
+	}
+}
+
+func assertStdoutEquals(want *string) traitAssertion {
+	return func(tb testing.TB, _, stdout, _ string, _ int) {
+		tb.Helper()
+		require.NotEmpty(tb, *want)
+		if d := cmp.Diff(*want, stdout); d != "" {
+			tb.Errorf("unexpected output (-want +got):\n%s", d)
+		}
+	}
+}
+
 func assertManagedToolOutput(tool string, args []string, expectedStdout string) traitAssertion {
 	return func(tb testing.TB, storeRoot, _, _ string, _ int) {
 		tb.Helper()
