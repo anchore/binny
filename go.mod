@@ -17,7 +17,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/creack/pty v1.1.24
 	github.com/cyphar/filepath-securejoin v0.7.0
-	github.com/gabriel-vasile/mimetype v1.4.15
+	github.com/gabriel-vasile/mimetype v1.4.16
 	github.com/gkampitakis/go-snaps v0.5.23
 	// pinned past v5.19.2 for the commondir file handle close (go-git 4253959), which windows needs
 	// to be able to clean up a linked worktree. move back to a tagged version once v5.19.3 is out.
