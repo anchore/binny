@@ -26,6 +26,16 @@ type Cache struct {
 	root string
 }
 
+// ErrUnsafeCacheRoot matches (errors.Is) the error NewCache returns for a root that someone other than the current user
+// could have put entries in, so a caller can fall back to not using the cache.
+var ErrUnsafeCacheRoot = errors.New("unsafe cache root")
+
+type unsafeRootError struct{ error }
+
+func (e unsafeRootError) Is(target error) bool { return target == ErrUnsafeCacheRoot }
+
+func (e unsafeRootError) Unwrap() error { return e.error }
+
 // CacheEntry is one installed tool in the cache, with the metadata it recorded about itself.
 type CacheEntry struct {
 	Name        string
@@ -58,7 +68,7 @@ const (
 
 // NewCache returns the cache at root. A leading ~ is the home dir. Symlinks in the root are resolved once, so the links
 // binny makes into the cache never pass through a link that could later be pointed elsewhere. It fails for an empty
-// root and for a root that someone other than the current user could have put entries in.
+// root and for a root that someone other than the current user could have put entries in (ErrUnsafeCacheRoot).
 func NewCache(root string) (*Cache, error) {
 	if root == "" {
 		// an empty path would otherwise resolve to the current dir, putting the cache in the checkout
@@ -120,7 +130,7 @@ func (c *Cache) checkRoot() error {
 		return err
 	}
 	if resolved != c.root {
-		return fmt.Errorf("cache root %q now resolves to %q, so binny will not use it", c.root, resolved)
+		return unsafeRootError{fmt.Errorf("cache root %q now resolves to %q, so binny will not use it", c.root, resolved)}
 	}
 	return checkCacheRoot(c.root)
 }

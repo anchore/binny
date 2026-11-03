@@ -332,6 +332,22 @@ func TestInstall_cacheDisabled(t *testing.T) {
 	assert.True(t, fi.Mode().IsRegular())
 }
 
+func TestInstall_cacheOffReplacesLink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires symlinks")
+	}
+	store := newStoreForTest(t)
+	intent := binny.VersionIntent{Want: "v1.0.0"}
+	require.NoError(t, Install(context.Background(), fakeTool{name: "tsc"}, intent, store, newCacheForTest(t), VerifyConfig{}))
+
+	// a refused cache root is built as nil too, and the link into it must not survive
+	require.Error(t, Check(store, nil, fakeTool{name: "tsc"}, "v1.0.0", VerifyConfig{}))
+	require.NoError(t, Install(context.Background(), fakeTool{name: "tsc"}, intent, store, nil, VerifyConfig{}))
+	fi, err := os.Lstat(filepath.Join(store.Root(), "tsc"))
+	require.NoError(t, err)
+	assert.True(t, fi.Mode().IsRegular())
+}
+
 func TestInstall_cacheRootNotWritable(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("relies on unix directory permissions")

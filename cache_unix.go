@@ -24,7 +24,7 @@ func checkCacheRoot(root string) error {
 		fi, err := os.Lstat(dir)
 		if err == nil {
 			if err := checkCacheDir(dir, root, fi); err != nil {
-				return err
+				return unsafeRootError{err}
 			}
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err

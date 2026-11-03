@@ -545,6 +545,7 @@ func TestCheckCacheRoot_ancestors(t *testing.T) {
 	require.NoError(t, os.Chmod(parent, 0o775))
 	_, err := NewCache(root)
 	require.ErrorContains(t, err, "above cache root")
+	require.ErrorIs(t, err, ErrUnsafeCacheRoot)
 
 	// sticky (as /tmp is) only stops a rename: once the root is cleaned away anyone can recreate it
 	require.NoError(t, os.Chmod(parent, 0o777|os.ModeSticky))
@@ -565,7 +566,7 @@ func TestCheckCacheRoot_ancestors(t *testing.T) {
 	require.NoError(t, os.Symlink(moved, parent))
 	t.Cleanup(func() { _ = os.Remove(parent) })
 	_, _, err = cache.Stage("tsc")
-	require.Error(t, err)
+	require.ErrorIs(t, err, ErrUnsafeCacheRoot)
 }
 
 func TestCache_danglingRootLink(t *testing.T) {
@@ -580,6 +581,7 @@ func TestCache_danglingRootLink(t *testing.T) {
 
 	_, err := NewCache(root)
 	require.ErrorContains(t, err, "is now a link")
+	require.ErrorIs(t, err, ErrUnsafeCacheRoot)
 }
 
 func TestCache_Add_keptArchiveCannotWriteEntryFile(t *testing.T) {
