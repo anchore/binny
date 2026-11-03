@@ -2,10 +2,13 @@ package tool
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/wagoodman/go-partybus"
@@ -142,22 +145,45 @@ func installThroughCache(ctx context.Context, tool binny.Tool, resolvedVersion, 
 	return nil
 }
 
-// cacheFingerprint returns the tool's fingerprint when it should install through the cache. A version passed through
-// unresolved (latest, a branch) does not pin the bytes, so it would be cached once and never rebuilt.
+// cacheFingerprint returns the cache key for the tool when it should install through the cache. A resolved version
+// that can move (latest, a branch, a go prefix query like v1.2), whichever resolver passed it through, does not pin the
+// bytes, so it would be cached once and never rebuilt.
 func cacheFingerprint(cache *binny.Cache, t binny.Tool, resolvedVersion string) (string, bool) {
 	if cache == nil {
 		return "", false
 	}
-	if u, ok := t.(interface{ allowsUnresolvedVersion() bool }); ok && u.allowsUnresolvedVersion() && !internal.IsVersion(resolvedVersion) && !internal.IsCommit(resolvedVersion) {
-		log.WithFields("tool", t.Name(), "version", resolvedVersion).Debug("version is unresolved, the cache is not used for it")
+	if !internal.IsExactVersion(resolvedVersion) {
+		log.WithFields("tool", t.Name(), "version", resolvedVersion).Debug("version is not exact, the cache is not used for it")
 		return "", false
 	}
-	f, ok := t.(binny.Fingerprinter)
-	if !ok || f.Fingerprint() == "" {
+	// a version the resolver may have passed through unresolved is only trusted as plain semver, which the go command
+	// reads as a tag and never as a branch
+	if p, ok := t.(interface{ passesThroughUnresolved() bool }); ok && p.passesThroughUnresolved() && !internal.IsPlainVersion(resolvedVersion) {
+		log.WithFields("tool", t.Name(), "version", resolvedVersion).Debug("version may be an unresolved branch, the cache is not used for it")
+		return "", false
+	}
+	var fingerprint string
+	if f, ok := t.(binny.Fingerprinter); ok {
+		fingerprint = f.Fingerprint()
+	}
+	if fingerprint == "" {
 		log.WithFields("tool", t.Name()).Debug("tool has no fingerprint, the cache is not used for it")
 		return "", false
 	}
-	return f.Fingerprint(), true
+	return cacheKey(runtime.GOOS, runtime.GOARCH, fingerprint, keepsArchiveFiles(t)), true
+}
+
+// cacheKeyVersion is folded into every cache key. Bump it when what the key covers changes on purpose, which re-keys
+// every cache entry.
+const cacheKeyVersion = 1
+
+// cacheKey is the fingerprint dir of a cache entry: a sha256 over the tool's fingerprint and what decides the bytes and
+// layout of every tool, the platform and keep-archive-files. Checkouts share an entry by this key alone, so it has to
+// resist a config crafted to collide with another repo's tool, not only keep honest configs apart. 128 bits is plenty
+// for that and keeps the path short.
+func cacheKey(goos, goarch, fingerprint string, keepArchiveFiles bool) string {
+	sum := sha256.Sum256(fmt.Appendf(nil, "%d %q %q %t %q", cacheKeyVersion, goos, goarch, keepArchiveFiles, fingerprint))
+	return hex.EncodeToString(sum[:16])
 }
 
 // makeStagingArea creates a temporary directory within the store root to stage the installation of a tool. A valid

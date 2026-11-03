@@ -2,7 +2,9 @@ package tool
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/anchore/binny"
+	"github.com/anchore/binny/tool/git"
 	"github.com/anchore/binny/tool/githubrelease"
 	"github.com/anchore/binny/tool/gobuild"
 	"github.com/anchore/binny/tool/goinstall"
@@ -110,17 +113,18 @@ func TestNew_goBuildResolvesRefsAgainstTheRepo(t *testing.T) {
 }
 
 func Test_compositeTool_cacheable(t *testing.T) {
+	remote := goinstall.InstallerParameters{Module: "github.com/anchore/binny"}
 	tests := []struct {
-		name     string
-		method   string
-		params   any
-		resolver DetailConfig
-		want     bool
+		name   string
+		method string
+		params any
+		want   bool
 	}{
 		{name: "go-install local module", method: goinstall.InstallMethod, params: goinstall.InstallerParameters{Module: "."}},
-		{name: "go-install remote module", method: goinstall.InstallMethod, params: goinstall.InstallerParameters{Module: "github.com/anchore/binny"}, want: true},
+		{name: "go-install remote module", method: goinstall.InstallMethod, params: remote, want: true},
 		{name: "go-build local module", method: gobuild.InstallMethod, params: gobuild.InstallerParameters{Module: "."}},
 		{name: "go-build remote module", method: gobuild.InstallMethod, params: gobuild.InstallerParameters{Module: "github.com/anchore/binny"}, want: true},
+		{name: "github-release", method: githubrelease.InstallMethod, params: githubrelease.InstallerParameters{Repo: "cli/cli"}, want: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -131,66 +135,181 @@ func Test_compositeTool_cacheable(t *testing.T) {
 	}
 }
 
-func Test_cacheFingerprint_unresolvedVersion(t *testing.T) {
+func Test_cacheFingerprint_exactVersion(t *testing.T) {
 	cache, err := binny.NewCache(t.TempDir())
 	require.NoError(t, err)
+	// the github release resolver hands back any non-semver tag as-is, such as a rolling nightly
 	tl := compositeTool{config: Config{
-		Name:                  "binny",
-		InstallerConfig:       DetailConfig{Method: goinstall.InstallMethod, Parameters: goinstall.InstallerParameters{Module: "github.com/anchore/binny"}},
-		VersionResolverConfig: DetailConfig{Method: goproxy.ResolveMethod, Parameters: goproxy.VersionResolutionParameters{AllowUnresolvedVersion: true}},
+		Name:            "gh",
+		InstallerConfig: DetailConfig{Method: githubrelease.InstallMethod, Parameters: githubrelease.InstallerParameters{Repo: "cli/cli"}},
 	}}
 
-	for version, want := range map[string]bool{"v0.7.0": true, "0123abc": true, "latest": false, "main": false} {
+	versions := map[string]bool{"v0.7.0": true, "bun-v1.4.3": true, "0123abc": true, "latest": false, "main": false, "nightly": false, "v1": false, "v1.2": false}
+	for version, want := range versions {
 		_, ok := cacheFingerprint(cache, tl, version)
 		assert.Equal(t, want, ok, version)
 	}
 }
 
-// Test_fingerprint pins the cache fingerprint of one config per install method. A change here means every user's cache
-// entries for that method are re-keyed and every tool is fetched again, so it should only happen on purpose (with
-// fingerprintVersion bumped). Adding, renaming or removing a field in an installer's parameters changes these values.
+func Test_cacheFingerprint_passedThroughVersion(t *testing.T) {
+	fakeGoEnv(t, func([]string) string { return `{"GOVERSION":"go1.26.0"}` })
+	cache, err := binny.NewCache(t.TempDir())
+	require.NoError(t, err)
+	remote := DetailConfig{Method: goinstall.InstallMethod, Parameters: goinstall.InstallerParameters{Module: "github.com/anchore/binny"}}
+	// these hand back an unresolvable want as-is, so it may be a branch named like a version or a sha
+	tools := map[string]compositeTool{
+		"allow-unresolved-version": {config: Config{Name: "binny", InstallerConfig: remote, VersionResolverConfig: DetailConfig{
+			Method: goproxy.ResolveMethod, Parameters: goproxy.VersionResolutionParameters{AllowUnresolvedVersion: true},
+		}}},
+		"git resolver": {config: Config{Name: "binny", InstallerConfig: remote, VersionResolverConfig: DetailConfig{Method: git.ResolveMethod}}},
+	}
+	versions := map[string]bool{"v0.7.0": true, "v0.7.0-rc.1": true, "deadbee": false, "release/v1.2.3": false, "bun-v1.4.3": false}
+	for name, tl := range tools {
+		for version, want := range versions {
+			_, ok := cacheFingerprint(cache, tl, version)
+			assert.Equal(t, want, ok, "%s at %s", name, version)
+		}
+	}
+
+	// a resolver that resolves every ref does vouch for a sha
+	resolved := compositeTool{config: Config{Name: "binny", InstallerConfig: remote}}
+	_, ok := cacheFingerprint(cache, resolved, "deadbee")
+	assert.True(t, ok)
+}
+
+// fakeGoEnv makes every go env read return env, and forgets the reads before and after the test.
+func fakeGoEnv(t *testing.T, env func([]string) string) {
+	t.Helper()
+	orig := goEnv
+	goEnvs.Clear()
+	t.Cleanup(func() {
+		goEnv = orig
+		goEnvs.Clear()
+	})
+	goEnv = env
+}
+
+func Test_compositeTool_Fingerprint_goEnvUnreadable(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	assert.Empty(t, readGoEnv(nil))
+
+	fakeGoEnv(t, func([]string) string { return "" })
+
+	// a go tool without a readable go env would otherwise share one key across every toolchain
+	goTool := compositeTool{config: Config{Name: "binny", InstallerConfig: DetailConfig{Method: goinstall.InstallMethod, Parameters: goinstall.InstallerParameters{Module: "github.com/anchore/binny"}}}}
+	assert.Empty(t, goTool.Fingerprint())
+
+	other := compositeTool{config: Config{Name: "gh", InstallerConfig: DetailConfig{Method: githubrelease.InstallMethod, Parameters: githubrelease.InstallerParameters{Repo: "cli/cli"}}}}
+	assert.NotEmpty(t, other.Fingerprint())
+}
+
+func Test_readGoEnv_ignoresCheckoutGoWork(t *testing.T) {
+	// a go line newer than the local go makes the go command switch toolchains, which fails with the proxy off. Under
+	// GOTOOLCHAIN=local it would just report the local go, and these would pass whatever the probe ran in.
+	t.Setenv("GOTOOLCHAIN", "auto")
+	t.Setenv("GOPROXY", "off")
+	want := readGoEnv(nil)
+	require.NotEmpty(t, want)
+
+	// the checkout's go.mod would otherwise pick the toolchain the probe reports, here by failing on a go it can't get
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/x\n\ngo 1.999\n"), 0o600))
+	t.Chdir(dir)
+	assert.Equal(t, want, readGoEnv(nil))
+
+	// and so would a go.work named by an inherited GOWORK
+	work := filepath.Join(dir, "go.work")
+	require.NoError(t, os.WriteFile(work, []byte("go 1.999\n"), 0o600))
+	t.Setenv("GOWORK", work)
+	assert.Equal(t, want, readGoEnv(nil))
+}
+
+func Test_compositeTool_Fingerprint_probesWithToolEnv(t *testing.T) {
+	t.Setenv("GOTOOLCHAIN", "local")
+	t.Setenv("GOFLAGS", "-trimpath")
+	goEnvs.Clear()
+	t.Cleanup(goEnvs.Clear)
+
+	// the build runs with the tool's env on top, so that is what the probe has to see
+	tl := compositeTool{config: Config{Name: "binny", InstallerConfig: DetailConfig{
+		Method:     goinstall.InstallMethod,
+		Parameters: goinstall.InstallerParameters{Module: "github.com/anchore/binny", Env: []string{"GOFLAGS=-mod=mod"}},
+	}}}
+	var fp struct{ GoEnv string }
+	require.NoError(t, json.Unmarshal([]byte(tl.Fingerprint()), &fp))
+	assert.Contains(t, fp.GoEnv, "-mod=mod")
+	assert.NotContains(t, fp.GoEnv, "-trimpath")
+}
+
+func Test_cacheFingerprint_goEnvRekeys(t *testing.T) {
+	cache, err := binny.NewCache(t.TempDir())
+	require.NoError(t, err)
+	tl := compositeTool{config: Config{Name: "binny", InstallerConfig: DetailConfig{Method: goinstall.InstallMethod, Parameters: goinstall.InstallerParameters{Module: "github.com/anchore/binny"}}}}
+
+	fakeGoEnv(t, func([]string) string { return `{"GOVERSION": "go1.25.0"}` })
+	before, ok := cacheFingerprint(cache, tl, "v0.7.0")
+	require.True(t, ok)
+
+	fakeGoEnv(t, func([]string) string { return `{"GOVERSION": "go1.26.0"}` })
+	after, ok := cacheFingerprint(cache, tl, "v0.7.0")
+	require.True(t, ok)
+	assert.NotEqual(t, before, after, "a toolchain upgrade builds new bytes, so it needs a new entry")
+}
+
+// Test_fingerprint pins the fingerprint and cache key of one config per install method. A change here means every
+// user's cache entries for that method are re-keyed and every tool is fetched again, so it should only happen on
+// purpose (with cacheKeyVersion bumped when what the key covers changes). Renaming a parameter's json tag changes these.
 func Test_fingerprint(t *testing.T) {
+	fakeGoEnv(t, func([]string) string { return `{"GOVERSION":"go1.26.0"}` })
 	tests := []struct {
-		name string
-		cfg  DetailConfig
-		want string
+		name    string
+		cfg     DetailConfig
+		want    string
+		wantKey string
 	}{
 		{
-			name: "go-install",
-			cfg:  DetailConfig{Method: goinstall.InstallMethod, Parameters: goinstall.InstallerParameters{Module: "github.com/anchore/binny", Entrypoint: "cmd/binny", LDFlags: []string{"-X main.version={{ .Version }}"}}},
-			want: "9e48133cf1587b74",
+			name:    "go-install",
+			cfg:     DetailConfig{Method: goinstall.InstallMethod, Parameters: goinstall.InstallerParameters{Module: "github.com/anchore/binny", Entrypoint: "cmd/binny", LDFlags: []string{"-X main.version={{ .Version }}"}}},
+			want:    `{"Installer":{"Method":"go-install","Parameters":{"module":"github.com/anchore/binny","entrypoint":"cmd/binny","ldflags":["-X main.version={{ .Version }}"],"args":null,"env":null}},"GoEnv":"{\"GOVERSION\":\"go1.26.0\"}"}`,
+			wantKey: "984fd81358915f0ef6576083c49f6fdc",
 		},
 		{
-			name: "go-build",
-			cfg:  DetailConfig{Method: gobuild.InstallMethod, Parameters: gobuild.InstallerParameters{Module: "github.com/anchore/binny", Entrypoint: "cmd/binny", Source: gobuild.SourceModeGoProxy}},
-			want: "8c8816a74383cb18",
+			name:    "go-build",
+			cfg:     DetailConfig{Method: gobuild.InstallMethod, Parameters: gobuild.InstallerParameters{Module: "github.com/anchore/binny", Entrypoint: "cmd/binny", Source: gobuild.SourceModeGoProxy}},
+			want:    `{"Installer":{"Method":"go-build","Parameters":{"module":"github.com/anchore/binny","entrypoint":"cmd/binny","source":"go-proxy"}},"GoEnv":"{\"GOVERSION\":\"go1.26.0\"}"}`,
+			wantKey: "733e36d09a927c4551c6c0955df98f98",
 		},
 		{
-			name: "github-release",
-			cfg:  DetailConfig{Method: githubrelease.InstallMethod, Parameters: githubrelease.InstallerParameters{Repo: "cli/cli", Binary: "gh", KeepArchiveFiles: true}},
-			want: "f4c4d81556b9c82b",
+			name:    "github-release",
+			cfg:     DetailConfig{Method: githubrelease.InstallMethod, Parameters: githubrelease.InstallerParameters{Repo: "cli/cli", Binary: "gh", KeepArchiveFiles: true}},
+			want:    `{"Installer":{"Method":"github-release","Parameters":{"binary":"gh","repo":"cli/cli","assets":null,"keep-archive-files":true}}}`,
+			wantKey: "edba6e64e0b8226eeae469916f128537",
 		},
 		{
-			name: "hosted-shell",
-			cfg:  DetailConfig{Method: hostedshell.InstallMethod, Parameters: hostedshell.InstallerParameters{URL: "https://example.com/install.sh", Args: "-b {{ .Destination }}"}},
-			want: "4b89a83ff266e625",
+			name:    "hosted-shell",
+			cfg:     DetailConfig{Method: hostedshell.InstallMethod, Parameters: hostedshell.InstallerParameters{URL: "https://example.com/install.sh", Args: "-b {{ .Destination }}"}},
+			want:    `{"Installer":{"Method":"hosted-shell","Parameters":{"url":"https://example.com/install.sh","args":"-b {{ .Destination }}"}}}`,
+			wantKey: "86bfd5884add7cc9a25473efc380cba4",
 		},
+	}
+	fingerprint := func(cfg DetailConfig) string {
+		return compositeTool{config: Config{Name: "tool", InstallerConfig: cfg}}.Fingerprint()
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, fingerprint(tt.cfg, "linux", "amd64", ""))
+			got := fingerprint(tt.cfg)
+			assert.Equal(t, tt.want, got)
+			assert.Equal(t, tt.wantKey, cacheKey("linux", "amd64", got, false))
 		})
 	}
 
-	t.Run("platform is part of it", func(t *testing.T) {
-		cfg := tests[0].cfg
-		assert.NotEqual(t, fingerprint(cfg, "linux", "amd64", ""), fingerprint(cfg, "darwin", "amd64", ""))
-		assert.NotEqual(t, fingerprint(cfg, "linux", "amd64", ""), fingerprint(cfg, "linux", "arm64", ""))
-	})
-
-	t.Run("toolchain is part of it", func(t *testing.T) {
-		cfg := tests[0].cfg
-		assert.NotEqual(t, fingerprint(cfg, "linux", "amd64", "go1.23.0"), fingerprint(cfg, "linux", "amd64", "go1.24.0"))
+	t.Run("platform and layout are part of the key", func(t *testing.T) {
+		fp := fingerprint(tests[0].cfg)
+		key := cacheKey("linux", "amd64", fp, false)
+		assert.Len(t, key, 32)
+		assert.NotEqual(t, key, cacheKey("darwin", "amd64", fp, false))
+		assert.NotEqual(t, key, cacheKey("linux", "arm64", fp, false))
+		assert.NotEqual(t, key, cacheKey("linux", "amd64", fp, true))
 	})
 
 	t.Run("list order and duplicates are part of it", func(t *testing.T) {
@@ -198,7 +317,7 @@ func Test_fingerprint(t *testing.T) {
 			return DetailConfig{Method: gobuild.InstallMethod, Parameters: gobuild.InstallerParameters{Module: "github.com/anchore/binny", Args: a}}
 		}
 		// go build keeps the last -tags, so these build different binaries
-		assert.NotEqual(t, fingerprint(args("-tags", "a", "-tags", "b"), "linux", "amd64", ""), fingerprint(args("-tags", "b", "-tags", "a"), "linux", "amd64", ""))
-		assert.NotEqual(t, fingerprint(args("-trimpath", "-trimpath"), "linux", "amd64", ""), fingerprint(args(), "linux", "amd64", ""))
+		assert.NotEqual(t, fingerprint(args("-tags", "a", "-tags", "b")), fingerprint(args("-tags", "b", "-tags", "a")))
+		assert.NotEqual(t, fingerprint(args("-trimpath", "-trimpath")), fingerprint(args("-trimpath")))
 	})
 }

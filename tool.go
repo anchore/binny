@@ -21,11 +21,12 @@ type ArchiveFileKeeper interface {
 	KeepArchiveFiles() bool
 }
 
-// Fingerprinter is optionally implemented by a Tool to identify its install method and parameters, so cache entries
-// of the same name and version built from a different config are kept apart. The fingerprint must change whenever the
-// installed bytes or layout would (platform and keep-archive-files included), and be a file name without separators.
-// It is empty when the name and resolved version do not pin the bytes, such as for a tool built from a local module.
-// A tool with no fingerprint is installed into the store even when the cache is enabled.
+// Fingerprinter is optionally implemented by a Tool to identify its install method and parameters, and anything else
+// beyond the name and resolved version that changes the installed bytes (like the go toolchain), so cache entries built
+// from a different config are kept apart. Any string works: binny hashes it together with the platform and
+// keep-archive-files into the cache key. It is empty when the name and resolved version do not pin the bytes, such as
+// for a tool built from a local module. A tool with no fingerprint is installed into the store even when the cache is
+// enabled, and so is any tool whose resolved version is not exact (latest, a branch, v1.2).
 type Fingerprinter interface {
 	Fingerprint() string
 }

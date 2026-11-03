@@ -55,6 +55,16 @@ func (e StoreEntry) Path() string {
 	return filepath.Join(e.root, e.PathInRoot)
 }
 
+// IsCacheLink reports whether the entry is a link into the cache. Kept install dirs (DirInRoot) link within the store,
+// any other link is into the cache.
+func (e StoreEntry) IsCacheLink() (bool, error) {
+	fi, err := os.Lstat(e.Path())
+	if err != nil {
+		return false, err
+	}
+	return fi.Mode()&os.ModeSymlink != 0 && e.DirInRoot == "", nil
+}
+
 func NewStore(root string) (*Store, error) {
 	s := &Store{
 		root:    root,

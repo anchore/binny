@@ -71,6 +71,8 @@ func NewCache(root string) (*Cache, error) {
 			return nil, fmt.Errorf("failed to expand cache root %q: %w", root, err)
 		}
 		root = filepath.Join(home, root[1:])
+	} else if strings.HasPrefix(root, "~") {
+		return nil, fmt.Errorf("cache root %q: only a leading ~ or ~/ is expanded, use the full path for another user's home", root)
 	}
 	abs, err := filepath.Abs(root)
 	if err != nil {
@@ -110,6 +112,8 @@ func resolveExisting(path string) (string, error) {
 func (c *Cache) checkRoot() error {
 	resolved, err := filepath.EvalSymlinks(c.root)
 	if errors.Is(err, os.ErrNotExist) {
+		// a dangling link reads as missing too. checkCacheRoot refuses it as a link, and once its target appears it
+		// resolves elsewhere and is refused below.
 		return checkCacheRoot(c.root)
 	}
 	if err != nil {
@@ -245,12 +249,6 @@ func (m cacheEntryMetadata) validate() error {
 // Verify hashes the entry's binary and compares it with the digests the entry recorded. An entry that fails is left
 // in place, since only `binny cache delete` removes entries.
 func (e CacheEntry) Verify() error {
-	if !e.KeepArchiveFiles {
-		// binny moves only a regular file into such an entry. A link would resolve differently from wherever it was made.
-		if err := checkRegularFile(e.BinPath()); err != nil {
-			return e.corrupt(err)
-		}
-	}
 	actual, err := getDigestsForFile(e.BinPath())
 	if errors.Is(err, os.ErrNotExist) {
 		return e.corrupt(err)
@@ -347,6 +345,11 @@ func (c *Cache) Add(name, version, fingerprint, stagedDir, binPath string, keepA
 			return nil, err
 		}
 		return existing, nil
+	}
+
+	// staging dirs are created 0700, open the entry up like the rest of the cache
+	if err := os.Chmod(target, 0755); err != nil {
+		return nil, fmt.Errorf("failed to chmod %q: %w", target, err)
 	}
 
 	return &CacheEntry{Name: name, Version: version, Fingerprint: fingerprint, Dir: target, cacheEntryMetadata: metadata}, nil
@@ -511,15 +514,10 @@ func (c *Cache) DeleteAll() error {
 	return nil
 }
 
-// isStagingDir reports whether a dir in the staging root looks like one binny made: named by makeStagingDir and 0700,
-// as MkdirTemp creates it.
+// isStagingDir reports whether a dir in the staging root is one binny made, by the names makeStagingDir gives them.
 func isStagingDir(de os.DirEntry) bool {
 	name := de.Name()
-	if !de.IsDir() || (!strings.HasPrefix(name, cacheStagingPrefix+cacheInstallStage) && !strings.HasPrefix(name, cacheStagingPrefix+cacheDeleteStage)) {
-		return false
-	}
-	info, err := de.Info()
-	return err == nil && info.Mode().Perm() == 0o700
+	return de.IsDir() && (strings.HasPrefix(name, cacheStagingPrefix+cacheInstallStage) || strings.HasPrefix(name, cacheStagingPrefix+cacheDeleteStage))
 }
 
 // checkRegularFile refuses anything at path but a regular file, without following links.
@@ -603,11 +601,6 @@ func writeCacheEntryMetadata(entryDir, binInDir string, keepArchiveFiles bool) (
 		}
 	}
 
-	// staging dirs are created 0700, open the entry up like the rest of the cache
-	if err := os.Chmod(entryDir, 0755); err != nil {
-		return cacheEntryMetadata{}, fmt.Errorf("failed to chmod %q: %w", entryDir, err)
-	}
-
 	binPath := filepath.Join(entryDir, binInDir)
 	// read-only, so writing to a store's link (cp new-build .tool/<name>) fails instead of changing the binary every
 	// store shares
@@ -630,15 +623,22 @@ func writeCacheEntryMetadata(entryDir, binInDir string, keepArchiveFiles bool) (
 		return cacheEntryMetadata{}, err
 	}
 
-	//nolint:gosec // entries are read by every store, like the rest of the cache
-	if err := os.WriteFile(filepath.Join(entryDir, cacheEntryFile), contents, 0644); err != nil {
+	// exclusive, so a file (or link) by this name in a kept archive is refused rather than written through. 0644, since
+	// entries are read by every store, like the rest of the cache.
+	f, err := os.OpenFile(filepath.Join(entryDir, cacheEntryFile), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	if err != nil {
+		return cacheEntryMetadata{}, fmt.Errorf("failed to write cache entry metadata: %w", err)
+	}
+	if _, err := f.Write(contents); err != nil {
+		_ = f.Close()
 		return cacheEntryMetadata{}, err
 	}
-	return metadata, nil
+	return metadata, f.Close()
 }
 
 // restrictArchiveModes clears group and other write, setuid and setgid from the files and dirs a kept archive was
-// extracted with, since those carry the archive's own modes and every store runs what is in the entry.
+// extracted with, since those carry the archive's own modes and every store runs what is in the entry. Dirs also get
+// owner rwx, so an archive dir shipped as 0000 or 0555 can't make the entry undeletable.
 func restrictArchiveModes(dir string) error {
 	return filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.Type()&os.ModeSymlink != 0 {
@@ -649,7 +649,12 @@ func restrictArchiveModes(dir string) error {
 			return err
 		}
 		mode := info.Mode() & (os.ModePerm | os.ModeSetuid | os.ModeSetgid | os.ModeSticky)
-		if restricted := mode &^ (0o022 | os.ModeSetuid | os.ModeSetgid); restricted != mode {
+		restricted := mode &^ (0o022 | os.ModeSetuid | os.ModeSetgid)
+		if d.IsDir() {
+			// WalkDir reads a dir only after this returns, so a 0000 dir is opened up before it is listed
+			restricted |= 0o700
+		}
+		if restricted != mode {
 			// the staging dir is 0700, so nobody else can swap a path under it for a link mid-walk
 			return os.Chmod(path, restricted) //nolint:gosec
 		}

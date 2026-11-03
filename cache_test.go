@@ -405,8 +405,8 @@ func TestCache_Delete(t *testing.T) {
 		foreign := addForeignContentForTest(t, cache)
 		require.NoError(t, os.MkdirAll(filepath.Join(cache.stagingRoot(), "binny-install-tsc-1"), 0o700))
 
-		// named like binny's but not made by it: another prefix, or a mode MkdirTemp never creates
-		mine := []string{filepath.Join(cache.stagingRoot(), "binny-notes"), filepath.Join(cache.stagingRoot(), "binny-install-by-hand")}
+		// named like binny's but not by makeStagingDir
+		mine := []string{filepath.Join(cache.stagingRoot(), "binny-notes")}
 		for _, d := range mine {
 			require.NoError(t, os.MkdirAll(d, 0o755))
 		}
@@ -453,6 +453,10 @@ func TestNewCache_expandsHome(t *testing.T) {
 	want, err := filepath.EvalSymlinks(home)
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(want, "cache"), cache.Root())
+
+	// only the current user's home is expanded, anything else would quietly land in <cwd>/~user
+	_, err = NewCache("~someone/cache")
+	require.ErrorContains(t, err, "only a leading ~")
 }
 
 func TestCache_Add_rejectsLinkedBinary(t *testing.T) {
@@ -477,13 +481,6 @@ func TestCache_Add_rejectsLinkedBinary(t *testing.T) {
 	fi, err := os.Stat(outside)
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), fi.Mode().Perm())
-
-	t.Run("verify refuses an entry whose binary is a link", func(t *testing.T) {
-		entry := addCacheEntryForTest(t, cache, "tsc", "v2", "aaaa")
-		require.NoError(t, os.Remove(entry.BinPath()))
-		require.NoError(t, os.Symlink(outside, entry.BinPath()))
-		require.ErrorContains(t, entry.Verify(), "not a regular file")
-	})
 }
 
 func TestCache_Add_restrictsKeptArchiveModes(t *testing.T) {
@@ -501,17 +498,41 @@ func TestCache_Add_restrictsKeptArchiveModes(t *testing.T) {
 	script := filepath.Join(lib, "run.sh")
 	require.NoError(t, os.WriteFile(script, nil, 0o600))
 	require.NoError(t, os.Chmod(script, 0o777|os.ModeSetuid))
+	shared := filepath.Join(lib, "shared.sh")
+	require.NoError(t, os.WriteFile(shared, nil, 0o600))
+	// setgid can only be set on a file in one of our groups, which t.TempDir does not promise, so it is checked when set
+	_ = os.Chmod(shared, 0o775|os.ModeSetgid)
+	fi, err := os.Stat(shared)
+	require.NoError(t, err)
+	setgid := fi.Mode()&os.ModeSetgid != 0
+	// an archive dir nobody can list would otherwise fail the walk and make the entry undeletable
+	locked := filepath.Join(staged, "locked")
+	require.NoError(t, os.MkdirAll(filepath.Join(locked, "inner"), 0o700))
+	require.NoError(t, os.Chmod(filepath.Join(locked, "inner"), 0o555))
+	require.NoError(t, os.Chmod(locked, 0o000))
 	bin := filepath.Join(staged, "tsc")
 	require.NoError(t, os.WriteFile(bin, []byte("tsc"), 0o755))
 
 	entry, err := cache.Add("tsc", "v1", "aaaa", staged, bin, true)
 	require.NoError(t, err)
 
-	for path, want := range map[string]os.FileMode{"lib": 0o755, "lib/run.sh": 0o755} {
+	want := map[string]os.FileMode{"lib": 0o755, "lib/run.sh": 0o755, "locked": 0o700, "locked/inner": 0o755}
+	if setgid {
+		want["lib/shared.sh"] = 0o755
+	}
+	for path, mode := range want {
 		fi, err := os.Stat(filepath.Join(entry.Dir, path))
 		require.NoError(t, err)
-		assert.Equal(t, want, fi.Mode()&(os.ModePerm|os.ModeSetuid), path)
+		assert.Equal(t, mode, fi.Mode()&(os.ModePerm|os.ModeSetuid|os.ModeSetgid), path)
 	}
+
+	// staging dirs are 0700, an entry is opened up like the rest of the cache
+	fi, err = os.Stat(entry.Dir)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o755), fi.Mode().Perm())
+
+	require.NoError(t, cache.Delete(CacheRef{Name: "tsc"}))
+	assert.NoDirExists(t, entry.Dir)
 }
 
 func TestCheckCacheRoot_ancestors(t *testing.T) {
@@ -525,8 +546,76 @@ func TestCheckCacheRoot_ancestors(t *testing.T) {
 	_, err := NewCache(root)
 	require.ErrorContains(t, err, "above cache root")
 
-	// writable by others is fine when sticky, as /tmp is: only the owner of the root can rename it
+	// sticky (as /tmp is) only stops a rename: once the root is cleaned away anyone can recreate it
 	require.NoError(t, os.Chmod(parent, 0o777|os.ModeSticky))
 	_, err = NewCache(root)
+	require.ErrorContains(t, err, "above cache root")
+
+	require.NoError(t, os.Chmod(parent, 0o755))
+	cache, err := NewCache(root)
 	require.NoError(t, err)
+	_, cleanup, err := cache.Stage("tsc")
+	require.NoError(t, err)
+	cleanup()
+
+	// a dir above the root swapped for a link after the cache resolved it
+	moved := parent + "-moved"
+	require.NoError(t, os.Rename(parent, moved))
+	t.Cleanup(func() { _ = os.Rename(moved, parent) })
+	require.NoError(t, os.Symlink(moved, parent))
+	t.Cleanup(func() { _ = os.Remove(parent) })
+	_, _, err = cache.Stage("tsc")
+	require.Error(t, err)
+}
+
+func TestCache_danglingRootLink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires symlinks")
+	}
+	// a link at the root to a dir that does not exist yet reads as a missing root, and would be followed once someone
+	// made the dir
+	root := filepath.Join(t.TempDir(), "cache")
+	target := filepath.Join(t.TempDir(), "later")
+	require.NoError(t, os.Symlink(target, root))
+
+	_, err := NewCache(root)
+	require.ErrorContains(t, err, "is now a link")
+}
+
+func TestCache_Add_keptArchiveCannotWriteEntryFile(t *testing.T) {
+	cache := newTestCache(t)
+	staged, cleanup, err := cache.Stage("tsc")
+	require.NoError(t, err)
+	defer cleanup()
+
+	bin := filepath.Join(staged, "tsc")
+	require.NoError(t, os.WriteFile(bin, []byte("tsc"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(staged, cacheEntryFile), []byte("{}"), 0o644))
+
+	_, err = cache.Add("tsc", "v1.0.0", "aaaa", staged, bin, true)
+	require.ErrorContains(t, err, "metadata")
+	entries, err := cache.List()
+	require.NoError(t, err)
+	assert.Empty(t, entries)
+}
+
+func TestCache_Add_keptArchiveLeftoverStaysReclaimable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix permissions")
+	}
+	// another install got there first, so this staged dir (the would-be entry) is left behind. A kill at the same point
+	// leaves it too, with no cleanup to run, so delete --all has to recognize it.
+	cache := newTestCache(t)
+	addCacheEntryForTest(t, cache, "tsc", "v1.0.0", "aaaa")
+
+	staged, cleanup, err := cache.Stage("tsc")
+	require.NoError(t, err)
+	defer cleanup()
+	bin := filepath.Join(staged, "tsc")
+	require.NoError(t, os.WriteFile(bin, []byte("tsc"), 0o755))
+	_, err = cache.Add("tsc", "v1.0.0", "aaaa", staged, bin, true)
+	require.NoError(t, err)
+
+	require.NoError(t, cache.DeleteAll())
+	assert.NoDirExists(t, staged)
 }

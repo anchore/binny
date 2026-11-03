@@ -75,11 +75,11 @@ func Test_check_cacheLinkOtherFingerprint(t *testing.T) {
 	store := newStoreForTest(t)
 	cfg := VerifyConfig{VerifySHA256Digest: true}
 
-	require.NoError(t, Install(context.Background(), fakeTool{name: "tsc", param: "a"}, binny.VersionIntent{Want: "v1"}, store, cache, cfg))
-	require.NoError(t, Check(store, cache, fakeTool{name: "tsc", param: "a"}, "v1", cfg))
+	require.NoError(t, Install(context.Background(), fakeTool{name: "tsc", param: "a"}, binny.VersionIntent{Want: "v1.0.0"}, store, cache, cfg))
+	require.NoError(t, Check(store, cache, fakeTool{name: "tsc", param: "a"}, "v1.0.0", cfg))
 
 	// same name and version, but the config changed: the link points at another entry
-	require.ErrorContains(t, Check(store, cache, fakeTool{name: "tsc", param: "b"}, "v1", cfg), `"tsc"`)
+	require.ErrorContains(t, Check(store, cache, fakeTool{name: "tsc", param: "b"}, "v1.0.0", cfg), `"tsc"`)
 }
 
 func Test_check_cacheCopy(t *testing.T) {
@@ -87,9 +87,9 @@ func Test_check_cacheCopy(t *testing.T) {
 	store := newStoreForTest(t)
 	cfg := VerifyConfig{VerifySHA256Digest: true}
 
-	require.NoError(t, Install(context.Background(), fakeTool{name: "tsc"}, binny.VersionIntent{Want: "v1"}, store, nil, cfg))
+	require.NoError(t, Install(context.Background(), fakeTool{name: "tsc"}, binny.VersionIntent{Want: "v1.0.0"}, store, nil, cfg))
 
-	err := Check(store, cache, fakeTool{name: "tsc"}, "v1", cfg)
+	err := Check(store, cache, fakeTool{name: "tsc"}, "v1.0.0", cfg)
 	require.ErrorContains(t, err, `"tsc"`)
 	require.ErrorContains(t, err, "not linked into the cache")
 }
@@ -104,9 +104,9 @@ func Test_check_cacheStoreKeptDir(t *testing.T) {
 	cfg := VerifyConfig{VerifySHA256Digest: true}
 
 	// a keep-archive-files install without the cache links into the store's own kept dir, not into the cache
-	require.NoError(t, Install(context.Background(), keeper, binny.VersionIntent{Want: "v1"}, store, nil, cfg))
+	require.NoError(t, Install(context.Background(), keeper, binny.VersionIntent{Want: "v1.0.0"}, store, nil, cfg))
 
-	err := Check(store, cache, keeper, "v1", cfg)
+	err := Check(store, cache, keeper, "v1.0.0", cfg)
 	require.ErrorContains(t, err, `"tsc"`)
 	require.ErrorContains(t, err, "not linked into the cache")
 }
@@ -124,8 +124,8 @@ func Test_check_cacheFallbackCopy(t *testing.T) {
 
 	t.Run("links fail", func(t *testing.T) {
 		refuseLinks(t)
-		require.NoError(t, Install(context.Background(), tl, binny.VersionIntent{Want: "v1"}, store, newCache(), cfg))
-		require.NoError(t, Check(store, newCache(), tl, "v1", cfg))
+		require.NoError(t, Install(context.Background(), tl, binny.VersionIntent{Want: "v1.0.0"}, store, newCache(), cfg))
+		require.NoError(t, Check(store, newCache(), tl, "v1.0.0", cfg))
 	})
 
 	t.Run("links work", func(t *testing.T) {
@@ -135,7 +135,7 @@ func Test_check_cacheFallbackCopy(t *testing.T) {
 		// a later binny run probes the store again
 		reopened, err := binny.NewStore(store.Root())
 		require.NoError(t, err)
-		err = Check(reopened, newCache(), tl, "v1", cfg)
+		err = Check(reopened, newCache(), tl, "v1.0.0", cfg)
 		require.ErrorContains(t, err, `"tsc"`)
 		require.ErrorContains(t, err, "not linked into the cache")
 	})

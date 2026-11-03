@@ -197,9 +197,10 @@ func getAllStatuses(ctx context.Context, cmdCfg ListConfig, store *binny.Store, 
 	// the tool is still in the store but future actions will result in no action taken against it in the store.
 	for _, entry := range storedEntries {
 		installedVersion, isHashValid, err := getInstallationStatus(entry)
-		if errors.Is(err, fs.ErrNotExist) {
-			// a link left dangling by `binny cache delete`, which the next install drops from the state
-			log.WithFields("tool", entry.Name, "reason", err).Debug("unconfigured tool is missing")
+		if linked, _ := entry.IsCacheLink(); linked && errors.Is(err, fs.ErrNotExist) {
+			// a link left dangling by `binny cache delete`, which the next install drops from the state. A missing copy
+			// is still reported below.
+			log.WithFields("tool", entry.Name, "reason", err).Debug("unconfigured tool is a dangling cache link")
 			continue
 		}
 		names = append(names, entry.Name)
