@@ -54,8 +54,12 @@ func Install(ctx context.Context, tool binny.Tool, intent binny.VersionIntent, s
 
 	log.WithFields("tool", tool.Name(), "version", resolvedVersion, "reason", err).Debug("tool check failed")
 
-	if fingerprint, ok := cacheFingerprint(cache, tool, resolvedVersion); ok {
+	fingerprint, skipped := cacheFingerprint(cache, tool, resolvedVersion)
+	if skipped == "" {
 		return installThroughCache(ctx, tool, resolvedVersion, fingerprint, store, cache, stage)
+	}
+	if cache != nil {
+		log.WithFields("tool", tool.Name(), "version", resolvedVersion, "reason", skipped).Debug("not installing through the cache")
 	}
 
 	log.WithFields("tool", tool.Name(), "version", resolvedVersion).Info("installing")
@@ -145,32 +149,29 @@ func installThroughCache(ctx context.Context, tool binny.Tool, resolvedVersion, 
 	return nil
 }
 
-// cacheFingerprint returns the cache key for the tool when it should install through the cache. A resolved version
-// that can move (latest, a branch, a go prefix query like v1.2), whichever resolver passed it through, does not pin the
-// bytes, so it would be cached once and never rebuilt.
-func cacheFingerprint(cache *binny.Cache, t binny.Tool, resolvedVersion string) (string, bool) {
+// cacheFingerprint returns the cache key for the tool when it should install through the cache, or why it should not.
+// A resolved version that can move (latest, a branch, a go prefix query like v1.2), whichever resolver passed it
+// through, does not pin the bytes, so it would be cached once and never rebuilt.
+func cacheFingerprint(cache *binny.Cache, t binny.Tool, resolvedVersion string) (key, skipped string) {
 	if cache == nil {
-		return "", false
+		return "", "the cache is off"
 	}
 	if !internal.IsExactVersion(resolvedVersion) {
-		log.WithFields("tool", t.Name(), "version", resolvedVersion).Debug("version is not exact, the cache is not used for it")
-		return "", false
+		return "", fmt.Sprintf("version %q is not exact", resolvedVersion)
 	}
 	// a version the resolver may have passed through unresolved is only trusted as plain semver, which the go command
 	// reads as a tag and never as a branch
 	if p, ok := t.(interface{ passesThroughUnresolved() bool }); ok && p.passesThroughUnresolved() && !internal.IsPlainVersion(resolvedVersion) {
-		log.WithFields("tool", t.Name(), "version", resolvedVersion).Debug("version may be an unresolved branch, the cache is not used for it")
-		return "", false
+		return "", fmt.Sprintf("version %q may be an unresolved branch", resolvedVersion)
 	}
 	var fingerprint string
 	if f, ok := t.(binny.Fingerprinter); ok {
 		fingerprint = f.Fingerprint()
 	}
 	if fingerprint == "" {
-		log.WithFields("tool", t.Name()).Debug("tool has no fingerprint, the cache is not used for it")
-		return "", false
+		return "", "its install has no fingerprint (a local module, or go env could not be read)"
 	}
-	return cacheKey(runtime.GOOS, runtime.GOARCH, fingerprint, keepsArchiveFiles(t)), true
+	return cacheKey(runtime.GOOS, runtime.GOARCH, fingerprint, keepsArchiveFiles(t)), ""
 }
 
 // cacheKeyVersion is folded into every cache key. Bump it when what the key covers changes on purpose, which re-keys

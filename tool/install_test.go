@@ -341,7 +341,7 @@ func TestInstall_cacheOffReplacesLink(t *testing.T) {
 	require.NoError(t, Install(context.Background(), fakeTool{name: "tsc"}, intent, store, newCacheForTest(t), VerifyConfig{}))
 
 	// a refused cache root is built as nil too, and the link into it must not survive
-	require.Error(t, Check(store, nil, fakeTool{name: "tsc"}, "v1.0.0", VerifyConfig{}))
+	require.ErrorContains(t, Check(store, nil, fakeTool{name: "tsc"}, "v1.0.0", VerifyConfig{}), "the cache is off")
 	require.NoError(t, Install(context.Background(), fakeTool{name: "tsc"}, intent, store, nil, VerifyConfig{}))
 	fi, err := os.Lstat(filepath.Join(store.Root(), "tsc"))
 	require.NoError(t, err)
@@ -494,7 +494,7 @@ func TestInstall_cacheLinkToUncacheableConverts(t *testing.T) {
 
 	// the config changed to one whose version the cache can't trust (a local module, allow-unresolved-version)
 	tl := fakeTool{name: "tsc", local: true}
-	require.ErrorContains(t, Check(store, cache, tl, "v1.0.0", cfg), "not used for it")
+	require.ErrorContains(t, Check(store, cache, tl, "v1.0.0", cfg), "not used for it: its install has no fingerprint")
 	require.NoError(t, Install(context.Background(), tl, intent, store, cache, cfg))
 	fi, err := os.Lstat(filepath.Join(store.Root(), "tsc"))
 	require.NoError(t, err)

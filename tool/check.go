@@ -54,15 +54,15 @@ func keepsArchiveFiles(t binny.Tool) bool {
 // does not match the cache setting is an error, so the next install converts it: a copy while the cache is used, a
 // link into the cache while it is not, or a link to another fingerprint's entry of the same name and version.
 func checkCacheLayout(store *binny.Store, cache *binny.Cache, t binny.Tool, entry *binny.StoreEntry, resolvedVersion string) (bool, error) {
-	linkedOut, err := entry.IsCacheLink()
+	linkedOut, err := entry.IsLinkOutOfStore()
 	if err != nil {
 		return false, fmt.Errorf("failed to validate tool %q: %w", t.Name(), err)
 	}
 
-	fingerprint, useCache := cacheFingerprint(cache, t, resolvedVersion)
-	if !useCache {
+	fingerprint, skipped := cacheFingerprint(cache, t, resolvedVersion)
+	if skipped != "" {
 		if linkedOut {
-			return false, fmt.Errorf("tool %q is linked into the cache, which is not used for it", t.Name())
+			return false, fmt.Errorf("tool %q is linked into the cache, which is not used for it: %s", t.Name(), skipped)
 		}
 		return false, nil
 	}

@@ -146,8 +146,8 @@ func Test_cacheFingerprint_exactVersion(t *testing.T) {
 
 	versions := map[string]bool{"v0.7.0": true, "bun-v1.4.3": true, "0123abc": true, "latest": false, "main": false, "nightly": false, "v1": false, "v1.2": false}
 	for version, want := range versions {
-		_, ok := cacheFingerprint(cache, tl, version)
-		assert.Equal(t, want, ok, version)
+		_, skipped := cacheFingerprint(cache, tl, version)
+		assert.Equal(t, want, skipped == "", version)
 	}
 }
 
@@ -166,15 +166,15 @@ func Test_cacheFingerprint_passedThroughVersion(t *testing.T) {
 	versions := map[string]bool{"v0.7.0": true, "v0.7.0-rc.1": true, "deadbee": false, "release/v1.2.3": false, "bun-v1.4.3": false}
 	for name, tl := range tools {
 		for version, want := range versions {
-			_, ok := cacheFingerprint(cache, tl, version)
-			assert.Equal(t, want, ok, "%s at %s", name, version)
+			_, skipped := cacheFingerprint(cache, tl, version)
+			assert.Equal(t, want, skipped == "", "%s at %s", name, version)
 		}
 	}
 
 	// a resolver that resolves every ref does vouch for a sha
 	resolved := compositeTool{config: Config{Name: "binny", InstallerConfig: remote}}
-	_, ok := cacheFingerprint(cache, resolved, "deadbee")
-	assert.True(t, ok)
+	_, skipped := cacheFingerprint(cache, resolved, "deadbee")
+	assert.Empty(t, skipped)
 }
 
 // fakeGoEnv makes every go env read return env, and forgets the reads before and after the test.
@@ -247,12 +247,12 @@ func Test_cacheFingerprint_goEnvRekeys(t *testing.T) {
 	tl := compositeTool{config: Config{Name: "binny", InstallerConfig: DetailConfig{Method: goinstall.InstallMethod, Parameters: goinstall.InstallerParameters{Module: "github.com/anchore/binny"}}}}
 
 	fakeGoEnv(t, func([]string) string { return `{"GOVERSION": "go1.25.0"}` })
-	before, ok := cacheFingerprint(cache, tl, "v0.7.0")
-	require.True(t, ok)
+	before, skipped := cacheFingerprint(cache, tl, "v0.7.0")
+	require.Empty(t, skipped)
 
 	fakeGoEnv(t, func([]string) string { return `{"GOVERSION": "go1.26.0"}` })
-	after, ok := cacheFingerprint(cache, tl, "v0.7.0")
-	require.True(t, ok)
+	after, skipped := cacheFingerprint(cache, tl, "v0.7.0")
+	require.Empty(t, skipped)
 	assert.NotEqual(t, before, after, "a toolchain upgrade builds new bytes, so it needs a new entry")
 }
 
