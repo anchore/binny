@@ -14,6 +14,11 @@ func IsVersion(want string) bool {
 	return IsSemver(want) && !commitPattern.MatchString(want)
 }
 
+// IsCommit reports whether v is a full or abbreviated commit sha.
+func IsCommit(v string) bool {
+	return commitPattern.MatchString(v)
+}
+
 // IsGitRef reports whether a wanted version names a git ref (branch, tag, PR head, or commit) rather than a version or
 // "latest". Prefixed semver tags (bun-v1.4.3, cli/v2.0.0) are refs by this definition, a resolver that treats them as
 // versions checks SemverTagPrefix on top.

@@ -37,9 +37,12 @@ func (f fakeTool) Name() string { return f.name }
 
 func (f fakeTool) KeepArchiveFiles() bool { return f.keep }
 
-func (f fakeTool) BypassesCache() bool { return f.local }
-
-func (f fakeTool) Fingerprint() string { return fmt.Sprintf("keep-%t-%s", f.keep, f.param) }
+func (f fakeTool) Fingerprint() string {
+	if f.local {
+		return ""
+	}
+	return fmt.Sprintf("keep-%t-%s", f.keep, f.param)
+}
 
 func (f fakeTool) InstallTo(_ context.Context, version, destDir string) (string, error) {
 	if f.installs != nil {

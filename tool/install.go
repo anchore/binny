@@ -13,12 +13,14 @@ import (
 
 	"github.com/anchore/binny"
 	"github.com/anchore/binny/event"
+	"github.com/anchore/binny/internal"
 	"github.com/anchore/binny/internal/bus"
 	"github.com/anchore/binny/internal/log"
 )
 
 var ErrAlreadyInstalled = errors.New("already installed")
 
+// Install installs the tool into the store, through the cache when one is given. A nil cache means the cache is disabled.
 func Install(ctx context.Context, tool binny.Tool, intent binny.VersionIntent, store *binny.Store, cache *binny.Cache, verifyConfig VerifyConfig) (err error) {
 	prog, stage := trackInstallation(tool.Name(), intent.Want)
 	defer func() {
@@ -49,7 +51,7 @@ func Install(ctx context.Context, tool binny.Tool, intent binny.VersionIntent, s
 
 	log.WithFields("tool", tool.Name(), "version", resolvedVersion, "reason", err).Debug("tool check failed")
 
-	if fingerprint, ok := cacheFingerprint(cache, tool); ok {
+	if fingerprint, ok := cacheFingerprint(cache, tool, resolvedVersion); ok {
 		return installThroughCache(ctx, tool, resolvedVersion, fingerprint, store, cache, stage)
 	}
 
@@ -140,16 +142,18 @@ func installThroughCache(ctx context.Context, tool binny.Tool, resolvedVersion, 
 	return nil
 }
 
-// cacheFingerprint returns the tool's fingerprint when it should install through the cache.
-func cacheFingerprint(cache *binny.Cache, t binny.Tool) (string, bool) {
+// cacheFingerprint returns the tool's fingerprint when it should install through the cache. A version passed through
+// unresolved (latest, a branch) does not pin the bytes, so it would be cached once and never rebuilt.
+func cacheFingerprint(cache *binny.Cache, t binny.Tool, resolvedVersion string) (string, bool) {
 	if cache == nil {
 		return "", false
 	}
-	if b, ok := t.(binny.CacheBypasser); ok && b.BypassesCache() {
+	if u, ok := t.(interface{ allowsUnresolvedVersion() bool }); ok && u.allowsUnresolvedVersion() && !internal.IsVersion(resolvedVersion) && !internal.IsCommit(resolvedVersion) {
+		log.WithFields("tool", t.Name(), "version", resolvedVersion).Debug("version is unresolved, the cache is not used for it")
 		return "", false
 	}
 	f, ok := t.(binny.Fingerprinter)
-	if !ok {
+	if !ok || f.Fingerprint() == "" {
 		log.WithFields("tool", t.Name()).Debug("tool has no fingerprint, the cache is not used for it")
 		return "", false
 	}

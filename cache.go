@@ -20,7 +20,8 @@ import (
 
 // Cache is a per-user directory of installed tools that stores link to, so a tool is downloaded or built once per
 // machine instead of once per checkout. Each entry lives at <root>/<name>/<version>/<fingerprint>/ and is never
-// changed once it is in place: installs stage under <root>/.tmp/ and rename into place, and the first rename wins.
+// changed once it is in place: installs stage under <root>/.tmp/ and rename into place, and the first rename wins. Make
+// one with NewCache, the zero value has no root.
 type Cache struct {
 	root string
 }
@@ -49,17 +50,27 @@ const (
 	// cacheEntryFile holds each entry's metadata. Its name is binny's own, so it cannot collide with a file in a kept
 	// archive, and it marks a dir as an entry: list and delete act only on dirs that have it.
 	cacheEntryFile = ".binny-entry.json"
-	// cacheStagingPrefix starts the name of every dir an install stages in, so `delete --all` removes only those
+	// cacheStagingPrefix starts the name of every dir binny stages in, so `delete --all` removes only those
 	cacheStagingPrefix = "binny-"
+	cacheInstallStage  = "install-"
+	cacheDeleteStage   = "delete-"
 )
 
-// NewCache returns the cache at root. Symlinks in the root are resolved once, so the links binny makes into the cache
-// never pass through a link that could later be pointed elsewhere. It fails for an empty root and for a root that
-// someone other than the current user could have put entries in.
+// NewCache returns the cache at root. A leading ~ is the home dir. Symlinks in the root are resolved once, so the links
+// binny makes into the cache never pass through a link that could later be pointed elsewhere. It fails for an empty
+// root and for a root that someone other than the current user could have put entries in.
 func NewCache(root string) (*Cache, error) {
 	if root == "" {
 		// an empty path would otherwise resolve to the current dir, putting the cache in the checkout
 		return nil, errors.New("cache root is empty: set cache.root to a dir, or leave it unset for the default")
+	}
+	// env vars and config values reach here with ~ unexpanded, which would otherwise put the cache in <cwd>/~
+	if root == "~" || strings.HasPrefix(root, "~/") || strings.HasPrefix(root, "~"+string(filepath.Separator)) {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("failed to expand cache root %q: %w", root, err)
+		}
+		root = filepath.Join(home, root[1:])
 	}
 	abs, err := filepath.Abs(root)
 	if err != nil {
@@ -94,11 +105,12 @@ func resolveExisting(path string) (string, error) {
 }
 
 // checkRoot refuses a root that someone other than the current user could have put entries in, or that has become a
-// link since the cache resolved it. A root that does not exist yet has nothing in it to trust.
+// link since the cache resolved it. A root that does not exist yet has nothing in it to trust, but the dirs above it
+// are still checked, since binny is about to create it there.
 func (c *Cache) checkRoot() error {
 	resolved, err := filepath.EvalSymlinks(c.root)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		return checkCacheRoot(c.root)
 	}
 	if err != nil {
 		return err
@@ -109,22 +121,23 @@ func (c *Cache) checkRoot() error {
 	return checkCacheRoot(c.root)
 }
 
+// Root is the absolute path of the cache, with symlinks resolved.
 func (c *Cache) Root() string {
 	return c.root
 }
 
-// StagingRoot is where installs are staged, on the same filesystem as the entries so the final rename is atomic.
-func (c *Cache) StagingRoot() string {
+// stagingRoot is where installs are staged, on the same filesystem as the entries so the final rename is atomic.
+func (c *Cache) stagingRoot() string {
 	return filepath.Join(c.root, cacheStagingDirName)
 }
 
-// Stage creates a dir under StagingRoot to install a tool into before Add moves it into the cache. The returned cleanup
+// Stage creates a dir under <root>/.tmp/ to install a tool into before Add moves it into the cache. The returned cleanup
 // removes what Add left behind, and is safe to call whatever Stage returned.
 func (c *Cache) Stage(name string) (string, func(), error) {
-	return c.makeStagingDir("install-" + name + "-")
+	return c.makeStagingDir(cacheInstallStage + name + "-")
 }
 
-// makeStagingDir creates a dir under StagingRoot named so that `binny cache delete --all` reclaims it, creating the
+// makeStagingDir creates a dir under <root>/.tmp/ named so that `binny cache delete --all` reclaims it, creating the
 // root when it does not exist yet.
 func (c *Cache) makeStagingDir(pattern string) (string, func(), error) {
 	cleanup := func() {}
@@ -132,19 +145,19 @@ func (c *Cache) makeStagingDir(pattern string) (string, func(), error) {
 	if err := c.checkRoot(); err != nil {
 		return "", cleanup, err
 	}
-	if err := os.MkdirAll(c.StagingRoot(), 0755); err != nil {
+	if err := os.MkdirAll(c.stagingRoot(), 0755); err != nil {
 		return "", cleanup, fmt.Errorf("failed to create cache staging root: %w", err)
 	}
 	if err := c.checkRoot(); err != nil {
 		return "", cleanup, err
 	}
-	if err := checkStagingRoot(c.StagingRoot()); err != nil {
+	if err := checkStagingRoot(c.stagingRoot()); err != nil {
 		return "", cleanup, err
 	}
 
-	dir, err := os.MkdirTemp(c.StagingRoot(), cacheStagingPrefix+pattern)
+	dir, err := os.MkdirTemp(c.stagingRoot(), cacheStagingPrefix+pattern)
 	if err != nil {
-		return "", cleanup, fmt.Errorf("failed to create temp directory in %q: %w", c.StagingRoot(), err)
+		return "", cleanup, fmt.Errorf("failed to create temp directory in %q: %w", c.stagingRoot(), err)
 	}
 	return dir, func() {
 		if err := os.RemoveAll(dir); err != nil {
@@ -232,6 +245,12 @@ func (m cacheEntryMetadata) validate() error {
 // Verify hashes the entry's binary and compares it with the digests the entry recorded. An entry that fails is left
 // in place, since only `binny cache delete` removes entries.
 func (e CacheEntry) Verify() error {
+	if !e.KeepArchiveFiles {
+		// binny moves only a regular file into such an entry. A link would resolve differently from wherever it was made.
+		if err := checkRegularFile(e.BinPath()); err != nil {
+			return e.corrupt(err)
+		}
+	}
 	actual, err := getDigestsForFile(e.BinPath())
 	if errors.Is(err, os.ErrNotExist) {
 		return e.corrupt(err)
@@ -274,8 +293,8 @@ func (c *Cache) Add(name, version, fingerprint, stagedDir, binPath string, keepA
 	}
 
 	// staging must be within the staging root, so the final rename stays on one filesystem and delete --all can reclaim it
-	if rel, err := relWithin(c.StagingRoot(), stagedDir); err != nil || rel == "." {
-		return nil, fmt.Errorf("staged dir %q is not within the cache staging root %q", stagedDir, c.StagingRoot())
+	if rel, err := relWithin(c.stagingRoot(), stagedDir); err != nil || rel == "." {
+		return nil, fmt.Errorf("staged dir %q is not within the cache staging root %q", stagedDir, c.stagingRoot())
 	}
 
 	if err := c.checkRoot(); err != nil {
@@ -295,6 +314,10 @@ func (c *Cache) Add(name, version, fingerprint, stagedDir, binPath string, keepA
 			return nil, fmt.Errorf("failed to stage cache entry for %q: %w", name, err)
 		}
 		binInDir = name
+		// a link from an archive is only kept inside staging at its own depth, moving it would let it point anywhere
+		if err := checkRegularFile(binPath); err != nil {
+			return nil, err
+		}
 		if err := os.Rename(binPath, filepath.Join(entryDir, binInDir)); err != nil {
 			return nil, fmt.Errorf("failed to stage cache entry for %q: %w", name, err)
 		}
@@ -466,24 +489,48 @@ func (c *Cache) DeleteAll() error {
 		return err
 	}
 
-	if err := checkStagingRoot(c.StagingRoot()); errors.Is(err, os.ErrNotExist) {
+	if err := checkStagingRoot(c.stagingRoot()); errors.Is(err, os.ErrNotExist) {
 		return nil
 	} else if err != nil {
 		return err
 	}
-	staged, err := os.ReadDir(c.StagingRoot())
+	staged, err := os.ReadDir(c.stagingRoot())
 	if err != nil {
 		return err
 	}
 	for _, de := range staged {
-		if strings.HasPrefix(de.Name(), cacheStagingPrefix) {
-			if err := os.RemoveAll(filepath.Join(c.StagingRoot(), de.Name())); err != nil {
-				return err
-			}
+		if !isStagingDir(de) {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(c.stagingRoot(), de.Name())); err != nil {
+			return err
 		}
 	}
 	// only removed when nothing else is in it
-	_ = os.Remove(c.StagingRoot())
+	_ = os.Remove(c.stagingRoot())
+	return nil
+}
+
+// isStagingDir reports whether a dir in the staging root looks like one binny made: named by makeStagingDir and 0700,
+// as MkdirTemp creates it.
+func isStagingDir(de os.DirEntry) bool {
+	name := de.Name()
+	if !de.IsDir() || (!strings.HasPrefix(name, cacheStagingPrefix+cacheInstallStage) && !strings.HasPrefix(name, cacheStagingPrefix+cacheDeleteStage)) {
+		return false
+	}
+	info, err := de.Info()
+	return err == nil && info.Mode().Perm() == 0o700
+}
+
+// checkRegularFile refuses anything at path but a regular file, without following links.
+func checkRegularFile(path string) error {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("binary %q is not a regular file", path)
+	}
 	return nil
 }
 
@@ -494,7 +541,7 @@ func (c *Cache) removeEntries(locations []cacheEntryLocation) error {
 	if len(locations) == 0 {
 		return nil
 	}
-	trash, cleanup, err := c.makeStagingDir("delete-")
+	trash, cleanup, err := c.makeStagingDir(cacheDeleteStage)
 	if err != nil {
 		return err
 	}
@@ -550,6 +597,12 @@ func (e CacheEntry) Size() (int64, error) {
 }
 
 func writeCacheEntryMetadata(entryDir, binInDir string, keepArchiveFiles bool) (cacheEntryMetadata, error) {
+	if keepArchiveFiles {
+		if err := restrictArchiveModes(entryDir); err != nil {
+			return cacheEntryMetadata{}, err
+		}
+	}
+
 	// staging dirs are created 0700, open the entry up like the rest of the cache
 	if err := os.Chmod(entryDir, 0755); err != nil {
 		return cacheEntryMetadata{}, fmt.Errorf("failed to chmod %q: %w", entryDir, err)
@@ -582,6 +635,26 @@ func writeCacheEntryMetadata(entryDir, binInDir string, keepArchiveFiles bool) (
 		return cacheEntryMetadata{}, err
 	}
 	return metadata, nil
+}
+
+// restrictArchiveModes clears group and other write, setuid and setgid from the files and dirs a kept archive was
+// extracted with, since those carry the archive's own modes and every store runs what is in the entry.
+func restrictArchiveModes(dir string) error {
+	return filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.Type()&os.ModeSymlink != 0 {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		mode := info.Mode() & (os.ModePerm | os.ModeSetuid | os.ModeSetgid | os.ModeSticky)
+		if restricted := mode &^ (0o022 | os.ModeSetuid | os.ModeSetgid); restricted != mode {
+			// the staging dir is 0700, so nobody else can swap a path under it for a link mid-walk
+			return os.Chmod(path, restricted) //nolint:gosec
+		}
+		return nil
+	})
 }
 
 // validateCacheKey ensures that the entry path derived from the key stays within the cache root.

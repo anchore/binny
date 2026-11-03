@@ -2,7 +2,9 @@ package command
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/scylladb/go-set/strset"
 	"github.com/spf13/cobra"
@@ -81,10 +83,37 @@ func runRunRUN(cfg RunConfig, name string, args []string) error {
 
 	entry := entries[0]
 
+	// a link out of the store runs whatever the cache root holds, so the root is checked first, as install and check do
+	if fi, err := os.Lstat(entry.Path()); err == nil && fi.Mode()&os.ModeSymlink != 0 && entry.DirInRoot == "" {
+		if err := checkCacheLink(cfg.Cache, entry.Path()); err != nil {
+			return fmt.Errorf("not running %q: %w", name, err)
+		}
+	}
+
 	fullPath, err := filepath.Abs(entry.Path())
 	if err != nil {
 		return fmt.Errorf("unable to resolve path to tool: %w", err)
 	}
 
 	return run(fullPath, args)
+}
+
+// checkCacheLink returns an error unless the link at path points into the configured cache, and the cache root is safe
+// to run tools from.
+func checkCacheLink(opt option.Cache, path string) error {
+	cache, err := opt.Build()
+	if err != nil {
+		return err
+	}
+	if cache == nil {
+		return fmt.Errorf("%q links into the cache, which is disabled: run binny install", path)
+	}
+	target, err := os.Readlink(path)
+	if err != nil {
+		return err
+	}
+	if !strings.HasPrefix(filepath.Clean(target), cache.Root()+string(filepath.Separator)) {
+		return fmt.Errorf("%q links outside the cache root %q: run binny install", path, cache.Root())
+	}
+	return nil
 }

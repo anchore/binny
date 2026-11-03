@@ -15,6 +15,8 @@ type VerifyConfig struct {
 	VerifySHA256Digest bool
 }
 
+// Check returns an error when the tool is not installed in the store at the resolved version, in the layout the cache
+// setting asks for, with matching digests. A nil cache means the cache is disabled.
 func Check(store *binny.Store, cache *binny.Cache, t binny.Tool, resolvedVersion string, verifyConfig VerifyConfig) error {
 	toolName := t.Name()
 	entry, err := store.Get(toolName, resolvedVersion)
@@ -60,7 +62,7 @@ func checkCacheLayout(store *binny.Store, cache *binny.Cache, t binny.Tool, entr
 	// keep-archive-files links stay within the store (DirInRoot), any other link is into the cache
 	linkedOut := fi.Mode()&os.ModeSymlink != 0 && entry.DirInRoot == ""
 
-	fingerprint, useCache := cacheFingerprint(cache, t)
+	fingerprint, useCache := cacheFingerprint(cache, t, resolvedVersion)
 	if !useCache {
 		if linkedOut {
 			return false, fmt.Errorf("tool %q is linked into the cache, which is not used for it", t.Name())

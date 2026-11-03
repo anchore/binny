@@ -22,16 +22,12 @@ type ArchiveFileKeeper interface {
 }
 
 // Fingerprinter is optionally implemented by a Tool to identify its install method and parameters, so cache entries
-// of the same name and version built from a different config are kept apart. A tool that does not implement it is
-// installed into the store even when the cache is enabled.
+// of the same name and version built from a different config are kept apart. The fingerprint must change whenever the
+// installed bytes or layout would (platform and keep-archive-files included), and be a file name without separators.
+// It is empty when the name and resolved version do not pin the bytes, such as for a tool built from a local module.
+// A tool with no fingerprint is installed into the store even when the cache is enabled.
 type Fingerprinter interface {
 	Fingerprint() string
-}
-
-// CacheBypasser is optionally implemented by a Tool that installs into the store even when the cache is enabled, such
-// as one built from a local module, whose every commit would otherwise add a cache entry nothing else reuses.
-type CacheBypasser interface {
-	BypassesCache() bool
 }
 
 type VersionResolver interface {

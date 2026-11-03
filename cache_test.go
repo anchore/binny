@@ -16,8 +16,8 @@ import (
 // addCacheEntryForTest puts a single-binary entry in the cache the way an install does.
 func addCacheEntryForTest(t *testing.T, cache *Cache, name, version, fingerprint string) *CacheEntry {
 	t.Helper()
-	require.NoError(t, os.MkdirAll(cache.StagingRoot(), 0o755))
-	staged, err := os.MkdirTemp(cache.StagingRoot(), "binny-install-")
+	require.NoError(t, os.MkdirAll(cache.stagingRoot(), 0o755))
+	staged, err := os.MkdirTemp(cache.stagingRoot(), "binny-install-")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(staged) })
 
@@ -53,7 +53,7 @@ func addForeignContentForTest(t *testing.T, cache *Cache) []string {
 		filepath.Join(cache.Root(), "binny", "v1", "src", "main.go"),
 		// a version dir name that does not round trip through path escaping
 		filepath.Join(cache.Root(), "binny", "v1%zz", "aaaa", cacheEntryFile),
-		filepath.Join(cache.StagingRoot(), "someone-elses-file"),
+		filepath.Join(cache.stagingRoot(), "someone-elses-file"),
 	}
 	for _, p := range paths {
 		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
@@ -93,7 +93,7 @@ func TestCache_List(t *testing.T) {
 		addCacheEntryForTest(t, cache, "binny", "cli/v1", "aaaa")
 		addForeignContentForTest(t, cache)
 		// a staging dir left by an install that was killed
-		require.NoError(t, os.MkdirAll(filepath.Join(cache.StagingRoot(), "binny-install-tsc-1", "tsc"), 0o755))
+		require.NoError(t, os.MkdirAll(filepath.Join(cache.stagingRoot(), "binny-install-tsc-1", "tsc"), 0o755))
 
 		entries, err := cache.List()
 		require.NoError(t, err)
@@ -270,14 +270,14 @@ func TestCache_rejectsEscapingKeys(t *testing.T) {
 		_, err := cache.Get(key[0], key[1], key[2])
 		require.ErrorContains(t, err, "invalid cache entry key", key)
 
-		_, err = cache.Add(key[0], key[1], key[2], filepath.Join(cache.StagingRoot(), "binny-x"), filepath.Join(cache.StagingRoot(), "binny-x", "bin"), false)
+		_, err = cache.Add(key[0], key[1], key[2], filepath.Join(cache.stagingRoot(), "binny-x"), filepath.Join(cache.stagingRoot(), "binny-x", "bin"), false)
 		require.ErrorContains(t, err, "invalid cache entry key", key)
 	}
 }
 
 func TestCache_Add_rejectsStagingOutsideStagingRoot(t *testing.T) {
 	cache := newTestCache(t)
-	for _, staged := range []string{t.TempDir(), cache.StagingRoot(), cache.Root()} {
+	for _, staged := range []string{t.TempDir(), cache.stagingRoot(), cache.Root()} {
 		_, err := cache.Add("tsc", "v1", "aaaa", staged, filepath.Join(staged, "bin"), false)
 		require.ErrorContains(t, err, "not within the cache staging root", staged)
 	}
@@ -345,7 +345,7 @@ func TestCache_Delete(t *testing.T) {
 		assert.NoDirExists(t, filepath.Join(cache.Root(), "tsc"))
 
 		// the entry was moved into a staging dir to be removed, and that dir is gone too
-		leftover, err := filepath.Glob(filepath.Join(cache.StagingRoot(), cacheStagingPrefix+"delete-*"))
+		leftover, err := filepath.Glob(filepath.Join(cache.stagingRoot(), cacheStagingPrefix+"delete-*"))
 		require.NoError(t, err)
 		assert.Empty(t, leftover)
 	})
@@ -393,7 +393,7 @@ func TestCache_Delete(t *testing.T) {
 
 	t.Run("all", func(t *testing.T) {
 		cache := setup(t)
-		require.NoError(t, os.MkdirAll(filepath.Join(cache.StagingRoot(), "binny-install-tsc-1"), 0o755))
+		require.NoError(t, os.MkdirAll(filepath.Join(cache.stagingRoot(), "binny-install-tsc-1"), 0o700))
 		require.NoError(t, cache.DeleteAll())
 		des, err := os.ReadDir(cache.Root())
 		require.NoError(t, err)
@@ -403,13 +403,22 @@ func TestCache_Delete(t *testing.T) {
 	t.Run("all leaves what binny did not create", func(t *testing.T) {
 		cache := setup(t)
 		foreign := addForeignContentForTest(t, cache)
-		require.NoError(t, os.MkdirAll(filepath.Join(cache.StagingRoot(), "binny-install-tsc-1"), 0o755))
+		require.NoError(t, os.MkdirAll(filepath.Join(cache.stagingRoot(), "binny-install-tsc-1"), 0o700))
+
+		// named like binny's but not made by it: another prefix, or a mode MkdirTemp never creates
+		mine := []string{filepath.Join(cache.stagingRoot(), "binny-notes"), filepath.Join(cache.stagingRoot(), "binny-install-by-hand")}
+		for _, d := range mine {
+			require.NoError(t, os.MkdirAll(d, 0o755))
+		}
 
 		require.NoError(t, cache.DeleteAll())
 		assert.Empty(t, listed(t, cache))
-		assert.NoDirExists(t, filepath.Join(cache.StagingRoot(), "binny-install-tsc-1"))
+		assert.NoDirExists(t, filepath.Join(cache.stagingRoot(), "binny-install-tsc-1"))
 		for _, p := range foreign {
 			assert.FileExists(t, p)
+		}
+		for _, d := range mine {
+			assert.DirExists(t, d)
 		}
 	})
 
@@ -421,7 +430,7 @@ func TestCache_Delete(t *testing.T) {
 		elsewhere := t.TempDir()
 		victim := filepath.Join(elsewhere, "binny-worktree")
 		require.NoError(t, os.Mkdir(victim, 0o755))
-		require.NoError(t, os.Symlink(elsewhere, cache.StagingRoot()))
+		require.NoError(t, os.Symlink(elsewhere, cache.stagingRoot()))
 
 		require.ErrorContains(t, cache.DeleteAll(), "not a dir")
 		assert.DirExists(t, victim)
@@ -432,4 +441,92 @@ func TestCache_Delete(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, cache.DeleteAll())
 	})
+}
+
+func TestNewCache_expandsHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	cache, err := NewCache("~/cache")
+	require.NoError(t, err)
+	want, err := filepath.EvalSymlinks(home)
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(want, "cache"), cache.Root())
+}
+
+func TestCache_Add_rejectsLinkedBinary(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires symlinks")
+	}
+	// an archive link is kept inside staging relative to its own depth, so moving it into the entry could point it at
+	// any file, which the entry's chmod would then change
+	outside := filepath.Join(t.TempDir(), "secret")
+	require.NoError(t, os.WriteFile(outside, []byte("secret"), 0o600))
+
+	cache := newTestCache(t)
+	staged, cleanup, err := cache.Stage("tsc")
+	require.NoError(t, err)
+	defer cleanup()
+	bin := filepath.Join(staged, "tsc")
+	require.NoError(t, os.Symlink(outside, bin))
+
+	_, err = cache.Add("tsc", "v1", "aaaa", staged, bin, false)
+	require.ErrorContains(t, err, "not a regular file")
+
+	fi, err := os.Stat(outside)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), fi.Mode().Perm())
+
+	t.Run("verify refuses an entry whose binary is a link", func(t *testing.T) {
+		entry := addCacheEntryForTest(t, cache, "tsc", "v2", "aaaa")
+		require.NoError(t, os.Remove(entry.BinPath()))
+		require.NoError(t, os.Symlink(outside, entry.BinPath()))
+		require.ErrorContains(t, entry.Verify(), "not a regular file")
+	})
+}
+
+func TestCache_Add_restrictsKeptArchiveModes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix permissions")
+	}
+	cache := newTestCache(t)
+	staged, cleanup, err := cache.Stage("tsc")
+	require.NoError(t, err)
+	defer cleanup()
+
+	lib := filepath.Join(staged, "lib")
+	require.NoError(t, os.Mkdir(lib, 0o700))
+	require.NoError(t, os.Chmod(lib, 0o777))
+	script := filepath.Join(lib, "run.sh")
+	require.NoError(t, os.WriteFile(script, nil, 0o600))
+	require.NoError(t, os.Chmod(script, 0o777|os.ModeSetuid))
+	bin := filepath.Join(staged, "tsc")
+	require.NoError(t, os.WriteFile(bin, []byte("tsc"), 0o755))
+
+	entry, err := cache.Add("tsc", "v1", "aaaa", staged, bin, true)
+	require.NoError(t, err)
+
+	for path, want := range map[string]os.FileMode{"lib": 0o755, "lib/run.sh": 0o755} {
+		fi, err := os.Stat(filepath.Join(entry.Dir, path))
+		require.NoError(t, err)
+		assert.Equal(t, want, fi.Mode()&(os.ModePerm|os.ModeSetuid), path)
+	}
+}
+
+func TestCheckCacheRoot_ancestors(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix permissions")
+	}
+	parent := t.TempDir()
+	root := filepath.Join(parent, "cache")
+
+	require.NoError(t, os.Chmod(parent, 0o775))
+	_, err := NewCache(root)
+	require.ErrorContains(t, err, "above cache root")
+
+	// writable by others is fine when sticky, as /tmp is: only the owner of the root can rename it
+	require.NoError(t, os.Chmod(parent, 0o777|os.ModeSticky))
+	_, err = NewCache(root)
+	require.NoError(t, err)
 }

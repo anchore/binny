@@ -2,7 +2,10 @@ package tool
 
 import (
 	"fmt"
+	"os/exec"
 	"runtime"
+	"strings"
+	"sync"
 
 	"github.com/mitchellh/hashstructure/v2"
 
@@ -157,39 +160,68 @@ func (c compositeTool) KeepArchiveFiles() bool {
 	return ok && k.KeepArchiveFiles()
 }
 
-// BypassesCache is true for tools built from a local module (module: .), which resolve to the checkout's commit.
-func (c compositeTool) BypassesCache() bool {
+// cacheable is false for a tool built from a local module (module: .), which resolves to the checkout's commit, so the
+// name and resolved version do not pin the installed bytes.
+func (c compositeTool) cacheable() bool {
 	switch p := c.config.InstallerConfig.Parameters.(type) {
 	case goinstall.InstallerParameters:
-		return gobuild.IsLocalModule(p.Module)
+		return !gobuild.IsLocalModule(p.Module)
 	case gobuild.InstallerParameters:
-		return gobuild.IsLocalModule(p.Module)
+		return !gobuild.IsLocalModule(p.Module)
 	}
-	return false
+	return true
 }
+
+// allowsUnresolvedVersion is true when the resolver may hand back the wanted version as-is (latest, a branch) rather
+// than what it points at.
+func (c compositeTool) allowsUnresolvedVersion() bool {
+	p, ok := c.config.VersionResolverConfig.Parameters.(goproxy.VersionResolutionParameters)
+	return ok && p.AllowUnresolvedVersion
+}
+
+// goVersion is the toolchain `go` resolves to from here (GOTOOLCHAIN and a go.mod toolchain line included), which
+// decides the bytes go-install and go-build produce.
+//
+// ponytail: other ambient env (CGO_ENABLED, GOFLAGS) is not covered. Fold it in if two checkouts differ on it.
+var goVersion = sync.OnceValue(func() string {
+	out, err := exec.Command("go", "env", "GOVERSION").Output()
+	if err != nil {
+		log.WithFields("error", err).Debug("unable to get the go version for the cache fingerprint")
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+})
 
 // fingerprintVersion is folded into every fingerprint. Bump it when what the fingerprint covers changes on purpose,
 // which re-keys every cache entry.
 const fingerprintVersion = 1
 
-// Fingerprint hashes the install method and its parameters (before templating) and the platform, which is what decides
-// the installed bytes. The name and the resolved version are not included, they are part of the cache entry path
-// already.
+// Fingerprint hashes the install method and its parameters (before templating), the platform and, for go-install and
+// go-build, the go toolchain, which is what decides the installed bytes. The name and the resolved version are not
+// included, they are part of the cache entry path already. It is empty for a tool built from a local module.
 func (c compositeTool) Fingerprint() string {
-	return fingerprint(c.config.InstallerConfig, runtime.GOOS, runtime.GOARCH)
+	if !c.cacheable() {
+		return ""
+	}
+	var toolchain string
+	if goinstall.IsInstallMethod(c.config.InstallerConfig.Method) || gobuild.IsInstallMethod(c.config.InstallerConfig.Method) {
+		toolchain = goVersion()
+	}
+	return fingerprint(c.config.InstallerConfig, runtime.GOOS, runtime.GOARCH, toolchain)
 }
 
 // fingerprint hashes the install config with hashstructure, so a new, renamed or removed field in any installer's
-// parameters changes it and re-keys that method's cache entries. Test_fingerprint pins the values.
-func fingerprint(installer DetailConfig, goos, goarch string) string {
+// parameters changes it and re-keys that method's cache entries. Lists are hashed in order, since args and asset
+// patterns are order sensitive. Test_fingerprint pins the values.
+func fingerprint(installer DetailConfig, goos, goarch, toolchain string) string {
 	f, err := hashstructure.Hash(struct {
 		Version   int
 		GOOS      string
 		GOARCH    string
+		Toolchain string
 		Installer DetailConfig
-	}{fingerprintVersion, goos, goarch, installer}, hashstructure.FormatV2, &hashstructure.HashOptions{
-		ZeroNil:      true,
-		SlicesAsSets: true,
+	}{fingerprintVersion, goos, goarch, toolchain, installer}, hashstructure.FormatV2, &hashstructure.HashOptions{
+		ZeroNil: true,
 	})
 	if err != nil {
 		panic(fmt.Sprintf("could not hash tool install config: %+v", err))

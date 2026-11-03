@@ -15,6 +15,7 @@ import (
 	"github.com/anchore/binny/tool/githubrelease"
 	"github.com/anchore/binny/tool/gobuild"
 	"github.com/anchore/binny/tool/goinstall"
+	"github.com/anchore/binny/tool/goproxy"
 	"github.com/anchore/binny/tool/hostedshell"
 )
 
@@ -108,23 +109,40 @@ func TestNew_goBuildResolvesRefsAgainstTheRepo(t *testing.T) {
 	assert.Equal(t, head, got)
 }
 
-func Test_compositeTool_BypassesCache(t *testing.T) {
+func Test_compositeTool_cacheable(t *testing.T) {
 	tests := []struct {
-		name   string
-		method string
-		params any
-		want   bool
+		name     string
+		method   string
+		params   any
+		resolver DetailConfig
+		want     bool
 	}{
-		{name: "go-install local module", method: goinstall.InstallMethod, params: goinstall.InstallerParameters{Module: "."}, want: true},
-		{name: "go-install remote module", method: goinstall.InstallMethod, params: goinstall.InstallerParameters{Module: "github.com/anchore/binny"}},
-		{name: "go-build local module", method: gobuild.InstallMethod, params: gobuild.InstallerParameters{Module: "."}, want: true},
-		{name: "go-build remote module", method: gobuild.InstallMethod, params: gobuild.InstallerParameters{Module: "github.com/anchore/binny"}},
+		{name: "go-install local module", method: goinstall.InstallMethod, params: goinstall.InstallerParameters{Module: "."}},
+		{name: "go-install remote module", method: goinstall.InstallMethod, params: goinstall.InstallerParameters{Module: "github.com/anchore/binny"}, want: true},
+		{name: "go-build local module", method: gobuild.InstallMethod, params: gobuild.InstallerParameters{Module: "."}},
+		{name: "go-build remote module", method: gobuild.InstallMethod, params: gobuild.InstallerParameters{Module: "github.com/anchore/binny"}, want: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tl := compositeTool{config: Config{Name: "binny", InstallerConfig: DetailConfig{Method: tt.method, Parameters: tt.params}}}
-			assert.Equal(t, tt.want, tl.BypassesCache())
+			assert.Equal(t, tt.want, tl.cacheable())
+			assert.Equal(t, tt.want, tl.Fingerprint() != "")
 		})
+	}
+}
+
+func Test_cacheFingerprint_unresolvedVersion(t *testing.T) {
+	cache, err := binny.NewCache(t.TempDir())
+	require.NoError(t, err)
+	tl := compositeTool{config: Config{
+		Name:                  "binny",
+		InstallerConfig:       DetailConfig{Method: goinstall.InstallMethod, Parameters: goinstall.InstallerParameters{Module: "github.com/anchore/binny"}},
+		VersionResolverConfig: DetailConfig{Method: goproxy.ResolveMethod, Parameters: goproxy.VersionResolutionParameters{AllowUnresolvedVersion: true}},
+	}}
+
+	for version, want := range map[string]bool{"v0.7.0": true, "0123abc": true, "latest": false, "main": false} {
+		_, ok := cacheFingerprint(cache, tl, version)
+		assert.Equal(t, want, ok, version)
 	}
 }
 
@@ -140,33 +158,47 @@ func Test_fingerprint(t *testing.T) {
 		{
 			name: "go-install",
 			cfg:  DetailConfig{Method: goinstall.InstallMethod, Parameters: goinstall.InstallerParameters{Module: "github.com/anchore/binny", Entrypoint: "cmd/binny", LDFlags: []string{"-X main.version={{ .Version }}"}}},
-			want: "b9f5976901456402",
+			want: "9e48133cf1587b74",
 		},
 		{
 			name: "go-build",
 			cfg:  DetailConfig{Method: gobuild.InstallMethod, Parameters: gobuild.InstallerParameters{Module: "github.com/anchore/binny", Entrypoint: "cmd/binny", Source: gobuild.SourceModeGoProxy}},
-			want: "a8cb9cc37d04c561",
+			want: "8c8816a74383cb18",
 		},
 		{
 			name: "github-release",
 			cfg:  DetailConfig{Method: githubrelease.InstallMethod, Parameters: githubrelease.InstallerParameters{Repo: "cli/cli", Binary: "gh", KeepArchiveFiles: true}},
-			want: "f2a849f306f3218e",
+			want: "f4c4d81556b9c82b",
 		},
 		{
 			name: "hosted-shell",
 			cfg:  DetailConfig{Method: hostedshell.InstallMethod, Parameters: hostedshell.InstallerParameters{URL: "https://example.com/install.sh", Args: "-b {{ .Destination }}"}},
-			want: "60867e6b8cd66780",
+			want: "4b89a83ff266e625",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, fingerprint(tt.cfg, "linux", "amd64"))
+			assert.Equal(t, tt.want, fingerprint(tt.cfg, "linux", "amd64", ""))
 		})
 	}
 
 	t.Run("platform is part of it", func(t *testing.T) {
 		cfg := tests[0].cfg
-		assert.NotEqual(t, fingerprint(cfg, "linux", "amd64"), fingerprint(cfg, "darwin", "amd64"))
-		assert.NotEqual(t, fingerprint(cfg, "linux", "amd64"), fingerprint(cfg, "linux", "arm64"))
+		assert.NotEqual(t, fingerprint(cfg, "linux", "amd64", ""), fingerprint(cfg, "darwin", "amd64", ""))
+		assert.NotEqual(t, fingerprint(cfg, "linux", "amd64", ""), fingerprint(cfg, "linux", "arm64", ""))
+	})
+
+	t.Run("toolchain is part of it", func(t *testing.T) {
+		cfg := tests[0].cfg
+		assert.NotEqual(t, fingerprint(cfg, "linux", "amd64", "go1.23.0"), fingerprint(cfg, "linux", "amd64", "go1.24.0"))
+	})
+
+	t.Run("list order and duplicates are part of it", func(t *testing.T) {
+		args := func(a ...string) DetailConfig {
+			return DetailConfig{Method: gobuild.InstallMethod, Parameters: gobuild.InstallerParameters{Module: "github.com/anchore/binny", Args: a}}
+		}
+		// go build keeps the last -tags, so these build different binaries
+		assert.NotEqual(t, fingerprint(args("-tags", "a", "-tags", "b"), "linux", "amd64", ""), fingerprint(args("-tags", "b", "-tags", "a"), "linux", "amd64", ""))
+		assert.NotEqual(t, fingerprint(args("-trimpath", "-trimpath"), "linux", "amd64", ""), fingerprint(args(), "linux", "amd64", ""))
 	})
 }

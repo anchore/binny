@@ -78,9 +78,9 @@ type toolStatus struct {
 	Name             string `json:"name"`
 	WantVersion      string `json:"wantVersion"`      // this is the version the user asked for
 	ResolvedVersion  string `json:"resolvedVersion"`  // if the user asks for a non-specific version (e.g. "latest") then this is what that would resolve to at this point in time
-	InstalledVersion string `json:"installedVersion"` // the actual version that is installed, which could vary from the user wanted or resolved values
+	InstalledVersion string `json:"installedVersion"` // the actual version that is installed, which could vary from the user wanted or resolved values. Empty when the install is missing or in a layout the cache setting does not ask for
 	Constraint       string `json:"constraint"`       // the version constraint the user asked for and used during version resolution
-	IsInstalled      bool   `json:"isInstalled"`      // is the tool installed at the desired version (says nothing about it being valid, only present)
+	IsInstalled      bool   `json:"isInstalled"`      // is the tool present, in the layout the cache setting asks for (says nothing about its hash)
 	HashIsValid      bool   `json:"hashIsValid"`      // is the installed tool have the correct xxh64 hash?
 	Error            error  `json:"error,omitempty"`  // if there was an error getting the status for this tool, it will be here
 }
@@ -196,8 +196,13 @@ func getAllStatuses(ctx context.Context, cmdCfg ListConfig, store *binny.Store, 
 	// this can happen if the user configures a tool, installs it, then removes the configuration... in which case
 	// the tool is still in the store but future actions will result in no action taken against it in the store.
 	for _, entry := range storedEntries {
-		names = append(names, entry.Name)
 		installedVersion, isHashValid, err := getInstallationStatus(entry)
+		if errors.Is(err, fs.ErrNotExist) {
+			// a link left dangling by `binny cache delete`, which the next install drops from the state
+			log.WithFields("tool", entry.Name, "reason", err).Debug("unconfigured tool is missing")
+			continue
+		}
+		names = append(names, entry.Name)
 		if err != nil {
 			failedTools[entry.Name] = err
 			continue
