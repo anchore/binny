@@ -33,6 +33,8 @@ type Store struct {
 	root    string
 	entries []StoreEntry
 	lock    *sync.RWMutex
+	// linksWork probes once per store whether symlinks can be made in the root
+	linksWork func() bool
 }
 
 type state struct {
@@ -59,8 +61,32 @@ func NewStore(root string) (*Store, error) {
 		entries: []StoreEntry{},
 		lock:    &sync.RWMutex{},
 	}
+	s.linksWork = sync.OnceValue(s.probeLinks)
 
 	return s, s.loadState()
+}
+
+// LinksWork reports whether a symlink can be made in the store root, which is where every tool link is made (symlink
+// support is per filesystem, so the cache root may differ). It probes once per Store by creating and removing a link
+// in a temp dir under the root. A probe that cannot run at all reports false, so a copy that the link fallback left is
+// accepted rather than reinstalled on every run.
+func (s *Store) LinksWork() bool {
+	return s.linksWork()
+}
+
+func (s *Store) probeLinks() bool {
+	dir, err := os.MkdirTemp(s.root, ".binny-link-probe-")
+	if err != nil {
+		log.WithFields("error", err).Debug("unable to probe the store for symlink support")
+		return false
+	}
+	defer os.RemoveAll(dir)
+
+	if err := internal.Symlink(dir, filepath.Join(dir, "link")); err != nil {
+		log.WithFields("error", err).Debug("symlinks are not supported in the store, tools are copied from the cache")
+		return false
+	}
+	return true
 }
 
 func (s Store) Root() string {
@@ -129,8 +155,17 @@ func (s *Store) AddTool(toolName string, resolvedVersion, pathOutsideRoot string
 		return err
 	}
 
-	err := s.loadState()
+	digests, err := getDigestsForFile(pathOutsideRoot)
 	if err != nil {
+		return err
+	}
+
+	return s.addFile(toolName, resolvedVersion, pathOutsideRoot, digests)
+}
+
+// addFile moves a file with already computed digests into the store at root/<name>. The name must be validated.
+func (s *Store) addFile(toolName, resolvedVersion, pathOutsideRoot string, digests map[string]string) error {
+	if err := s.loadState(); err != nil {
 		return err
 	}
 
@@ -138,11 +173,6 @@ func (s *Store) AddTool(toolName string, resolvedVersion, pathOutsideRoot string
 		if err := os.MkdirAll(s.root, 0755); err != nil {
 			return err
 		}
-	}
-
-	digests, err := getDigestsForFile(pathOutsideRoot)
-	if err != nil {
-		return err
 	}
 
 	sha256Hash, ok := digests[internal.SHA256Algorithm]
@@ -186,9 +216,9 @@ func (s *Store) AddToolDir(toolName string, resolvedVersion, dirOutsideRoot, bin
 		return err
 	}
 
-	binInDir, err := filepath.Rel(dirOutsideRoot, binPath)
-	if err != nil || binInDir == ".." || strings.HasPrefix(binInDir, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("binary %q is not within %q", binPath, dirOutsideRoot)
+	binInDir, err := relWithin(dirOutsideRoot, binPath)
+	if err != nil {
+		return fmt.Errorf("binary %w", err)
 	}
 
 	if err := s.loadState(); err != nil {
@@ -233,14 +263,7 @@ func (s *Store) AddToolDir(toolName string, resolvedVersion, dirOutsideRoot, bin
 		return fmt.Errorf("failed to chmod %q: %w", binInDir, err)
 	}
 
-	// create the link aside and rename it over root/<name> so the replacement is atomic
-	targetPath := filepath.Join(s.root, toolName)
-	tmpLink := targetPath + ".binny-link"
-	_ = os.Remove(tmpLink)
-	if err := os.Symlink(filepath.Join(toolDirsName, toolName, binInDir), tmpLink); err != nil {
-		return fmt.Errorf("failed to link %q: %w", targetPath, err)
-	}
-	if err := os.Rename(tmpLink, targetPath); err != nil {
+	if _, err := placeLink(filepath.Join(s.root, toolName), filepath.Join(toolDirsName, toolName, binInDir)); err != nil {
 		return err
 	}
 
@@ -254,6 +277,117 @@ func (s *Store) AddToolDir(toolName string, resolvedVersion, dirOutsideRoot, bin
 	}, sha256Hash)
 }
 
+// LinkCacheEntry points root/<name> at the binary of a cache entry by absolute path, so the store keeps working when the
+// checkout moves. It is recorded in the state the same way a copy is. Where a symlink cannot be made, a single-binary
+// entry is copied into the store instead, and a keep-archive-files entry returns the link error, since the tool reads
+// files beside itself and has no working layout without the link. The entry must already be verified.
+func (s *Store) LinkCacheEntry(entry CacheEntry) error {
+	log.WithFields("tool", entry.Name, "entry", entry.Dir).Trace("linking tool to cache entry")
+
+	if err := validateToolName(entry.Name); err != nil {
+		return err
+	}
+
+	if err := s.loadState(); err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(s.root, 0755); err != nil {
+		return err
+	}
+
+	// the entry's fields can be set by any caller, not only read from its entry file
+	if err := entry.validate(); err != nil {
+		return entry.corrupt(err)
+	}
+	sha256Hash := entry.Digests[internal.SHA256Algorithm]
+
+	linked, err := placeLink(filepath.Join(s.root, entry.Name), entry.BinPath())
+	if !linked {
+		if entry.KeepArchiveFiles {
+			return err
+		}
+		log.WithFields("tool", entry.Name, "error", err).Debug("unable to link to the cache, copying instead")
+		return s.copyCacheEntry(entry)
+	}
+	if err != nil {
+		return err
+	}
+
+	// a previous install may have kept a whole directory for this tool
+	if err := os.RemoveAll(toolDirPath(s.root, entry.Name)); err != nil {
+		return fmt.Errorf("failed to remove previous install dir for %q: %w", entry.Name, err)
+	}
+
+	return s.upsert(StoreEntry{
+		root:             s.root,
+		Name:             entry.Name,
+		InstalledVersion: entry.Version,
+		Digests:          entry.Digests,
+		PathInRoot:       entry.Name,
+	}, sha256Hash)
+}
+
+// copyCacheEntry puts a copy of the entry's binary at root/<name>, for systems that refuse symlinks.
+func (s *Store) copyCacheEntry(entry CacheEntry) error {
+	src, err := os.Open(entry.BinPath())
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+
+	// stage the copy within the store so moving it into place is atomic
+	dst, err := os.CreateTemp(s.root, fmt.Sprintf(".binny-copy-%s-", entry.Name))
+	if err != nil {
+		return err
+	}
+	defer os.Remove(dst.Name())
+
+	// hash while copying, so the binary is read once
+	digests, err := getDigestsForReader(io.TeeReader(src, dst))
+	if err != nil {
+		dst.Close()
+		return fmt.Errorf("failed to copy %q: %w", entry.BinPath(), err)
+	}
+	if err := dst.Close(); err != nil {
+		return err
+	}
+	if digests[internal.SHA256Algorithm] != entry.Digests[internal.SHA256Algorithm] {
+		return fmt.Errorf("copy of %q does not match the cache entry's digests", entry.BinPath())
+	}
+
+	return s.addFile(entry.Name, entry.Version, dst.Name(), digests)
+}
+
+// placeLink makes path a symlink to target, creating the link aside and renaming it over path so the replacement is
+// atomic. linked is false when the symlink itself could not be made, as on windows without developer mode.
+func placeLink(path, target string) (linked bool, err error) {
+	tmpLink := path + ".binny-link"
+	_ = os.Remove(tmpLink)
+	if err := internal.Symlink(target, tmpLink); err != nil {
+		return false, fmt.Errorf("failed to link %q: %w", path, err)
+	}
+	if err := os.Rename(tmpLink, path); err != nil {
+		return true, fmt.Errorf("failed to move link into place at %q: %w", path, err)
+	}
+	return true, nil
+}
+
+// relWithin returns path relative to dir, and fails when path is not within dir.
+func relWithin(dir, path string) (string, error) {
+	rel, err := filepath.Rel(dir, path)
+	if err != nil || !filepath.IsLocal(rel) {
+		return "", fmt.Errorf("%q is not within %q", path, dir)
+	}
+	return rel, nil
+}
+
+// isPathElement reports whether name is usable as one path element directly within a dir: not empty, not . or ..,
+// not the given reserved name, and without separators.
+func isPathElement(name, reserved string) bool {
+	return name != "" && name != "." && name != ".." && name != reserved && !strings.ContainsAny(name, `/\`)
+}
+
 // kept install dirs live under their own dir in the store so they can never collide with a tool's binary path
 const toolDirsName = ".binny-dirs"
 
@@ -263,7 +397,7 @@ func toolDirPath(root, toolName string) string {
 
 // validateToolName ensures that paths derived from the tool name stay directly within the store root.
 func validateToolName(name string) error {
-	if name == "" || name == "." || name == ".." || name == toolDirsName || strings.ContainsAny(name, `/\`) {
+	if !isPathElement(name, toolDirsName) {
 		return fmt.Errorf("invalid tool name %q", name)
 	}
 	return nil
@@ -441,7 +575,7 @@ func xxh64File(path string) (string, error) {
 func getDigestsForFile(filePath string) (map[string]string, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open temp copy of binary %q: %w", filePath, err)
+		return nil, fmt.Errorf("failed to open binary %q: %w", filePath, err)
 	}
 	defer file.Close()
 

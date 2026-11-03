@@ -1,6 +1,8 @@
 package tool
 
 import (
+	"context"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -57,10 +59,84 @@ func Test_check_sha256(t *testing.T) {
 			store, err := binny.NewStore(tt.storeRoot)
 			require.NoError(t, err)
 
-			tt.wantErr(t, Check(store, fakeTool{name: tt.toolName}, tt.resolvedVersion, VerifyConfig{
+			tt.wantErr(t, Check(store, nil, fakeTool{name: tt.toolName}, tt.resolvedVersion, VerifyConfig{
 				VerifyXXH64Digest:  false,
 				VerifySHA256Digest: tt.verifyDigest,
 			}))
 		})
 	}
+}
+
+func Test_check_cacheLinkOtherFingerprint(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires symlinks")
+	}
+	cache := newCacheForTest(t)
+	store := newStoreForTest(t)
+	cfg := VerifyConfig{VerifySHA256Digest: true}
+
+	require.NoError(t, Install(context.Background(), fakeTool{name: "tsc", param: "a"}, binny.VersionIntent{Want: "v1"}, store, cache, cfg))
+	require.NoError(t, Check(store, cache, fakeTool{name: "tsc", param: "a"}, "v1", cfg))
+
+	// same name and version, but the config changed: the link points at another entry
+	require.ErrorContains(t, Check(store, cache, fakeTool{name: "tsc", param: "b"}, "v1", cfg), `"tsc"`)
+}
+
+func Test_check_cacheCopy(t *testing.T) {
+	cache := newCacheForTest(t)
+	store := newStoreForTest(t)
+	cfg := VerifyConfig{VerifySHA256Digest: true}
+
+	require.NoError(t, Install(context.Background(), fakeTool{name: "tsc"}, binny.VersionIntent{Want: "v1"}, store, nil, cfg))
+
+	err := Check(store, cache, fakeTool{name: "tsc"}, "v1", cfg)
+	require.ErrorContains(t, err, `"tsc"`)
+	require.ErrorContains(t, err, "not linked into the cache")
+}
+
+func Test_check_cacheStoreKeptDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires symlinks")
+	}
+	cache := newCacheForTest(t)
+	store := newStoreForTest(t)
+	keeper := fakeTool{name: "tsc", keep: true}
+	cfg := VerifyConfig{VerifySHA256Digest: true}
+
+	// a keep-archive-files install without the cache links into the store's own kept dir, not into the cache
+	require.NoError(t, Install(context.Background(), keeper, binny.VersionIntent{Want: "v1"}, store, nil, cfg))
+
+	err := Check(store, cache, keeper, "v1", cfg)
+	require.ErrorContains(t, err, `"tsc"`)
+	require.ErrorContains(t, err, "not linked into the cache")
+}
+
+func Test_check_cacheFallbackCopy(t *testing.T) {
+	cacheRoot := t.TempDir()
+	newCache := func() *binny.Cache {
+		cache, err := binny.NewCache(cacheRoot)
+		require.NoError(t, err)
+		return cache
+	}
+	store := newStoreForTest(t)
+	tl := fakeTool{name: "tsc"}
+	cfg := VerifyConfig{VerifySHA256Digest: true}
+
+	t.Run("links fail", func(t *testing.T) {
+		refuseLinks(t)
+		require.NoError(t, Install(context.Background(), tl, binny.VersionIntent{Want: "v1"}, store, newCache(), cfg))
+		require.NoError(t, Check(store, newCache(), tl, "v1", cfg))
+	})
+
+	t.Run("links work", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("requires symlinks")
+		}
+		// a later binny run probes the store again
+		reopened, err := binny.NewStore(store.Root())
+		require.NoError(t, err)
+		err = Check(reopened, newCache(), tl, "v1", cfg)
+		require.ErrorContains(t, err, `"tsc"`)
+		require.ErrorContains(t, err, "not linked into the cache")
+	})
 }

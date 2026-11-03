@@ -40,19 +40,19 @@ func TestRefTracksMovedBranch(t *testing.T) {
 	intent := binny.VersionIntent{Want: "main"}
 	verify := VerifyConfig{VerifySHA256Digest: true}
 
-	require.NoError(t, Install(ctx, tool, intent, store, verify))
-	require.ErrorIs(t, Install(ctx, tool, intent, store, verify), ErrAlreadyInstalled)
+	require.NoError(t, Install(ctx, tool, intent, store, nil, verify))
+	require.ErrorIs(t, Install(ctx, tool, intent, store, nil, verify), ErrAlreadyInstalled)
 
 	resolved, err := ResolveVersion(ctx, tool, intent)
 	require.NoError(t, err)
-	require.NoError(t, Check(store, tool, resolved, verify))
+	require.NoError(t, Check(store, nil, tool, resolved, verify))
 
 	// the branch moves upstream: check now fails and install picks up the new commit
 	tool.points = "v0.0.0-20261015120000-222222222222"
 	resolved, err = ResolveVersion(ctx, tool, intent)
 	require.NoError(t, err)
-	require.Error(t, Check(store, tool, resolved, verify))
+	require.Error(t, Check(store, nil, tool, resolved, verify))
 
-	require.NoError(t, Install(ctx, tool, intent, store, verify))
-	require.NoError(t, Check(store, tool, resolved, verify))
+	require.NoError(t, Install(ctx, tool, intent, store, nil, verify))
+	require.NoError(t, Check(store, nil, tool, resolved, verify))
 }

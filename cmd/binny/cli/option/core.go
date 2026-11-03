@@ -5,6 +5,7 @@ import "fmt"
 // Core options make up the static application configuration on disk.
 type Core struct {
 	Store `json:"" yaml:",inline" mapstructure:",squash"`
+	Cache Cache `json:"cache" yaml:"cache" mapstructure:"cache"`
 	// CooldownRaw is the raw config value for the global cooldown duration.
 	// Use Cooldown field after PostLoad has been called.
 	CooldownRaw any          `json:"cooldown" yaml:"cooldown,omitempty" mapstructure:"cooldown"`
@@ -15,6 +16,7 @@ type Core struct {
 func DefaultCore() Core {
 	return Core{
 		Store: DefaultStore(),
+		Cache: DefaultCache(),
 	}
 }
 
