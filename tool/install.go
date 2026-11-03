@@ -2,10 +2,13 @@ package tool
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/wagoodman/go-partybus"
@@ -13,12 +16,14 @@ import (
 
 	"github.com/anchore/binny"
 	"github.com/anchore/binny/event"
+	"github.com/anchore/binny/internal"
 	"github.com/anchore/binny/internal/bus"
 	"github.com/anchore/binny/internal/log"
 )
 
 var ErrAlreadyInstalled = errors.New("already installed")
 
+// Install installs the tool into the store, through the cache when one is given. A nil cache means the cache is disabled.
 func Install(ctx context.Context, tool binny.Tool, intent binny.VersionIntent, store *binny.Store, cache *binny.Cache, verifyConfig VerifyConfig) (err error) {
 	prog, stage := trackInstallation(tool.Name(), intent.Want)
 	defer func() {
@@ -49,8 +54,12 @@ func Install(ctx context.Context, tool binny.Tool, intent binny.VersionIntent, s
 
 	log.WithFields("tool", tool.Name(), "version", resolvedVersion, "reason", err).Debug("tool check failed")
 
-	if fingerprint, ok := cacheFingerprint(cache, tool); ok {
+	fingerprint, skipped := cacheFingerprint(cache, tool, resolvedVersion)
+	if skipped == "" {
 		return installThroughCache(ctx, tool, resolvedVersion, fingerprint, store, cache, stage)
+	}
+	if cache != nil {
+		log.WithFields("tool", tool.Name(), "version", resolvedVersion, "reason", skipped).Debug("not installing through the cache")
 	}
 
 	log.WithFields("tool", tool.Name(), "version", resolvedVersion).Info("installing")
@@ -140,20 +149,42 @@ func installThroughCache(ctx context.Context, tool binny.Tool, resolvedVersion, 
 	return nil
 }
 
-// cacheFingerprint returns the tool's fingerprint when it should install through the cache.
-func cacheFingerprint(cache *binny.Cache, t binny.Tool) (string, bool) {
+// cacheFingerprint returns the cache key for the tool when it should install through the cache, or why it should not.
+// A resolved version that can move (latest, a branch, a go prefix query like v1.2), whichever resolver passed it
+// through, does not pin the bytes, so it would be cached once and never rebuilt.
+func cacheFingerprint(cache *binny.Cache, t binny.Tool, resolvedVersion string) (key, skipped string) {
 	if cache == nil {
-		return "", false
+		return "", "the cache is off"
 	}
-	if b, ok := t.(binny.CacheBypasser); ok && b.BypassesCache() {
-		return "", false
+	if !internal.IsExactVersion(resolvedVersion) {
+		return "", fmt.Sprintf("version %q is not exact", resolvedVersion)
 	}
-	f, ok := t.(binny.Fingerprinter)
-	if !ok {
-		log.WithFields("tool", t.Name()).Debug("tool has no fingerprint, the cache is not used for it")
-		return "", false
+	// a version the resolver may have passed through unresolved is only trusted as plain semver, which the go command
+	// reads as a tag and never as a branch
+	if p, ok := t.(interface{ passesThroughUnresolved() bool }); ok && p.passesThroughUnresolved() && !internal.IsPlainVersion(resolvedVersion) {
+		return "", fmt.Sprintf("version %q may be an unresolved branch", resolvedVersion)
 	}
-	return f.Fingerprint(), true
+	var fingerprint string
+	if f, ok := t.(binny.Fingerprinter); ok {
+		fingerprint = f.Fingerprint()
+	}
+	if fingerprint == "" {
+		return "", "its install has no fingerprint (a local module, or go env could not be read)"
+	}
+	return cacheKey(runtime.GOOS, runtime.GOARCH, fingerprint, keepsArchiveFiles(t)), ""
+}
+
+// cacheKeyVersion is folded into every cache key. Bump it when what the key covers changes on purpose, which re-keys
+// every cache entry.
+const cacheKeyVersion = 1
+
+// cacheKey is the fingerprint dir of a cache entry: a sha256 over the tool's fingerprint and what decides the bytes and
+// layout of every tool, the platform and keep-archive-files. Checkouts share an entry by this key alone, so it has to
+// resist a config crafted to collide with another repo's tool, not only keep honest configs apart. 128 bits is plenty
+// for that and keeps the path short.
+func cacheKey(goos, goarch, fingerprint string, keepArchiveFiles bool) string {
+	sum := sha256.Sum256(fmt.Appendf(nil, "%d %q %q %t %q", cacheKeyVersion, goos, goarch, keepArchiveFiles, fingerprint))
+	return hex.EncodeToString(sum[:16])
 }
 
 // makeStagingArea creates a temporary directory within the store root to stage the installation of a tool. A valid

@@ -1,7 +1,9 @@
 package option
 
 import (
+	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/adrg/xdg"
@@ -29,4 +31,19 @@ func TestCache_Build(t *testing.T) {
 	parent, err := filepath.EvalSymlinks(filepath.Dir(root))
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(parent, "cache"), enabled.Root())
+}
+
+func TestCache_Build_unsafeRootFallsBack(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix permissions")
+	}
+	parent := t.TempDir()
+	require.NoError(t, os.Chmod(parent, 0o775))
+
+	cache, err := Cache{Enabled: true, Root: filepath.Join(parent, "cache")}.Build()
+	require.NoError(t, err)
+	assert.Nil(t, cache, "an unsafe root is treated as a disabled cache")
+
+	_, err = Cache{Enabled: true, Root: ""}.Build()
+	require.Error(t, err, "a bad setting still fails")
 }

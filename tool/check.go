@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/anchore/binny"
 	"github.com/anchore/binny/internal"
@@ -15,6 +14,8 @@ type VerifyConfig struct {
 	VerifySHA256Digest bool
 }
 
+// Check returns an error when the tool is not installed in the store at the resolved version, in the layout the cache
+// setting asks for, with matching digests. A nil cache means the cache is disabled.
 func Check(store *binny.Store, cache *binny.Cache, t binny.Tool, resolvedVersion string, verifyConfig VerifyConfig) error {
 	toolName := t.Name()
 	entry, err := store.Get(toolName, resolvedVersion)
@@ -53,17 +54,15 @@ func keepsArchiveFiles(t binny.Tool) bool {
 // does not match the cache setting is an error, so the next install converts it: a copy while the cache is used, a
 // link into the cache while it is not, or a link to another fingerprint's entry of the same name and version.
 func checkCacheLayout(store *binny.Store, cache *binny.Cache, t binny.Tool, entry *binny.StoreEntry, resolvedVersion string) (bool, error) {
-	fi, err := os.Lstat(entry.Path())
+	linkedOut, err := entry.IsLinkOutOfStore()
 	if err != nil {
 		return false, fmt.Errorf("failed to validate tool %q: %w", t.Name(), err)
 	}
-	// keep-archive-files links stay within the store (DirInRoot), any other link is into the cache
-	linkedOut := fi.Mode()&os.ModeSymlink != 0 && entry.DirInRoot == ""
 
-	fingerprint, useCache := cacheFingerprint(cache, t)
-	if !useCache {
+	fingerprint, skipped := cacheFingerprint(cache, t, resolvedVersion)
+	if skipped != "" {
 		if linkedOut {
-			return false, fmt.Errorf("tool %q is linked into the cache, which is not used for it", t.Name())
+			return false, fmt.Errorf("tool %q is linked into the cache, which is not used for it: %s", t.Name(), skipped)
 		}
 		return false, nil
 	}
@@ -83,10 +82,10 @@ func checkCacheLayout(store *binny.Store, cache *binny.Cache, t binny.Tool, entr
 		return false, err
 	}
 
-	// the install writes the absolute entry path, so this is a string comparison without resolving symlinks. The target
-	// is cleaned first, so one that climbs back out of the entry with .. does not match.
+	// the install writes the absolute entry path, so this is a lexical comparison without resolving symlinks. One that
+	// climbs back out of the entry with .. is not local to it, and neither is the entry dir itself.
 	entryDir := cache.EntryDir(t.Name(), resolvedVersion, fingerprint)
-	if !strings.HasPrefix(filepath.Clean(target), entryDir+string(filepath.Separator)) {
+	if rel, err := filepath.Rel(entryDir, target); err != nil || !filepath.IsLocal(rel) {
 		return false, fmt.Errorf("tool %q is linked to %q, not to the cache entry for its current config %q", t.Name(), target, entryDir)
 	}
 

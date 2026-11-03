@@ -55,6 +55,17 @@ func (e StoreEntry) Path() string {
 	return filepath.Join(e.root, e.PathInRoot)
 }
 
+// IsLinkOutOfStore reports whether the entry is a link out of the store, which binny only makes into the cache. Kept
+// install dirs (DirInRoot) link within the store. It does not read the target, so whether the link points at the
+// right cache entry is up to the caller (tool.Check compares it to the tool's current one).
+func (e StoreEntry) IsLinkOutOfStore() (bool, error) {
+	fi, err := os.Lstat(e.Path())
+	if err != nil {
+		return false, err
+	}
+	return fi.Mode()&os.ModeSymlink != 0 && e.DirInRoot == "", nil
+}
+
 func NewStore(root string) (*Store, error) {
 	s := &Store{
 		root:    root,

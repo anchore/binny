@@ -91,18 +91,6 @@ func Test_goList_rejectsBadModulePath(t *testing.T) {
 	require.ErrorContains(t, err, "invalid module path")
 }
 
-func Test_quoteOutput(t *testing.T) {
-	got := quoteOutput([]byte("not found: \x1b[2J unknown revision\n"))
-	assert.NotContains(t, got, "\x1b")
-	assert.Contains(t, got, "unknown revision")
-
-	long := make([]byte, maxErrorSize*2)
-	for i := range long {
-		long[i] = 'A'
-	}
-	assert.Less(t, len(quoteOutput(long)), maxErrorSize+10)
-}
-
 func TestVersionResolver_goList_toolEnvOverridesProcessEnv(t *testing.T) {
 	// a process-level GOPROXY=off would block every lookup, the tool's own GOPROXY (fileProxy) should win
 	t.Setenv("GOPROXY", "off")

@@ -1,8 +1,11 @@
 package tool
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
-	"runtime"
+	"strings"
+	"sync"
 
 	"github.com/mitchellh/hashstructure/v2"
 
@@ -157,45 +160,90 @@ func (c compositeTool) KeepArchiveFiles() bool {
 	return ok && k.KeepArchiveFiles()
 }
 
-// BypassesCache is true for tools built from a local module (module: .), which resolve to the checkout's commit.
-func (c compositeTool) BypassesCache() bool {
+// cacheable is false for a tool built from a local module (module: .), which resolves to the checkout's commit, so the
+// name and resolved version do not pin the installed bytes.
+func (c compositeTool) cacheable() bool {
 	switch p := c.config.InstallerConfig.Parameters.(type) {
 	case goinstall.InstallerParameters:
-		return gobuild.IsLocalModule(p.Module)
+		return !gobuild.IsLocalModule(p.Module)
 	case gobuild.InstallerParameters:
-		return gobuild.IsLocalModule(p.Module)
+		return !gobuild.IsLocalModule(p.Module)
 	}
-	return false
+	return true
 }
 
-// fingerprintVersion is folded into every fingerprint. Bump it when what the fingerprint covers changes on purpose,
-// which re-keys every cache entry.
-const fingerprintVersion = 1
-
-// Fingerprint hashes the install method and its parameters (before templating) and the platform, which is what decides
-// the installed bytes. The name and the resolved version are not included, they are part of the cache entry path
-// already.
-func (c compositeTool) Fingerprint() string {
-	return fingerprint(c.config.InstallerConfig, runtime.GOOS, runtime.GOARCH)
+// passesThroughUnresolved is true when the resolver can hand back the wanted version as-is (allow-unresolved-version,
+// or the git resolver's branch fallback), so what it returns may be a branch that only looks exact, like deadbee or
+// release/v1.2.3.
+func (c compositeTool) passesThroughUnresolved() bool {
+	if git.IsResolveMethod(c.config.VersionResolverConfig.Method) {
+		return true
+	}
+	p, ok := c.config.VersionResolverConfig.Parameters.(goproxy.VersionResolutionParameters)
+	return ok && p.AllowUnresolvedVersion
 }
 
-// fingerprint hashes the install config with hashstructure, so a new, renamed or removed field in any installer's
-// parameters changes it and re-keys that method's cache entries. Test_fingerprint pins the values.
-func fingerprint(installer DetailConfig, goos, goarch string) string {
-	f, err := hashstructure.Hash(struct {
-		Version   int
-		GOOS      string
-		GOARCH    string
-		Installer DetailConfig
-	}{fingerprintVersion, goos, goarch, installer}, hashstructure.FormatV2, &hashstructure.HashOptions{
-		ZeroNil:      true,
-		SlicesAsSets: true,
-	})
+// goEnvVars are the go env vars that change what go-install and go-build produce. An unknown one (GOFIPS140 before
+// go1.24) prints as empty rather than failing.
+//
+// ponytail: CC is a name, so a compiler upgrade under the same name keeps the key. Probe `$CC --version` if cgo tools
+// turn out to need it.
+var goEnvVars = []string{
+	"GOVERSION", "CGO_ENABLED", "GOFLAGS", "GOEXPERIMENT", "GOFIPS140",
+	"GOAMD64", "GOARM", "GOARM64", "GO386", "GOPPC64", "GOMIPS", "GOMIPS64", "GORISCV64", "GOWASM",
+	"CC", "CXX", "CGO_CFLAGS", "CGO_CPPFLAGS", "CGO_CXXFLAGS", "CGO_LDFLAGS",
+}
+
+// goEnvs remembers readGoEnv per tool env for the rest of the run.
+var goEnvs sync.Map
+
+// goEnv is the go env that decides the bytes a go tool produces, as JSON, or "" when it can't be read. It is read with
+// the tool's own env on top of the process env, as the build runs, so a tool that sets GOTOOLCHAIN or GOFLAGS in env:
+// is keyed by what it builds with.
+var goEnv = func(env []string) string {
+	key := strings.Join(env, "\x00")
+	if v, ok := goEnvs.Load(key); ok {
+		return v.(string)
+	}
+	v := readGoEnv(env)
+	goEnvs.Store(key, v)
+	return v
+}
+
+func readGoEnv(env []string) string {
+	out, err := internal.GoCommand(context.Background(), env, append([]string{"env", "-json"}, goEnvVars...)...)
 	if err != nil {
-		panic(fmt.Sprintf("could not hash tool install config: %+v", err))
+		log.WithFields("error", err).Warn("unable to read the go env for the cache fingerprint, the cache is not used for go tools")
+		return ""
 	}
+	return strings.TrimSpace(string(out))
+}
 
-	return fmt.Sprintf("%016x", f)
+// Fingerprint is the install method and its parameters (before templating) and, for go-install and go-build, the go
+// env, as JSON. Install hashes it together with the platform and keep-archive-files into the cache key. It is empty
+// when the tool is not cacheable, and for a go tool when the go env can't be read.
+func (c compositeTool) Fingerprint() string {
+	if !c.cacheable() {
+		return ""
+	}
+	params := c.config.InstallerConfig.Parameters
+	var env string
+	switch params.(type) {
+	case goinstall.InstallerParameters, gobuild.InstallerParameters:
+		if env = goEnv(goCommandEnv(params)); env == "" {
+			return ""
+		}
+	}
+	// lists stay in order, since args and asset patterns are order sensitive
+	b, err := json.Marshal(struct {
+		Installer DetailConfig
+		GoEnv     string `json:",omitempty"`
+	}{c.config.InstallerConfig, env})
+	if err != nil {
+		log.WithFields("tool", c.Name(), "error", err).Debug("unable to encode the install config, the cache is not used for it")
+		return ""
+	}
+	return string(b)
 }
 
 func (c compositeTool) ID() string {

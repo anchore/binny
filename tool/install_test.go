@@ -37,9 +37,18 @@ func (f fakeTool) Name() string { return f.name }
 
 func (f fakeTool) KeepArchiveFiles() bool { return f.keep }
 
-func (f fakeTool) BypassesCache() bool { return f.local }
+// Fingerprint leaves keep-archive-files out, since Install folds it into the cache key itself.
+func (f fakeTool) Fingerprint() string {
+	if f.local {
+		return ""
+	}
+	return "param-" + f.param
+}
 
-func (f fakeTool) Fingerprint() string { return fmt.Sprintf("keep-%t-%s", f.keep, f.param) }
+// entryKey is the cache key Install uses for f.
+func (f fakeTool) entryKey() string {
+	return cacheKey(runtime.GOOS, runtime.GOARCH, f.Fingerprint(), f.keep)
+}
 
 func (f fakeTool) InstallTo(_ context.Context, version, destDir string) (string, error) {
 	if f.installs != nil {
@@ -71,7 +80,7 @@ func TestInstall_keepArchiveFilesToggle(t *testing.T) {
 	store, err := binny.NewStore(t.TempDir())
 	require.NoError(t, err)
 
-	intent := binny.VersionIntent{Want: "v1"}
+	intent := binny.VersionIntent{Want: "v1.0.0"}
 	cfg := VerifyConfig{VerifySHA256Digest: true}
 	keptDir := filepath.Join(store.Root(), ".binny-dirs", "tsc")
 
@@ -80,16 +89,16 @@ func TestInstall_keepArchiveFilesToggle(t *testing.T) {
 
 	// same version, but now the archive files should be kept, which needs a reinstall
 	keeper := fakeTool{name: "tsc", keep: true}
-	require.Error(t, Check(store, nil, keeper, "v1", cfg))
+	require.Error(t, Check(store, nil, keeper, "v1.0.0", cfg))
 	require.NoError(t, Install(context.Background(), keeper, intent, store, nil, cfg))
 	assert.FileExists(t, filepath.Join(keptDir, "package", "lib", "lib.d.ts"))
-	require.NoError(t, Check(store, nil, keeper, "v1", cfg))
+	require.NoError(t, Check(store, nil, keeper, "v1.0.0", cfg))
 	require.ErrorIs(t, Install(context.Background(), keeper, intent, store, nil, cfg), ErrAlreadyInstalled)
 
 	// and turning it back off reinstalls the plain binary
 	require.NoError(t, Install(context.Background(), fakeTool{name: "tsc"}, intent, store, nil, cfg))
 	assert.NoDirExists(t, keptDir)
-	require.NoError(t, Check(store, nil, fakeTool{name: "tsc"}, "v1", cfg))
+	require.NoError(t, Check(store, nil, fakeTool{name: "tsc"}, "v1.0.0", cfg))
 }
 
 func TestInstall_keptInstallSurvivesReload(t *testing.T) {
@@ -102,12 +111,12 @@ func TestInstall_keptInstallSurvivesReload(t *testing.T) {
 
 	keeper := fakeTool{name: "tsc", keep: true}
 	cfg := VerifyConfig{VerifySHA256Digest: true}
-	require.NoError(t, Install(context.Background(), keeper, binny.VersionIntent{Want: "v1"}, store, nil, cfg))
+	require.NoError(t, Install(context.Background(), keeper, binny.VersionIntent{Want: "v1.0.0"}, store, nil, cfg))
 
 	// a later binny run reads the layout back from the state file, so it must not reinstall every time
 	reopened, err := binny.NewStore(root)
 	require.NoError(t, err)
-	require.NoError(t, Check(reopened, nil, keeper, "v1", cfg))
+	require.NoError(t, Check(reopened, nil, keeper, "v1.0.0", cfg))
 }
 
 func newCacheForTest(t *testing.T) *binny.Cache {
@@ -136,7 +145,7 @@ func requireLinkedIntoCache(t *testing.T, store *binny.Store, cache *binny.Cache
 
 	target, err := os.Readlink(path)
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(cache.EntryDir(tl.name, version, tl.Fingerprint()), binInEntry), target)
+	assert.Equal(t, filepath.Join(cache.EntryDir(tl.name, version, tl.entryKey()), binInEntry), target)
 
 	resolved, err := filepath.EvalSymlinks(path)
 	require.NoError(t, err)
@@ -157,13 +166,34 @@ func TestInstall_cacheReuse(t *testing.T) {
 
 	stores := []*binny.Store{newStoreForTest(t), newStoreForTest(t)}
 	for _, store := range stores {
-		require.NoError(t, Install(context.Background(), tl, binny.VersionIntent{Want: "v1"}, store, cache, cfg))
+		require.NoError(t, Install(context.Background(), tl, binny.VersionIntent{Want: "v1.0.0"}, store, cache, cfg))
 	}
 
 	require.EqualValues(t, 1, tl.installs.Load(), "the second store should link to the existing cache entry")
 	for _, store := range stores {
-		requireLinkedIntoCache(t, store, cache, tl, "v1", "tsc")
+		requireLinkedIntoCache(t, store, cache, tl, "v1.0.0", "tsc")
 	}
+}
+
+func TestInstall_cacheSkipsMovingVersions(t *testing.T) {
+	cache := newCacheForTest(t)
+	cfg := VerifyConfig{VerifySHA256Digest: true}
+
+	// each of these can point at new bytes later, so a cache entry for it would never be rebuilt
+	for _, version := range []string{"main", "latest", "v1"} {
+		tl := fakeTool{name: "tsc", installs: &atomic.Int32{}}
+		store := newStoreForTest(t)
+		require.NoError(t, Install(context.Background(), tl, binny.VersionIntent{Want: version}, store, cache, cfg))
+		require.NoError(t, Check(store, cache, tl, version, cfg), version)
+
+		fi, err := os.Lstat(filepath.Join(store.Root(), tl.name))
+		require.NoError(t, err)
+		assert.True(t, fi.Mode().IsRegular(), "%s should be installed as a copy in the store", version)
+	}
+
+	entries, err := cache.List()
+	require.NoError(t, err)
+	assert.Empty(t, entries)
 }
 
 func TestInstall_cacheFingerprintSeparatesConfigs(t *testing.T) {
@@ -178,12 +208,12 @@ func TestInstall_cacheFingerprintSeparatesConfigs(t *testing.T) {
 
 	for _, tl := range []fakeTool{a, b} {
 		store := newStoreForTest(t)
-		require.NoError(t, Install(context.Background(), tl, binny.VersionIntent{Want: "v1"}, store, cache, cfg))
-		requireLinkedIntoCache(t, store, cache, tl, "v1", "tsc")
+		require.NoError(t, Install(context.Background(), tl, binny.VersionIntent{Want: "v1.0.0"}, store, cache, cfg))
+		requireLinkedIntoCache(t, store, cache, tl, "v1.0.0", "tsc")
 	}
 
 	assert.EqualValues(t, 2, a.installs.Load())
-	entries, err := os.ReadDir(filepath.Join(cache.Root(), "tsc", "v1"))
+	entries, err := os.ReadDir(filepath.Join(cache.Root(), "tsc", "v1.0.0"))
 	require.NoError(t, err)
 	assert.Len(t, entries, 2)
 }
@@ -205,17 +235,17 @@ func TestInstall_cacheConcurrent(t *testing.T) {
 		own, err := binny.NewCache(cache.Root())
 		require.NoError(t, err)
 		wg.Go(func() {
-			errs[i] = Install(context.Background(), tl, binny.VersionIntent{Want: "v1"}, stores[i], own, cfg)
+			errs[i] = Install(context.Background(), tl, binny.VersionIntent{Want: "v1.0.0"}, stores[i], own, cfg)
 		})
 	}
 	wg.Wait()
 
 	for i, store := range stores {
 		require.NoError(t, errs[i])
-		requireLinkedIntoCache(t, store, cache, tl, "v1", "tsc")
+		requireLinkedIntoCache(t, store, cache, tl, "v1.0.0", "tsc")
 	}
 
-	entries, err := os.ReadDir(filepath.Join(cache.Root(), "tsc", "v1"))
+	entries, err := os.ReadDir(filepath.Join(cache.Root(), "tsc", "v1.0.0"))
 	require.NoError(t, err)
 	assert.Len(t, entries, 1, "racing installs should leave a single entry")
 
@@ -231,12 +261,12 @@ func TestInstall_cacheKeepArchiveFiles(t *testing.T) {
 	cache := newCacheForTest(t)
 	store := newStoreForTest(t)
 	keeper := fakeTool{name: "tsc", keep: true, installs: &atomic.Int32{}}
-	intent := binny.VersionIntent{Want: "v1"}
+	intent := binny.VersionIntent{Want: "v1.0.0"}
 	cfg := VerifyConfig{VerifySHA256Digest: true}
 
 	require.NoError(t, Install(context.Background(), keeper, intent, store, cache, cfg))
 
-	resolved := requireLinkedIntoCache(t, store, cache, keeper, "v1", filepath.Join("package", "lib", "tsc"))
+	resolved := requireLinkedIntoCache(t, store, cache, keeper, "v1.0.0", filepath.Join("package", "lib", "tsc"))
 	got, err := os.ReadFile(filepath.Join(filepath.Dir(resolved), "lib.d.ts"))
 	require.NoError(t, err)
 	assert.Equal(t, "decl", string(got))
@@ -252,7 +282,7 @@ func TestInstall_cacheKeepArchiveFilesToggle(t *testing.T) {
 	cache := newCacheForTest(t)
 	store := newStoreForTest(t)
 	installs := &atomic.Int32{}
-	intent := binny.VersionIntent{Want: "v1"}
+	intent := binny.VersionIntent{Want: "v1.0.0"}
 	cfg := VerifyConfig{VerifySHA256Digest: true}
 
 	require.NoError(t, Install(context.Background(), fakeTool{name: "tsc", installs: installs}, intent, store, cache, cfg))
@@ -262,7 +292,7 @@ func TestInstall_cacheKeepArchiveFilesToggle(t *testing.T) {
 	require.NoError(t, Install(context.Background(), keeper, intent, store, cache, cfg))
 	assert.EqualValues(t, 2, installs.Load())
 
-	resolved := requireLinkedIntoCache(t, store, cache, keeper, "v1", filepath.Join("package", "lib", "tsc"))
+	resolved := requireLinkedIntoCache(t, store, cache, keeper, "v1.0.0", filepath.Join("package", "lib", "tsc"))
 	assert.FileExists(t, filepath.Join(filepath.Dir(resolved), "lib.d.ts"))
 }
 
@@ -272,12 +302,12 @@ func TestInstall_cacheCorruptEntryFails(t *testing.T) {
 	}
 	cache := newCacheForTest(t)
 	tl := fakeTool{name: "tsc"}
-	intent := binny.VersionIntent{Want: "v1"}
+	intent := binny.VersionIntent{Want: "v1.0.0"}
 	cfg := VerifyConfig{VerifySHA256Digest: true}
 
 	require.NoError(t, Install(context.Background(), tl, intent, newStoreForTest(t), cache, cfg))
 
-	entryDir := filepath.Join(cache.Root(), "tsc", "v1", tl.Fingerprint())
+	entryDir := filepath.Join(cache.Root(), "tsc", "v1.0.0", tl.entryKey())
 	bin := filepath.Join(entryDir, "tsc")
 	require.NoError(t, os.Chmod(bin, 0o755))
 	require.NoError(t, os.WriteFile(bin, []byte("tampered"), 0o755))
@@ -295,8 +325,24 @@ func TestInstall_cacheDisabled(t *testing.T) {
 	store := newStoreForTest(t)
 
 	// a disabled cache is nil (option.Cache.Build), so nothing here can touch a cache root
-	require.NoError(t, Install(context.Background(), fakeTool{name: "tsc"}, binny.VersionIntent{Want: "v1"}, store, nil, VerifyConfig{}))
+	require.NoError(t, Install(context.Background(), fakeTool{name: "tsc"}, binny.VersionIntent{Want: "v1.0.0"}, store, nil, VerifyConfig{}))
 
+	fi, err := os.Lstat(filepath.Join(store.Root(), "tsc"))
+	require.NoError(t, err)
+	assert.True(t, fi.Mode().IsRegular())
+}
+
+func TestInstall_cacheOffReplacesLink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires symlinks")
+	}
+	store := newStoreForTest(t)
+	intent := binny.VersionIntent{Want: "v1.0.0"}
+	require.NoError(t, Install(context.Background(), fakeTool{name: "tsc"}, intent, store, newCacheForTest(t), VerifyConfig{}))
+
+	// a refused cache root is built as nil too, and the link into it must not survive
+	require.ErrorContains(t, Check(store, nil, fakeTool{name: "tsc"}, "v1.0.0", VerifyConfig{}), "the cache is off")
+	require.NoError(t, Install(context.Background(), fakeTool{name: "tsc"}, intent, store, nil, VerifyConfig{}))
 	fi, err := os.Lstat(filepath.Join(store.Root(), "tsc"))
 	require.NoError(t, err)
 	assert.True(t, fi.Mode().IsRegular())
@@ -316,7 +362,7 @@ func TestInstall_cacheRootNotWritable(t *testing.T) {
 	cache, err := binny.NewCache(root)
 	require.NoError(t, err)
 
-	err = Install(context.Background(), fakeTool{name: "tsc"}, binny.VersionIntent{Want: "v1"}, newStoreForTest(t), cache, VerifyConfig{})
+	err = Install(context.Background(), fakeTool{name: "tsc"}, binny.VersionIntent{Want: "v1.0.0"}, newStoreForTest(t), cache, VerifyConfig{})
 	require.ErrorContains(t, err, cache.Root())
 }
 
@@ -327,14 +373,14 @@ func TestInstall_cacheConvertsCopy(t *testing.T) {
 	cache := newCacheForTest(t)
 	store := newStoreForTest(t)
 	tl := fakeTool{name: "tsc"}
-	intent := binny.VersionIntent{Want: "v1"}
+	intent := binny.VersionIntent{Want: "v1.0.0"}
 	cfg := VerifyConfig{VerifySHA256Digest: true}
 
 	require.NoError(t, Install(context.Background(), tl, intent, store, nil, cfg))
 
 	// enabling the cache turns the copy into a link on the next install
 	require.NoError(t, Install(context.Background(), tl, intent, store, cache, cfg))
-	requireLinkedIntoCache(t, store, cache, tl, "v1", "tsc")
+	requireLinkedIntoCache(t, store, cache, tl, "v1.0.0", "tsc")
 }
 
 func TestInstall_cacheConvertsKeptDir(t *testing.T) {
@@ -344,7 +390,7 @@ func TestInstall_cacheConvertsKeptDir(t *testing.T) {
 	cache := newCacheForTest(t)
 	store := newStoreForTest(t)
 	keeper := fakeTool{name: "tsc", keep: true}
-	intent := binny.VersionIntent{Want: "v1"}
+	intent := binny.VersionIntent{Want: "v1.0.0"}
 	cfg := VerifyConfig{VerifySHA256Digest: true}
 	keptDir := filepath.Join(store.Root(), ".binny-dirs", "tsc")
 
@@ -353,7 +399,7 @@ func TestInstall_cacheConvertsKeptDir(t *testing.T) {
 
 	// enabling the cache moves the tool into the cache and removes the store's kept dir
 	require.NoError(t, Install(context.Background(), keeper, intent, store, cache, cfg))
-	resolved := requireLinkedIntoCache(t, store, cache, keeper, "v1", filepath.Join("package", "lib", "tsc"))
+	resolved := requireLinkedIntoCache(t, store, cache, keeper, "v1.0.0", filepath.Join("package", "lib", "tsc"))
 	assert.FileExists(t, filepath.Join(filepath.Dir(resolved), "lib.d.ts"))
 	assert.NoDirExists(t, keptDir)
 	require.ErrorIs(t, Install(context.Background(), keeper, intent, store, cache, cfg), ErrAlreadyInstalled)
@@ -386,7 +432,7 @@ func TestInstall_cacheDisabledConvertsLink(t *testing.T) {
 	cache := newCacheForTest(t)
 	store := newStoreForTest(t)
 	tl := fakeTool{name: "tsc"}
-	intent := binny.VersionIntent{Want: "v1"}
+	intent := binny.VersionIntent{Want: "v1.0.0"}
 	cfg := VerifyConfig{VerifySHA256Digest: true}
 
 	require.NoError(t, Install(context.Background(), tl, intent, store, cache, cfg))
@@ -396,7 +442,7 @@ func TestInstall_cacheDisabledConvertsLink(t *testing.T) {
 	fi, err := os.Lstat(filepath.Join(store.Root(), "tsc"))
 	require.NoError(t, err)
 	assert.True(t, fi.Mode().IsRegular())
-	assert.FileExists(t, filepath.Join(cache.EntryDir("tsc", "v1", tl.Fingerprint()), "tsc"))
+	assert.FileExists(t, filepath.Join(cache.EntryDir("tsc", "v1.0.0", tl.entryKey()), "tsc"))
 }
 
 func TestInstall_cacheRepairsDanglingLink(t *testing.T) {
@@ -406,23 +452,23 @@ func TestInstall_cacheRepairsDanglingLink(t *testing.T) {
 	cache := newCacheForTest(t)
 	store := newStoreForTest(t)
 	tl := fakeTool{name: "tsc", installs: &atomic.Int32{}}
-	intent := binny.VersionIntent{Want: "v1"}
+	intent := binny.VersionIntent{Want: "v1.0.0"}
 	cfg := VerifyConfig{VerifySHA256Digest: true}
 
 	require.NoError(t, Install(context.Background(), tl, intent, store, cache, cfg))
-	require.NoError(t, os.RemoveAll(cache.EntryDir("tsc", "v1", tl.Fingerprint())))
+	require.NoError(t, os.RemoveAll(cache.EntryDir("tsc", "v1.0.0", tl.entryKey())))
 
-	require.Error(t, Check(store, cache, tl, "v1", cfg))
+	require.Error(t, Check(store, cache, tl, "v1.0.0", cfg))
 	require.NoError(t, Install(context.Background(), tl, intent, store, cache, cfg))
 	assert.EqualValues(t, 2, tl.installs.Load())
-	requireLinkedIntoCache(t, store, cache, tl, "v1", "tsc")
+	requireLinkedIntoCache(t, store, cache, tl, "v1.0.0", "tsc")
 }
 
 func TestInstall_cacheSkipsLocalModule(t *testing.T) {
 	cache := newCacheForTest(t)
 	store := newStoreForTest(t)
 	tl := fakeTool{name: "tsc", local: true}
-	intent := binny.VersionIntent{Want: "v1"}
+	intent := binny.VersionIntent{Want: "v1.0.0"}
 	cfg := VerifyConfig{VerifySHA256Digest: true}
 
 	require.NoError(t, Install(context.Background(), tl, intent, store, cache, cfg))
@@ -433,6 +479,27 @@ func TestInstall_cacheSkipsLocalModule(t *testing.T) {
 	assert.True(t, fi.Mode().IsRegular())
 
 	require.ErrorIs(t, Install(context.Background(), tl, intent, store, cache, cfg), ErrAlreadyInstalled)
+}
+
+func TestInstall_cacheLinkToUncacheableConverts(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires symlinks")
+	}
+	cache := newCacheForTest(t)
+	store := newStoreForTest(t)
+	intent := binny.VersionIntent{Want: "v1.0.0"}
+	cfg := VerifyConfig{VerifySHA256Digest: true}
+	require.NoError(t, Install(context.Background(), fakeTool{name: "tsc"}, intent, store, cache, cfg))
+	requireLinkedIntoCache(t, store, cache, fakeTool{name: "tsc"}, "v1.0.0", "tsc")
+
+	// the config changed to one whose version the cache can't trust (a local module, allow-unresolved-version)
+	tl := fakeTool{name: "tsc", local: true}
+	require.ErrorContains(t, Check(store, cache, tl, "v1.0.0", cfg), "not used for it: its install has no fingerprint")
+	require.NoError(t, Install(context.Background(), tl, intent, store, cache, cfg))
+	fi, err := os.Lstat(filepath.Join(store.Root(), "tsc"))
+	require.NoError(t, err)
+	assert.True(t, fi.Mode().IsRegular(), "the link should be replaced by a copy")
+	require.NoError(t, Check(store, cache, tl, "v1.0.0", cfg))
 }
 
 var errLinkRefused = errors.New("symlinks refused")
@@ -451,7 +518,7 @@ func TestInstall_cacheLinkFailsCopies(t *testing.T) {
 	store := newStoreForTest(t)
 	tl := fakeTool{name: "tsc", installs: &atomic.Int32{}}
 
-	require.NoError(t, Install(context.Background(), tl, binny.VersionIntent{Want: "v1"}, store, cache, VerifyConfig{VerifySHA256Digest: true}))
+	require.NoError(t, Install(context.Background(), tl, binny.VersionIntent{Want: "v1.0.0"}, store, cache, VerifyConfig{VerifySHA256Digest: true}))
 	assert.EqualValues(t, 1, tl.installs.Load())
 
 	path := filepath.Join(store.Root(), "tsc")
@@ -459,7 +526,7 @@ func TestInstall_cacheLinkFailsCopies(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, fi.Mode().IsRegular())
 
-	entry, err := cache.Get("tsc", "v1", tl.Fingerprint())
+	entry, err := cache.Get("tsc", "v1.0.0", tl.entryKey())
 	require.NoError(t, err)
 	require.NotNil(t, entry)
 	got, err := os.ReadFile(path)
@@ -472,7 +539,7 @@ func TestInstall_cacheLinkFailsKeepsCopy(t *testing.T) {
 	cache := newCacheForTest(t)
 	store := newStoreForTest(t)
 	tl := fakeTool{name: "tsc", installs: &atomic.Int32{}}
-	intent := binny.VersionIntent{Want: "v1"}
+	intent := binny.VersionIntent{Want: "v1.0.0"}
 	cfg := VerifyConfig{VerifySHA256Digest: true}
 
 	require.NoError(t, Install(context.Background(), tl, intent, store, cache, cfg))
@@ -496,7 +563,7 @@ func TestInstall_cacheLinkFailsOnlyInStore(t *testing.T) {
 	cache := newCacheForTest(t)
 	store := newStoreForTest(t)
 	tl := fakeTool{name: "tsc", installs: &atomic.Int32{}}
-	intent := binny.VersionIntent{Want: "v1"}
+	intent := binny.VersionIntent{Want: "v1.0.0"}
 	cfg := VerifyConfig{VerifySHA256Digest: true}
 
 	// symlink support is per filesystem: the store's refuses them (exFAT, SMB) while the cache's allows them
@@ -514,7 +581,7 @@ func TestInstall_cacheLinkFailsOnlyInStore(t *testing.T) {
 	// a later binny run accepts the copy instead of copying again
 	reopened, err := binny.NewStore(store.Root())
 	require.NoError(t, err)
-	require.NoError(t, Check(reopened, cache, tl, "v1", cfg))
+	require.NoError(t, Check(reopened, cache, tl, "v1.0.0", cfg))
 	require.ErrorIs(t, Install(context.Background(), tl, intent, reopened, cache, cfg), ErrAlreadyInstalled)
 }
 
@@ -522,6 +589,6 @@ func TestInstall_cacheLinkFailsKeepArchiveFiles(t *testing.T) {
 	refuseLinks(t)
 	cache := newCacheForTest(t)
 
-	err := Install(context.Background(), fakeTool{name: "tsc", keep: true}, binny.VersionIntent{Want: "v1"}, newStoreForTest(t), cache, VerifyConfig{})
+	err := Install(context.Background(), fakeTool{name: "tsc", keep: true}, binny.VersionIntent{Want: "v1.0.0"}, newStoreForTest(t), cache, VerifyConfig{})
 	require.ErrorIs(t, err, errLinkRefused)
 }
