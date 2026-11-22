@@ -3,6 +3,8 @@ package command
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 
 	"github.com/hashicorp/go-multierror"
@@ -92,7 +94,10 @@ func getUpdatedConfig(ctx context.Context, cfg UpdateConfig, names []string) (*o
 		alreadyUpToDateTools []string
 	)
 
-	names, ogCfgs := selectNamesAndConfigs(cfg.Core, names)
+	names, ogCfgs, err := selectNamesAndConfigs(cfg.Core, names)
+	if err != nil {
+		return nil, err
+	}
 
 	prog, stage := trackUpdateLockCmd(names)
 
@@ -175,7 +180,11 @@ func getUpdatedConfig(ctx context.Context, cfg UpdateConfig, names []string) (*o
 	return &newCfg.Core, errs
 }
 
-func selectNamesAndConfigs(cfg option.Core, names []string) ([]string, []option.Tool) {
+func selectNamesAndConfigs(cfg option.Core, names []string) ([]string, []option.Tool, error) {
+	if err := validateToolNames(cfg.Tools, names); err != nil {
+		return nil, nil, err
+	}
+
 	nameSet := strset.New(names...)
 	if len(names) == 0 {
 		nameSet.Add(cfg.Tools.Names()...)
@@ -195,7 +204,31 @@ func selectNamesAndConfigs(cfg option.Core, names []string) ([]string, []option.
 		ogCfgs = append(ogCfgs, toolCfg)
 		names = append(names, toolCfg.Name)
 	}
-	return names, ogCfgs
+	return names, ogCfgs, nil
+}
+
+// validateToolNames returns an error naming every requested tool that is not in the configuration.
+// Callers filter the configured tools down to the requested names, so an unknown name would silently
+// leave nothing to work on and the command would report success without doing anything.
+func validateToolNames(tools option.Tools, names []string) error {
+	if len(names) == 0 {
+		return nil
+	}
+
+	configured := strset.New(tools.Names()...)
+
+	var unknown []string
+	for _, name := range names {
+		if !configured.Has(name) {
+			unknown = append(unknown, name)
+		}
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+
+	sort.Strings(unknown)
+	return fmt.Errorf("no tool configured with name: %s", strings.Join(unknown, ", "))
 }
 
 func trackUpdateLockCmd(toolNames []string) (*progress.Manual, *progress.AtomicStage) {

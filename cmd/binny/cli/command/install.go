@@ -52,7 +52,10 @@ func Install(app clio.Application) *cobra.Command {
 }
 
 func runInstall(ctx context.Context, cmdCfg InstallConfig, names []string) error { //nolint: funlen
-	names, toolOpts := selectNamesAndConfigs(cmdCfg.Core, names)
+	names, toolOpts, err := selectNamesAndConfigs(cmdCfg.Core, names)
+	if err != nil {
+		return err
+	}
 
 	if len(toolOpts) == 0 {
 		bus.Report("no tools to install")
