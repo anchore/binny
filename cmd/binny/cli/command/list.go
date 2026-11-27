@@ -174,7 +174,11 @@ func getAllStatuses(ctx context.Context, cmdCfg ListConfig, store *binny.Store, 
 		allStatus   []toolStatus
 	)
 
-	names, toolOpts := selectNamesAndConfigs(cmdCfg.Core, nil)
+	names, toolOpts, err := selectNamesAndConfigs(cmdCfg.Core, nil)
+	if err != nil {
+		log.WithFields("error", err).Warn("unable to select configured tools")
+		return nil
+	}
 
 	storedEntries := store.Entries()
 
